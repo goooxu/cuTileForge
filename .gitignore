@@ -1,0 +1,17 @@
+# Upstream KernelBench checkout, rebuilt by scripts/setup_kernelbench.sh
+/kernelbench/
+
+# Model weights (hundreds of GB)
+/models/
+
+# Run artifacts. These are regenerable output, not source: 1600 generated
+# kernels, the raw model responses, and per-sample eval results run ~33 MB per
+# evaluation, and this project iterates eval -> train -> eval. Only the summary
+# artifacts needed to check the report are committed, under results/.
+/runs/
+
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.env

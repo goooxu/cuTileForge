@@ -1,0 +1,30 @@
+# Eval image for the KernelBench cuTile backend.
+#
+# The NGC PyTorch image already ships cuda-tile and the tileiras compiler
+# (/usr/local/cuda/bin/tileiras), so only KernelBench's own Python deps are added.
+# The GPU-extra deps (nvidia-cutlass-dsl, tilelang, cupy) are deliberately skipped:
+# they belong to other backends and do not build cleanly on aarch64 + CUDA 13.
+#
+# KernelBench itself is not installed into the image. It is used from the mounted
+# workspace via PYTHONPATH so edits to the backend take effect without a rebuild;
+# get_package_resource_path() falls back to a repo-relative lookup, so prompt
+# resources resolve correctly that way.
+FROM nvcr.io/nvidia/pytorch:26.06-py3
+
+# modal is imported unconditionally by eval_from_generations.py even when
+# eval_mode=local, so it is needed despite all evaluation running on this host.
+RUN pip install --no-cache-dir \
+        pydra-config \
+        tomli \
+        python-dotenv \
+        openai \
+        litellm \
+        transformers \
+        modal
+
+# Reference kernels must be evaluated in true fp32. The NGC image defaults to
+# allow_tf32=True, which would make the torch reference the imprecise side of
+# KernelBench's 1e-4 comparison and fail numerically-correct cuTile matmuls.
+ENV NVIDIA_TF32_OVERRIDE=0
+
+WORKDIR /ws

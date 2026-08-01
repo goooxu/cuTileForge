@@ -1,0 +1,543 @@
+diff --git a/scripts/eval_from_generations.py b/scripts/eval_from_generations.py
+index 6fac151..51d0343 100644
+--- a/scripts/eval_from_generations.py
++++ b/scripts/eval_from_generations.py
+@@ -711,11 +711,18 @@ def check_if_eval_exists_local(
+ ) -> bool:
+     """
+     Check if evaluation result already exists in eval results file
++
++    Matches on (problem_id, sample_id). Testing only problem_id would mark a
++    problem complete as soon as any one of its samples had been evaluated, so a
++    resumed run would silently skip the remaining samples.
+     """
+     if os.path.exists(eval_file_path):
+         with open(eval_file_path, "r") as f:
+             eval_results = json.load(f)
+-        return str(problem_id) in eval_results
++        return any(
++            entry.get("sample_id") == sample_id
++            for entry in eval_results.get(str(problem_id), [])
++        )
+     return False
+ 
+ 
+@@ -734,9 +741,20 @@ def add_to_eval_results_file(
+     else:
+         eval_results = defaultdict(lambda: [])
+ 
+-    # Add new result
+-    eval_results[str(problem_id)].append(
+-        {
++    # A worker that timed out or died returns None. Record it as a failed sample
++    # rather than raising: losing the record would silently shrink the
++    # denominator and inflate every rate computed from this file.
++    if eval_result is None:
++        entry = {
++            "sample_id": sample_id,
++            "compiled": False,
++            "correctness": False,
++            "metadata": {"error": "evaluation returned no result (worker timeout or crash)"},
++            "runtime": -1.0,
++            "runtime_stats": {},
++        }
++    else:
++        entry = {
+             "sample_id": sample_id,
+             "compiled": eval_result.compiled,
+             "correctness": eval_result.correctness,
+@@ -744,7 +762,8 @@ def add_to_eval_results_file(
+             "runtime": eval_result.runtime,
+             "runtime_stats": eval_result.runtime_stats,
+         }
+-    )
++
++    eval_results[str(problem_id)].append(entry)
+ 
+     # Write updated results back to file (sorted by numeric key)
+     if not os.path.exists(eval_file_path):
+diff --git a/scripts/generate_samples.py b/scripts/generate_samples.py
+index 2c01ee8..7619827 100644
+--- a/scripts/generate_samples.py
++++ b/scripts/generate_samples.py
+@@ -12,7 +12,7 @@ from kernelbench.eval import eval_kernel_against_ref
+ from kernelbench.prompt_constructor_toml import get_prompt_for_backend, get_custom_prompt
+ from kernelbench.utils import (
+     create_inference_server_from_presets,
+-    extract_first_code,
++    extract_best_code,
+     maybe_multithread,
+     set_gpu_arch,
+ )
+@@ -57,6 +57,12 @@ class GenerationConfig(Config):
+         self.model_name = None
+         self.max_tokens = None
+         self.temperature = 0.0
++        # Left as None so the server preset's value is used unless overridden.
++        self.top_p = None
++        self.top_k = None
++        # Only used by the "local" / "local_chat" server types.
++        self.server_address = None
++        self.server_port = None
+         
+         # Reasoning model specific parameters
+         self.is_reasoning_model = False  # set to True for o1, o3, Gemini 2.5 thinking, etc.
+@@ -74,6 +80,7 @@ class GenerationConfig(Config):
+         self.num_samples = 1  # Default to 1 sample per problem
+ 
+         self.log_prompt = False
++        self.log_raw_response = False
+ 
+         self.backend = "cuda"
+         
+@@ -139,8 +146,19 @@ def generate_sample_single(
+             f.write(custom_prompt)
+ 
+     # Query server with constructed prompt
+-    custom_kernel = inference_server(custom_prompt)
+-    custom_kernel = extract_first_code(custom_kernel, ["python", "cpp"])
++    raw_response = inference_server(custom_prompt)
++
++    # Keep the raw response: extraction is lossy, and without it a bad sample
++    # cannot be told apart from a bad extraction after the fact.
++    if config.log_raw_response:
++        raw_path = os.path.join(
++            run_dir,
++            f"level_{config.level}_problem_{work.problem_id}_sample_{work.sample_id}_response.txt",
++        )
++        with open(raw_path, "w") as f:
++            f.write(raw_response or "")
++
++    custom_kernel = extract_best_code(raw_response, ["python", "cpp"])
+     # check LLM is able to generate custom CUDA code
+     assert custom_kernel is not None, "Custom CUDA code generation failed"
+ 
+@@ -153,13 +171,13 @@ def generate_sample_single(
+             # uses the default set of forbidden and warning patterns, 
+             # you could adapt the patterns to your own setting (degree of banning cuda stream, allowing some torch ops)
+         )
+-        assert static_check_status, f"Static check failed for sample {work.sample_id} for problem {problem_number}: {problem_name}. Error: {error}. Warnings: {warnings}"
++        assert static_check_status, f"Static check failed for sample {work.sample_id} for problem {work.problem_id}: {problem_name}. Error: {error}. Warnings: {warnings}"
+         if warnings:
+-            print(f"Static check warnings for sample {work.sample_id} for problem {problem_number}: {problem_name}. Warnings: {warnings}")
++            print(f"Static check warnings for sample {work.sample_id} for problem {work.problem_id}: {problem_name}. Warnings: {warnings}")
+ 
+     if config.verbose:
+         print(
+-            f"Generated sample {work.sample_id} for problem {problem_number}: {problem_name}"
++            f"Generated sample {work.sample_id} for problem {work.problem_id}: {problem_name}"
+         )
+ 
+     # Store to local file
+@@ -234,7 +252,7 @@ def main(config: GenerationConfig):
+         include_hardware = include_hardware.lower() in ["true", "1", "yes"]
+     config.include_hardware_info = include_hardware
+ 
+-    supported_backends = {"cuda", "triton", "cute", "tilelang", "thunderkittens"}
++    supported_backends = {"cuda", "triton", "cute", "cutile", "tilelang", "thunderkittens"}
+     backend = config.backend.lower()
+     if backend not in supported_backends:
+         raise ValueError(
+@@ -317,6 +335,10 @@ def main(config: GenerationConfig):
+         model_name=config.model_name,
+         temperature=config.temperature,
+         max_tokens=config.max_tokens,
++        top_p=config.top_p,
++        top_k=config.top_k,
++        server_address=config.server_address,
++        server_port=config.server_port,
+         verbose=config.verbose,
+         is_reasoning_model=config.is_reasoning_model,
+         reasoning_effort=config.reasoning_effort,
+diff --git a/src/kernelbench/eval.py b/src/kernelbench/eval.py
+index 3557dc9..0fd8400 100644
+--- a/src/kernelbench/eval.py
++++ b/src/kernelbench/eval.py
+@@ -436,8 +436,8 @@ def eval_kernel_against_ref(
+     # HIP is AMD-only
+     if backend_lower == "hip" and vendor != "amd":
+         raise ValueError(f"HIP backend requires AMD GPU, got {vendor}")
+-    # cuda/cute/thunderkittens are NVIDIA-only (triton/tilelang work on both)
+-    if backend_lower in ["cuda", "cute", "thunderkittens"] and vendor == "amd":
++    # cuda/cute/cutile/thunderkittens are NVIDIA-only (triton/tilelang work on both)
++    if backend_lower in ["cuda", "cute", "cutile", "thunderkittens"] and vendor == "amd":
+         raise ValueError(f"{backend} backend requires NVIDIA GPU, got AMD")
+     
+     if backend_lower == "tilelang":
+@@ -452,10 +452,15 @@ def eval_kernel_against_ref(
+ 
+     # set CUDA device
+     torch.cuda.set_device(device)
+-    
++
++    # Keep the torch reference at true fp32 so it is not the imprecise side of
++    # the allclose() comparison below.
++    from .utils import enforce_reference_precision
++    enforce_reference_precision()
++
+     # Backends that use tempfile approach and need CUDA_VISIBLE_DEVICES
+-    # TileLang, Triton, and CuTe all use tempfile for proper module loading
+-    uses_tempfile = backend.lower() in ["triton", "tilelang", "cute"]
++    # TileLang, Triton, CuTe and cuTile all use tempfile for proper module loading
++    uses_tempfile = backend.lower() in ["triton", "tilelang", "cute", "cutile"]
+     
+     metadata = {}  # for storing result metadata
+     metadata["hardware"] = torch.cuda.get_device_name(device=device)
+@@ -511,8 +516,8 @@ def eval_kernel_against_ref(
+         # add hash for later to distinguish between multi-turn kernels
+         
+         backend_lower = backend.lower()
+-        if backend_lower in ["triton", "tilelang", "cute"]:
+-            # Use tempfile approach for triton, tilelang, and cute
++        if backend_lower in ["triton", "tilelang", "cute", "cutile"]:
++            # Use tempfile approach for triton, tilelang, cute and cutile
+             # These DSLs require proper module import for JIT decorators to work
+             ModelNew, tempfile = load_custom_model_with_tempfile(
+                 custom_model_src, entry_point="ModelNew"
+diff --git a/src/kernelbench/kernel_static_checker.py b/src/kernelbench/kernel_static_checker.py
+index 7d97eff..40818e7 100644
+--- a/src/kernelbench/kernel_static_checker.py
++++ b/src/kernelbench/kernel_static_checker.py
+@@ -275,6 +275,72 @@ def check_cute_impl(code: str) -> Tuple[bool, str]:
+     return (False, "")
+ 
+ 
++# <========= CUTILE CHECKS =========>
++# Rationale: cuTile kernels are Python functions marked with @ct.kernel and are
++# dispatched from the host with ct.launch(). Because a cuTile "kernel" is plain
++# Python, a model can emit a ModelNew that passes correctness while calling only
++# torch ops, so requiring the decorator, the launch and actual tile ops is what
++# distinguishes a real cuTile implementation from a PyTorch passthrough.
++# https://docs.nvidia.com/cuda/cutile-python
++CUTILE_IMPORT_PATTERN = r"(?:import\s+cuda\.tile(?:\s+as\s+(\w+))?|from\s+cuda\s+import\s+tile(?:\s+as\s+(\w+))?)"
++
++# Tile ops that constitute real kernel work, as opposed to merely importing the
++# module. Mirrors the tl.* requirement used for Triton.
++CUTILE_OPS = (
++    "load", "store", "mma", "matmul", "mma_scaled", "gather", "scatter",
++    "sum", "max", "min", "prod", "reduce", "scan", "cumsum", "cumprod",
++    "zeros", "ones", "full", "arange", "where", "transpose", "permute",
++    "reshape", "broadcast_to", "astype", "exp", "log", "sqrt", "rsqrt",
++    "maximum", "minimum", "argmax", "argmin", "atomic_add", "cat",
++    "expand_dims", "tanh", "abs", "bid", "num_blocks", "num_tiles",
++)
++
++
++def _cutile_aliases(code: str) -> List[str]:
++    """Collect the names cuda.tile is bound to (default alias plus any 'as X')."""
++    aliases = []
++    for m in re.finditer(CUTILE_IMPORT_PATTERN, code):
++        alias = m.group(1) or m.group(2)
++        if alias:
++            aliases.append(alias)
++        else:
++            # Bare "import cuda.tile" is referenced as cuda.tile.*;
++            # bare "from cuda import tile" is referenced as tile.*
++            aliases.append("cuda.tile" if m.group(0).startswith("import") else "tile")
++    return aliases
++
++
++def check_cutile_impl(code: str) -> Tuple[bool, str]:
++    """
++    Check for valid cuTile kernel implementation.
++
++    Requirements:
++    - Must import cuda.tile
++    - Must have an @<alias>.kernel decorated function (kernel definition)
++    - Must call <alias>.launch(...) (kernel is actually dispatched, not dead code)
++    - Must use tile operations (enforces real kernel body, not a torch wrapper)
++    """
++    code = _strip_comments(code)
++
++    aliases = _cutile_aliases(code)
++    if not aliases:
++        return (True, "Missing 'import cuda.tile' (no cuTile import found)")
++
++    alias_group = "|".join(re.escape(a) for a in set(aliases))
++
++    if not re.search(rf"@(?:{alias_group})\.kernel\b", code):
++        return (True, "Missing @ct.kernel decorated kernel definition")
++
++    if not re.search(rf"\b(?:{alias_group})\.launch\s*\(", code):
++        return (True, "Missing ct.launch(...) call (kernel is never dispatched)")
++
++    ops_group = "|".join(CUTILE_OPS)
++    if not re.search(rf"\b(?:{alias_group})\.(?:{ops_group})\b", code):
++        return (True, "No cuTile tile operations found in kernel")
++
++    return (False, "")
++
++
+ # <========= TILELANG CHECKS =========>
+ # TileLang uses TVM's T.prim_func decorator
+ # https://github.com/tile-ai/tilelang
+@@ -582,6 +648,7 @@ CHECK_FUNCTIONS: Dict[str, Union[Callable[[str], Tuple[bool, str]], Callable[[st
+     "triton_impl": check_triton_impl,
+     "tk_impl": check_tk_impl,
+     "cute_impl": check_cute_impl,
++    "cutile_impl": check_cutile_impl,
+     "tilelang_impl": check_tilelang_impl,
+ }
+ 
+@@ -607,6 +674,7 @@ BACKEND_IMPL_CHECK = {
+     "thunderkittens": "tk_impl",
+     "cute": "cute_impl",
+     "cutlass": "cute_impl",  # alias
++    "cutile": "cutile_impl",
+     "tilelang": "tilelang_impl",
+ }
+ 
+diff --git a/src/kernelbench/prompt_constructor_toml.py b/src/kernelbench/prompt_constructor_toml.py
+index 4349a74..298e1fa 100644
+--- a/src/kernelbench/prompt_constructor_toml.py
++++ b/src/kernelbench/prompt_constructor_toml.py
+@@ -202,6 +202,13 @@ def render_prompt_by_option(
+         "instruction": instruction,
+     }
+     
++    # Load the backend's DSL reference, if it declares one. Injected as a context
++    # value rather than a template so that braces inside the documentation are not
++    # interpreted by the final .format() pass.
++    doc_reference = backend_data.get("doc_reference")
++    if doc_reference:
++        context["backend_doc"] = read_file(resolve_path(doc_reference))
++
+     # Load precision details if provided
+     if precision:
+         try:
+diff --git a/src/kernelbench/prompts/prompts.toml b/src/kernelbench/prompts/prompts.toml
+index 6a7dfca..8ed07c5 100644
+--- a/src/kernelbench/prompts/prompts.toml
++++ b/src/kernelbench/prompts/prompts.toml
+@@ -44,6 +44,15 @@ backend_display = "CuTe (CUTLASS) kernels"
+ one_shot_new_arch = "src/kernelbench/prompts/model_new_ex_add_cute.py"
+ # No few_shot_examples - will use one-shot when few_shot option is selected
+ 
++[backends.cutile]
++backend_display = "cuTile (cuda.tile) kernels"
++one_shot_new_arch = "src/kernelbench/prompts/model_new_ex_add_cutile.py"
++# cuTile is newer than most models' training data, so the backend ships a
++# reference that can be composed into the prompt via the backend_doc_block
++# component. Regenerate with scripts/build_cutile_docs.py.
++doc_reference = "src/kernelbench/prompts/cutile_api_reference.md"
++# No few_shot_examples - will use one-shot when few_shot option is selected
++
+ [backends.tilelang]
+ backend_display = "TileLang kernels"
+ one_shot_new_arch = "src/kernelbench/prompts/model_new_ex_add_tilelang.py"
+@@ -133,6 +142,21 @@ Note: The kernels should be optimized for {precision_display} precision.
+ """
+ 
+ # -------------------------------------------------------------------------
++# Backend Documentation Block
++# -------------------------------------------------------------------------
++# Injects the reference named by `doc_reference` in the backend's section.
++# Useful for DSLs that are newer than the model's training data, where the
++# question is whether the model can use the DSL given docs rather than whether
++# it happens to have memorised it.
++
++backend_doc_block = """
++Here is the reference documentation for {backend_display}. Use only the APIs
++documented here; APIs from other GPU DSLs do not exist in this one.
++
++{backend_doc}
++"""
++
++# -------------------------------------------------------------------------
+ # Custom Templates: Optional user-defined building blocks
+ # -------------------------------------------------------------------------
+ # Add any custom template blocks here and reference them from components lists.
+@@ -196,6 +220,21 @@ requires_example = "few_shot"
+ # -------------------------------------------------------------------------
+ 
+ 
++[custom_prompts.cutile_docs]
++# Docs-in-context composition: same as one_shot, plus the backend's reference
++# documentation ahead of the worked example. The worked example itself is
++# supplied by prompt_option, so this must be run as:
++#   backend=cutile custom_prompt_key=cutile_docs prompt_option=one_shot
++components = [
++    "problem_statement",
++    "backend_doc_block",
++    "examples_block",
++    "arch_block",
++    "precision_note",
++    "instruction",
++]
++
++
+ [custom_prompts.custom]
+ # Use this name with the CLI: pass custom_prompt_key=custom to
+ # generate_samples.py, generate_and_eval_single_sample.py, or the modal variant
+diff --git a/src/kernelbench/timing.py b/src/kernelbench/timing.py
+index f22920b..932d745 100644
+--- a/src/kernelbench/timing.py
++++ b/src/kernelbench/timing.py
+@@ -32,6 +32,11 @@ def measure_ref_program_time(
+     Standard PyTorch ops do NOT spawn extra streams.
+     """
+     from kernelbench.eval import load_original_model_and_inputs, set_seed
++    from kernelbench.utils import enforce_reference_precision
++
++    # Baseline timings must use the same precision settings as the correctness
++    # run, otherwise the recorded speedups compare against a TF32 reference.
++    enforce_reference_precision()
+ 
+     context = {}
+     Model, get_init_inputs, get_inputs = load_original_model_and_inputs(
+diff --git a/src/kernelbench/utils.py b/src/kernelbench/utils.py
+index d2d1b17..88e8408 100644
+--- a/src/kernelbench/utils.py
++++ b/src/kernelbench/utils.py
+@@ -85,6 +85,21 @@ def set_gpu_arch(arch_list: list[str]):
+     elif amd_archs:
+         os.environ["PYTORCH_ROCM_ARCH"] = ";".join(amd_archs)
+ 
++
++def enforce_reference_precision():
++    """Force torch fp32 matmul/conv to be true fp32 rather than TF32.
++
++    Correctness is judged by allclose(reference, generated) at atol=rtol=1e-4 for
++    fp32. Some environments (notably the NGC PyTorch containers) default to
++    allow_tf32=True, which puts ~2e-2 of error into the *reference* side and
++    fails generated kernels that are numerically more accurate than torch.
++    Pinning true fp32 restores upstream PyTorch defaults so both sides agree.
++    """
++    torch.backends.cuda.matmul.allow_tf32 = False
++    torch.backends.cudnn.allow_tf32 = False
++    torch.set_float32_matmul_precision("highest")
++
++
+ def query_server(
+     prompt: str | list[dict],  # string if normal prompt, list of dicts if chat prompt,
+     system_prompt: str = "You are a helpful assistant",  # only used for chat prompts
+@@ -109,32 +124,52 @@ def query_server(
+     - Local Server (SGLang, vLLM, Tokasaurus)
+     """
+     # Local Server (SGLang, vLLM, Tokasaurus) - special handling
+-    if server_type == "local":
++    #
++    # "local"      : a string prompt goes to the raw completions endpoint, which is
++    #                what you want for a base model.
++    # "local_chat" : a string prompt is wrapped as a user message and sent to the
++    #                chat endpoint so the served model's chat template is applied.
++    #                Instruct-tuned models need this; without it they are prompted
++    #                out-of-distribution.
++    if server_type in ("local", "local_chat"):
+         url = f"http://{server_address}:{server_port}"
+         client = OpenAI(
+             api_key=SGLANG_KEY, base_url=f"{url}/v1", timeout=None, max_retries=0
+         )
+-        if isinstance(prompt, str):
+-            response = client.completions.create(
+-                model="default",
+-                prompt=prompt,
++        # top_k is not in the OpenAI schema; vLLM and SGLang accept it via extra_body.
++        extra_body = {"top_k": top_k} if top_k and top_k > 0 else {}
++
++        use_chat = server_type == "local_chat" or not isinstance(prompt, str)
++        if use_chat:
++            if isinstance(prompt, list):
++                messages = prompt
++            else:
++                messages = []
++                if system_prompt:
++                    messages.append({"role": "system", "content": system_prompt})
++                messages.append({"role": "user", "content": prompt})
++            response = client.chat.completions.create(
++                model=model_name,
++                messages=messages,
+                 temperature=temperature,
+                 n=num_completions,
+                 max_tokens=max_tokens,
+                 top_p=top_p,
++                extra_body=extra_body,
+             )
+-            outputs = [choice.text for choice in response.choices]
++            outputs = [choice.message.content for choice in response.choices]
+         else:
+-            response = client.chat.completions.create(
+-                model="default",
+-                messages=prompt,
++            response = client.completions.create(
++                model=model_name,
++                prompt=prompt,
+                 temperature=temperature,
+                 n=num_completions,
+                 max_tokens=max_tokens,
+                 top_p=top_p,
++                extra_body=extra_body,
+             )
+-            outputs = [choice.message.content for choice in response.choices]
+-        
++            outputs = [choice.text for choice in response.choices]
++
+         # output processing
+         if len(outputs) == 1:
+             return outputs[0]
+@@ -229,6 +264,15 @@ SERVER_PRESETS = {
+         "server_address": "matx2.stanford.edu",
+         "max_tokens": 8192,
+     },
++    "local_chat": {  # local instruct model behind an OpenAI-compatible server
++        # Routes through /v1/chat/completions so the served chat template applies.
++        "temperature": 0.8,
++        "top_p": 0.95,
++        "top_k": 40,
++        "server_port": 8000,
++        "server_address": "localhost",
++        "max_tokens": 8192,
++    },
+     "anthropic": {  # for Claude 3.7 Sonnet
+         "model_name": "anthropic/claude-3-7-sonnet-20250219",
+         "temperature": 0.8,
+@@ -415,6 +459,49 @@ def extract_first_code(output_string: str, code_language_types: list[str]) -> st
+     return None
+ 
+ 
++def extract_best_code(output_string: str, code_language_types: list[str]) -> str | None:
++    """
++    Extract the code block that is most likely to be the model's answer.
++
++    extract_first_code() takes the literal first fenced block regardless of its
++    language tag. Models frequently open with an untagged block holding a formula
++    or a shape sketch ("y = (x - mean) / sqrt(var + eps)"), and that prose then
++    gets evaluated as the kernel. This picks by content instead:
++
++      1. the last block defining ModelNew (models often revise, so prefer the last)
++      2. otherwise the last block tagged with a requested language
++      3. otherwise the longest block
++
++    Returns None when there is no fenced block at all.
++    """
++    if output_string is None:
++        return None
++
++    blocks = re.findall(r"```(\w*)\n?(.*?)```", output_string.strip(), re.DOTALL)
++    if not blocks:
++        return None
++
++    def clean(lang: str, body: str) -> str:
++        body = body.strip()
++        # Handle ```python foo``` written on one line, where the tag lands in the body.
++        for code_type in code_language_types:
++            if body.startswith(code_type):
++                body = body[len(code_type):].strip()
++        return body
++
++    cleaned = [(lang.lower(), clean(lang, body)) for lang, body in blocks]
++
++    defines_model = [c for _, c in cleaned if re.search(r"class\s+ModelNew\b", c)]
++    if defines_model:
++        return defines_model[-1]
++
++    tagged = [c for lang, c in cleaned if lang in code_language_types]
++    if tagged:
++        return tagged[-1]
++
++    return max((c for _, c in cleaned), key=len)
++
++
+ def extract_last_code(output_string: str, code_language_types: list[str]) -> str | None:
+     """
+     Extract last code block from model output, specified by code_language_type

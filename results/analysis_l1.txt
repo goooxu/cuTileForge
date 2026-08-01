@@ -1,0 +1,110 @@
+==============================================================================
+cuTile KernelBench run: cutile_l1  (level 1, 100 problems x 8 samples = 800)
+==============================================================================
+
+-- Per-sample rates --
+  generated                   99.4%
+  contains real cuTile        94.2%
+  compiled                    90.8%
+  correct (raw KernelBench)   23.2%
+  correct AND uses cuTile     20.8%
+
+-- pass@k --
+    k       raw   cuTile-gated
+    1     23.2%          20.8%
+    2     31.2%          26.6%
+    4     40.3%          32.5%
+    8     51.0%          39.0%
+
+-- Speed vs torch eager (correct cuTile only) --
+  fast_p over problems (best sample per problem):
+    fast_0.5:  21.0%
+    fast_1:   5.0%
+    fast_2:   1.0%
+  per-sample speedup: median 0.115x  max 4.95x  n=166
+  samples beating torch: 15/166
+
+-- Where samples died --
+  (KernelBench's 'compiled' only means the module imported; @ct.kernel
+   compiles lazily, so tileiras runs during the correctness check.)
+  cutile_frontend_error            244  ( 30.5% of all samples)
+  other_runtime_error              225  ( 28.1% of all samples)
+  import_error                      69  (  8.6% of all samples)
+  wrong_numerics                    65  (  8.1% of all samples)
+  cutile_backend_compile_error       6  (  0.8% of all samples)
+  no_code_generated                  5  (  0.6% of all samples)
+
+-- Why samples failed --
+  rank_mismatch                    115  ( 14.4% of all samples)
+  grid_rank_exceeded                79  (  9.9% of all samples)
+  none_kernel_argument              77  (  9.6% of all samples)
+  wrong_numerics                    64  (  8.0% of all samples)
+  undefined_name                    49  (  6.1% of all samples)
+  other                             41  (  5.1% of all samples)
+  wrong_arg_type                    30  (  3.8% of all samples)
+  array_used_as_tensor              24  (  3.0% of all samples)
+  attribute_error                   13  (  1.6% of all samples)
+  timeout                           12  (  1.5% of all samples)
+  dtype_mismatch                    11  (  1.4% of all samples)
+  host_python_in_kernel             11  (  1.4% of all samples)
+  loop_break                        10  (  1.2% of all samples)
+  host_shape_error                  10  (  1.2% of all samples)
+  kernel_call_convention             9  (  1.1% of all samples)
+  python_syntax                      9  (  1.1% of all samples)
+  matmul_shape                       8  (  1.0% of all samples)
+  tile_indexing                      7  (  0.9% of all samples)
+  type_depends_on_path               7  (  0.9% of all samples)
+  cuda_cpp_leakage                   6  (  0.8% of all samples)
+  no_code_generated                  5  (  0.6% of all samples)
+  shape_not_constant                 5  (  0.6% of all samples)
+  unsupported_feature                5  (  0.6% of all samples)
+  tile_shape_invalid                 3  (  0.4% of all samples)
+  acc_shape_mismatch                 2  (  0.2% of all samples)
+  bad_launch                         2  (  0.2% of all samples)
+
+-- Exception types raised --
+    212  cuda.tile._exception.TileTypeError
+     94  builtins.TypeError
+     83  builtins.ValueError
+     25  cuda.tile._exception.TileSyntaxError
+     20  builtins.RuntimeError
+     16  builtins.SyntaxError
+     15  builtins.NameError
+      7  builtins.AttributeError
+      6  cuda.tile._exception.TileCompilerExecutionError
+      6  cuda.tile._exception.TileInternalError
+      4  builtins.AssertionError
+      2  builtins.OverflowError
+
+-- Why the cuTile gate rejected samples --
+     37  Missing ct.launch(...) call (kernel is never dispatched)
+      5  no code generated
+      3  Missing @ct.kernel decorated kernel definition
+      1  Missing 'import cuda.tile' (no cuTile import found)
+
+-- Most-invented ct.* APIs (do not exist in cuda.tile) --
+     16  ct.tid
+      9  ct.thread_idx
+      4  ct.cast
+      4  ct.zeros_like
+      2  ct.logical_and
+      2  ct.NEG_INF
+      2  ct.inf
+      2  ct.pad
+      2  ct.dilation
+      2  ct.padding
+      2  ct.stride
+      1  ct.infinity
+      1  ct.full_like
+      1  ct.FloatValue
+      1  ct.threadIdx
+      1  ct.shape
+      1  ct.num_threads
+      1  ct.any
+      1  ct.height
+      1  ct.width
+
+-- Coverage --
+  problems with >=1 correct cuTile sample: 39/100
+
+wrote per-sample records to /ws/runs/cutile_l1/analysis.json
