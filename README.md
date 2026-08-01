@@ -36,6 +36,131 @@ Qwen3-Coder-Next（80B-A3B，BF16）在 KernelBench Level 1+2 共 200 题、每�
 
 ---
 
+## 模型实际输入输出示例
+
+### 输入长什么样
+
+每条 prompt 约 15k token，由六段拼成（组合定义在
+`overlay/src/kernelbench/prompts/prompts.toml` 的 `[custom_prompts.cutile_docs]`）：
+
+```
+1. 任务说明        "把下面这个架构里的 PyTorch 算子换成 cuTile kernel"
+2. cuTile 文档     ~14k token：编程模型导读 + 96 个 op 的 API reference
+3. 一个 worked example   vector add 的 PyTorch 版 → cuTile 版
+4. 待优化的架构    KernelBench 的参考 Model
+5. 精度要求        FP32
+6. 指令            "命名为 ModelNew，只输出代码"
+```
+
+文档那 14k token 是必需的：cuTile 比模型的训练数据新，不给文档基本写不出来。
+vLLM 的 prefix caching 让这段固定前缀只算一次。
+
+### 例 1：写对了，而且比 torch 快 4.95 倍
+
+输入的参考实现（Level 1 第 88 题，minGPT 的 GELU，8192×8192）：
+
+```python
+class Model(nn.Module):
+    def forward(self, x):
+        return 0.5 * x * (1.0 + torch.tanh(
+            math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
+```
+
+模型输出（节选，完整 50 行）：
+
+```python
+import cuda.tile as ct
+
+TILE_SIZE = 256
+GELU_CONST = math.sqrt(2.0 / math.pi)
+
+@ct.kernel
+def gelu_kernel(x, out):
+    i = ct.bid(0)
+    # Load tile with zero padding for boundary cases
+    x_tile = ct.load(x, index=(i,), shape=(TILE_SIZE,), padding_mode=ct.PaddingMode.ZERO)
+
+    x_cubed = x_tile * x_tile * x_tile
+    inner = x_tile + 0.044715 * x_cubed
+    gelu_result = 0.5 * x_tile * (1.0 + ct.tanh(GELU_CONST * inner))
+
+    # Store result (out-of-bounds writes are silently discarded)
+    ct.store(out, index=(i,), tile=gelu_result)
+
+def cutile_gelu(x: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(x)
+    x_flat = x.view(-1)
+    grid = (ct.cdiv(x_flat.numel(), TILE_SIZE), 1, 1)
+    ct.launch(torch.cuda.current_stream(), grid, gelu_kernel, (x_flat, out.view(-1)))
+    return out
+```
+
+**5/5 正确，4.95x**。该会的都会了：tile 尺寸取 2 的幂并写成模块级常量、边界用
+`PaddingMode.ZERO`、把整个 4 个算子的链融进一个 kernel、host 端 flatten 成一维。
+注释里那句 "out-of-bounds writes are silently discarded" 说明它读懂了 store 的语义
+而不是照抄示例。
+
+### 例 2：栽在 grid 最多 3 维上（两个 level 合计 165 个样本）
+
+Level 1 第 34 题 InstanceNorm，输入是 4D 的 (N, C, H, W)。模型很自然地想一个 block
+管一块空间区域：
+
+```python
+# 模型输出
+grid = (batch_size, num_features, ct.cdiv(height, TILE_H), ct.cdiv(width, TILE_W))
+ct.launch(torch.cuda.current_stream(), grid, instance_norm_forward_kernel, ...)
+```
+
+```
+TileTypeError: Grid dimensions must be at most 3, got length 4
+```
+
+这是最高频的单一失败模式。**但它不是 cuTile 的表达能力限制**——host 端把 N 和 C
+折叠成一维就行。[golden/level1_42_maxpool2d.py](golden/level1_42_maxpool2d.py)
+就是这么写的，同样 4D 输入，通过：
+
+```python
+grid = (n * c, ct.cdiv(out_h, TH), ct.cdiv(out_w, TW))
+ct.launch(..., (x.view(-1), out.view(-1), ...))
+```
+
+模型没有想到这个 idiom。文档里给了 grid 上限，但没给"高维张量怎么映射"的例子。
+
+### 例 3：把 cuTile Array 当成 torch tensor
+
+Level 1 第 3 题 batched matmul：
+
+```python
+# 模型输出（kernel 内部）
+num_k_tiles = ct.num_tiles(A.view(batch_size, m, k), axis=1, shape=(TM, TK))
+```
+
+```
+TileTypeError: No such attribute 'view' for object of type Array[float32,(?,?,?):(?,?,1)]
+```
+
+kernel 里的 Array 只支持 load/store 一类操作，不能像 tensor 那样 reshape、切片。
+同类报错还有 `Arrays are not directly subscriptable. Use load() or gather() instead.`
+——PyTorch 的肌肉记忆很难消除。
+
+### 幻觉 API 的两种来源
+
+不存在的 `ct.*` 调用总量不大，但分布很说明问题：
+
+| 类型 | 例子 | 次数 |
+| --- | --- | --- |
+| SIMT 思维残留 | `ct.tid`、`ct.thread_idx`、`ct.threadIdx`、`ct.num_threads` | 45 |
+| NumPy/torch 惯性 | `ct.zeros_like`、`ct.sigmoid`、`ct.mean`、`ct.var`、`ct.erf` | 40 |
+
+第一类尤其值得注意：tile 编程模型里根本没有线程的概念，模型却还在找线程索引。
+
+反过来看一个**没有**发生的现象：1600 个样本里 Triton 味的泄漏是 **0**——没有任何一个
+样本出现 `tl.load` 或 `@triton.jit`。混进 CUDA C++（`__global__`、`threadIdx`）的
+也只有 12 个，占 0.75%。说明文档喂进 context 确实生效了，模型清楚自己在写的不是
+Triton 也不是 CUDA C++。
+
+---
+
 ## 仓库结构
 
 本仓库**不 vendor KernelBench 的代码**。改动拆成两部分：

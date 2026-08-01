@@ -153,9 +153,9 @@ reshape。模型的 PyTorch 惯性很强。
 - **NumPy/torch 惯性**：`ct.zeros_like`（12）、`ct.sigmoid`（6）、`ct.mean`（5）、
   `ct.var`（4）、`ct.reciprocal`、`ct.erf`、`ct.log1p`
 
-值得注意的是，**几乎没有 Triton 味的泄漏**——没有出现 `tl.load`、`@triton.jit`。
-说明文档喂进 context 确实起了作用，模型知道自己在写的不是 Triton。混进来的 CUDA C++
-（`__global__`）也只有 6 个样本，占 0.4%。
+值得注意的是，**Triton 味的泄漏是 0**——1600 个样本里没有任何一个出现 `tl.load` 或
+`@triton.jit`。说明文档喂进 context 确实起了作用，模型知道自己在写的不是 Triton。
+混进来的 CUDA C++（`__global__`、`threadIdx`）两个 level 合计 12 个，占 0.75%。
 
 ---
 
