@@ -1,4 +1,4 @@
-# cutile-forge
+# cuTileForge
 
 提升语言模型生成 **cuTile**（NVIDIA `cuda.tile` Python DSL）kernel 的能力。
 

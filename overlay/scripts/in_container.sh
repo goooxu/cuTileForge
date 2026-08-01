@@ -13,24 +13,38 @@
 #        DETACH=1 NAME=eval ./in_container.sh python3 scripts/bar.py
 set -euo pipefail
 
-# Workspace root: the directory holding models/ and runs/, mounted into the
-# container. Defaults to the parent of the KernelBench checkout, which is the
-# cutile-forge repo when set up via scripts/setup_kernelbench.sh.
-WS="${CUTILE_WS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+# The KernelBench checkout this script lives in.
+CHECKOUT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Workspace root: the directory holding models/ and runs/, mounted at /ws.
+# Defaults to the checkout's parent, which is the repo root when set up via
+# scripts/setup_kernelbench.sh.
+WS="${CUTILE_WS:-$(dirname "$CHECKOUT")}"
+
+
+# Paths inside the container are derived from the checkout's position under the
+# workspace rather than hardcoded, so the same script works whether CUTILE_WS is
+# the immediate parent or a higher ancestor.
+case "$CHECKOUT" in
+    "$WS"/*) REL="${CHECKOUT#"$WS"/}" ;;
+    "$WS")   REL="." ;;
+    *) echo "error: CUTILE_WS ($WS) is not an ancestor of $CHECKOUT" >&2; exit 1 ;;
+esac
+
 GPUS="${GPUS:-all}"
 NAME="${NAME:-}"
 DETACH="${DETACH:-0}"
 
 args=(--user "$(id -u):$(id -g)" --ipc=host --network host
       -e HOME=/tmp
-      -e PYTHONPATH=/ws/cutile-eval/src
+      -e PYTHONPATH="/ws/$REL/src"
       -e HF_HOME=/ws/models/hf-cache
       -e NVIDIA_TF32_OVERRIDE=0
       # The OpenAI client refuses to construct without a key; the local vLLM
       # server is started without --api-key and ignores its value.
       -e SGLANG_API_KEY=local-no-auth
       -v "$WS":/ws
-      -w /ws/cutile-eval)
+      -w "/ws/$REL")
 
 # GPUS=none skips GPU passthrough entirely, for CPU-only steps such as generation
 # (which just talks to the vLLM server over HTTP).

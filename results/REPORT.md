@@ -25,8 +25,9 @@
 | 精度 | fp32，容差 atol=rtol=1e-4 |
 | 正确性 | 5 组随机输入全部通过才算对 |
 
-评测代码是给 KernelBench 加的一个 `cutile` backend，在
-[cutile-eval/](../cutile-eval)，改动清单见 [WORKLOG.md](../cutile-eval/WORKLOG.md)。
+评测代码是给 KernelBench 加的一个 `cutile` backend，改动拆成
+[overlay/](../overlay)（新增文件）与 [patches/](../patches)（对上游文件的修改），
+完整清单见 [docs/WORKLOG.md](../docs/WORKLOG.md)。
 
 ### 为什么要加"cuTile 使用度门控"
 
@@ -169,7 +170,7 @@ reshape。模型的 PyTorch 惯性很强。
 | 3_Batched_matmul | 0/8 | rank_mismatch 7 个 | **通过**（5/5），57.5 ms |
 | 42_MaxPool2D | 0/8 | grid 超 3 维 | **通过**（5/5），14.5 ms |
 
-三道全部可解。代码在 [cutile-eval/golden/](../cutile-eval/golden)。
+三道全部可解。代码在 [golden/](../golden)。
 
 结论很明确：**这些失败是模型对 cuTile 掌握不够，不是 cuTile 表达不了。** 尤其
 MaxPool2D 这道直接证伪了"grid 只能 3 维所以 4D 张量做不了"的推测。
@@ -237,13 +238,26 @@ tile 与 array 的 rank 必须一致、grid 最多 3 维、Array 不是 tensor�
 
 ## 附：产物位置
 
+仓库内（本次评测的可核验产物）：
+
 | 内容 | 路径 |
 | --- | --- |
-| cutile backend 代码改动 | `cutile-eval/` |
-| 工作记录（含所有踩坑） | `cutile-eval/WORKLOG.md` |
-| 文档 context 包 | `cutile-eval/src/kernelbench/prompts/cutile_{concepts,api_reference}.md` |
-| 手写 golden 解 | `cutile-eval/golden/` |
-| 生成的 1600 个 kernel + 原始回复 | `runs/cutile_l1/`, `runs/cutile_l2/` |
-| 逐样本分析结果 | `runs/cutile_l{1,2}/analysis.json` |
-| 分析报表 | `runs/analysis_l{1,2}.txt` |
-| GB200 torch 基线 | `runs/baseline_gb200_torch_fp32.json` |
+| cutile backend 新增文件 | `overlay/` |
+| 对上游文件的修改 | `patches/0001-cutile-backend.patch` |
+| 工作记录（含所有踩坑） | `docs/WORKLOG.md` |
+| 文档 context 包 | `overlay/src/kernelbench/prompts/cutile_{concepts,api_reference}.md` |
+| 手写 golden 解 | `golden/` |
+| 逐样本分析结果 | `results/level{1,2}_per_sample.json` |
+| 分析报表 | `results/analysis_l{1,2}.txt` |
+| GB200 torch 基线 | `results/baseline_gb200_torch_fp32.json` |
+
+仓库外（体积大、可重新生成，不进版本库）：
+
+| 内容 | 位置 |
+| --- | --- |
+| 1600 份模型原始回复 + 1595 个抽取出的 kernel | 评测机 scratch 上的 `runs/cutile_l{1,2}/` |
+| 每个样本的完整评测结果（含报错原文） | 同上，`eval_results.json` |
+| 模型权重（159 GB） | 同上，`models/` |
+
+重建方式见 [README](../README.md) 的"复现基线评测"一节。注意重跑需要
+159 GB 权重、一台 Blackwell 机器和数小时评测时间。

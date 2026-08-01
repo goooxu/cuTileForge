@@ -83,12 +83,12 @@ allow_tf32=False -> |torch_ref - cutile| max 0.0001144 allclose(1e-4)=True
 
 ## 阶段 1：仓库与依赖
 
-- KernelBench clone 到 `cutile-eval/`（`git log` 起点 `423217d`）
+- KernelBench clone 到本地（上游起点 `423217d`，已钉在 `upstream.lock`）
 - 数据集自带：level1 100 题、level2 100 题、level3 50 题、level4 20 题
 - `pyproject.toml` 写死 `requires-python = "==3.10.*"`，容器是 Python 3.12。
-  最终没有把 kernelbench 装进镜像，而是用 `PYTHONPATH=/ws/cutile-eval/src` 直接跑
-  挂载目录里的源码——`get_package_resource_path()` 有 repo-relative 回退，prompt
-  资源能正确解析，改代码也不用重建镜像。
+  最终没有把 kernelbench 装进镜像，而是用 `PYTHONPATH` 指向挂载目录里的源码直接跑
+  ——`get_package_resource_path()` 有 repo-relative 回退，prompt 资源能正确解析，
+  改代码也不用重建镜像。
 - 镜像 `docker/Dockerfile.cutile-eval` 只补 `pydra-config / tomli / python-dotenv /
   openai / litellm / transformers / modal`。刻意不装 `gpu` extra
   （`nvidia-cutlass-dsl`、`tilelang`、`cupy`）——那些是别的 backend 用的，在
@@ -275,8 +275,40 @@ MaxPool2D 这道最关键：它证伪了"grid 只能 3 维所以 4D 张量做不
    `compilation_error`（import 期）、`other_error`。一开始只读第一个，导致 93 个
    失败样本的信息是空的、全落进 "other"。
 
-最终报告：[../runs/REPORT.md](../runs/REPORT.md)
+最终报告：[../results/REPORT.md](../results/REPORT.md)
 
 核心数字（200 题 × 8 样本）：真的用了 cuTile 95.3%，能 import 91.4%，
 cuTile 门控 pass@1 = 15.9%、pass@8 = 45.0%，200 题里 90 题至少写对过一次。
+
+---
+
+## 阶段 9：整理成 cuTileForge 仓库
+
+评测只是第一步，仓库要装得下后续的数据合成和训练，所以没有直接把 KernelBench 的
+fork 推上去，而是拆成 **overlay + patch**：
+
+| | 文件数 | 行数 |
+| --- | --- | --- |
+| `overlay/` 新增文件 | 21 | 3511 |
+| `patches/` 对上游文件的修改 | 8 | 282 增 / 30 删 |
+
+实质内容 93% 是新文件，可以作为正常文件被阅读和 review；真正动上游的只有 282 行。
+`scripts/setup_kernelbench.sh` 负责 clone 上游到 `upstream.lock` 钉死的 commit、
+铺 overlay、打 patch。好处是仓库只有 1.2 MB、不 vendor 别人的代码、上游关系明确；
+代价是跟上游同步时要手工 rebase 一次 patch。
+
+数据只留约 1.1 MB 汇总产物（`results/`），够核验报告里每个数字。1600 份原始回复、
+1595 个 kernel、完整 eval 结果共 21.5 MB 不进仓库——那是可再生的产物，而这个项目
+的模式是"评测→训练→再评测"，提交第一轮等于给后面每轮都开口子。
+
+### 两个只有实跑才暴露的 bug
+
+1. **golden 目录的软链用了绝对路径。** checkout 会被 bind mount 进容器，容器里的
+   绝对路径不同，链接直接悬空。改成相对链接。
+2. **`in_container.sh` 里写死了 `/ws/cutile-eval/src`。** 重构后 checkout 改名叫
+   `kernelbench/`，这个路径已经不对了。更隐蔽的是**第一次验证还"通过"了**——因为
+   我把 `CUTILE_WS` 指向旧工作目录，那里恰好还存在 `cutile-eval/`，于是测的是旧
+   代码而不是重建出来的。改成从脚本自身位置推导 checkout 相对 workspace 的路径。
+
+第二个是个教训：验证脚本时，要确认它测的确实是新产物，而不是碰巧命中了旧的。
 
