@@ -20,16 +20,23 @@ Qwen3-Coder-Next（80B-A3B，BF16）在 KernelBench Level 1+2 共 200 题、每�
 
 | 指标 | 数值 |
 | --- | --- |
-| 样本里真的用了 cuTile | 95.3% |
+| 完全用 cuTile 实现 | 81.6% |
 | 模块能 import | 91.4% |
-| pass@1（cuTile 门控） | **15.9%** |
-| pass@8（cuTile 门控） | **45.0%** |
-| 200 题中至少写对一次 | 90 题 |
+| pass@1 | **12.6%** |
+| pass@8 | **29.5%** |
+| 200 题中至少通过一次 | 59 题 |
 
-模型确实在写真正的 cuTile，不是靠退回 PyTorch 刷分（raw 与门控口径只差约 2 个百分点），
-但一次写对的概率低，失败高度集中在几个 cuTile 特有约束上：tile 与 array 的 rank 必须
-一致、grid 最多 3 维、Array 不是 tensor。手写 golden 解验证过，模型 0/8 全挂的题目里
-抽查的三道在 cuTile 里都可解——瓶颈在模型，不在 DSL。
+**通过判据是"数值正确 **且** 完全用 cuTile 实现"。** KernelBench 自身允许保留一部分
+PyTorch 算子，但那样一个只移植了一半的实现也算通过，回答不了"模型会不会写 cuTile"，
+所以这里一律记为失败——有 88 个样本数值正确但因此没被计入。
+
+两个短板性质不同。一是一次写对的概率低，失败高度集中在几个 cuTile 特有约束上：tile
+与 array 的 rank 必须一致、grid 最多 3 维、Array 不是 tensor。二是**遇到难算子会退回
+PyTorch**，把 conv / norm / pooling 留给库、只移植好写的部分——Level 2 尤其明显
+（数值正确 13.0%，但完全移植后通过只有 5.5%）。
+
+手写 golden 解验证过，模型 0/8 全挂的题目里抽查的三道在 cuTile 里都可解——瓶颈在模型，
+不在 DSL。
 
 完整报告见 [results/REPORT.md](results/REPORT.md)，
 全过程记录（含所有踩坑）见 [docs/WORKLOG.md](docs/WORKLOG.md)。
@@ -256,10 +263,16 @@ scripts/in_container.sh python3 scripts/analyze_cutile_run.py \
 相对 float64 误差 2.1e-2，而 cuTile `ct.mma` 只有 1.65e-5——不精确的是**参考解**。
 KernelBench 的 fp32 容差是 1e-4，不处理的话所有算得准的 cuTile 矩阵乘反而被判错。
 
-**必须检查模型是否真的用了 cuTile。** KernelBench 允许保留 PyTorch 算子，所以一个只调
-`torch.matmul` 的 `ModelNew` 能拿到"正确 + 约 1.0x 加速"却一行 cuTile 都没写。
-`check_cutile_impl` 要求样本真的 import 了 `cuda.tile`、定义了 `@ct.kernel`、
-调用了 `ct.launch` 并用到 tile 算子；报告同时给门控前后两套数字。
+**光看数值正确不够，必须要求完全用 cuTile 实现。** KernelBench 允许保留 PyTorch 算子，
+所以一个只调 `torch.matmul` 的 `ModelNew` 能拿到"正确 + 约 1.0x 加速"却一行 cuTile 都
+没写，一个只移植了一半的实现也算完整通过。判据因此是三条同时成立：`check_cutile_impl`
+（定义了 `@ct.kernel` 且真的被 `ct.launch` 派发）、`check_torch_computation_ops`
+（没有残留 torch 计算算子）、`check_pytorch_wrap`（没有残留 `torch.nn` 计算层）。
+后两条是 KernelBench 自带的定义，已放行 `nn.Module`、`torch.empty_like`、
+`.contiguous()` 这些 launcher 必需的宿主端脚手架。
+
+这条线比原始口径严格得多：88 个数值正确的样本因为把 conv / norm 留在 PyTorch 里而
+未被计入，其中 60 个来自 Level 2。
 
 ---
 

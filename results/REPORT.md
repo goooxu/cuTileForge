@@ -1,9 +1,9 @@
 # Qwen3-Coder-Next 生成 cuTile Python kernel 的能力评测
 
 **结论先说**：在文档喂进 context 的条件下，Qwen3-Coder-Next 能写出**语法基本正确、
-确实在用 cuTile 编程模型**的 kernel——95.3% 的样本包含真正被 launch 的 `@ct.kernel`，
-91.4% 能成功 import。但**一次就写对的比例只有 15.9%**（cuTile 门控后的 pass@1），
-给 8 次机会也只有 45.0%。性能上更弱：正确的 kernel 里只有 30/255 比 torch eager 快。
+确实在用 cuTile 编程模型**的 kernel——81.6% 的样本是完全用 cuTile 实现的，91.4% 能
+成功 import。但**一次就写对的比例只有 12.6%**，给 8 次机会也只有 29.5%。性能上更弱：
+通过的 kernel 里只有 19/202 比 torch eager 快。
 
 失败原因高度集中在**几个 cuTile 特有语义**上，而不是散布在通用 GPU 编程能力上。
 手写 golden 解验证过：模型 0/8 全挂的题目里，抽查的三道**在 cuTile 里都是可解的**，
@@ -29,19 +29,24 @@
 [overlay/](../overlay)（新增文件）与 [patches/](../patches)（对上游文件的修改），
 完整清单见 [docs/WORKLOG.md](../docs/WORKLOG.md)。
 
-### 为什么要加"cuTile 使用度门控"
+### 通过判据：必须完全用 cuTile 实现
 
-KernelBench 允许模型只替换一部分算子、其余留给 PyTorch。所以一个只调
-`torch.matmul` 的 `ModelNew` 能拿到"正确 + 约 1.0x 加速"，却一行 cuTile 都没写——
-标准 pass@k 会因此高估 cuTile 能力。
+KernelBench 自身允许模型只替换一部分算子、其余留给 PyTorch。按它的规则，一个只调
+`torch.matmul` 的 `ModelNew` 能拿到"正确 + 约 1.0x 加速"却一行 cuTile 都没写，一个
+只移植了一半的实现也算完整通过。这两种都回答不了"模型会不会写 cuTile"，所以本报告
+一律记为失败。
 
-本报告同时给两套数字：
+**一个样本只有同时满足下面三条才算通过**（判据用的是 KernelBench 自带的静态检查器）：
 
-- **raw**：KernelBench 原始口径，与其他 backend 的已发表结果可比
-- **cuTile 门控**：额外要求样本真的 import 了 `cuda.tile`、定义了 `@ct.kernel`、
-  调用了 `ct.launch`、并用到了 tile 算子
+1. 定义了 `@ct.kernel` 并且真的被 `ct.launch` 派发（`check_cutile_impl`）
+2. 没有残留 torch 计算算子（`check_torch_computation_ops`）
+3. 没有残留 `torch.nn` 计算层（`check_pytorch_wrap`）
 
-两者差距只有约 2 个百分点，说明**模型没有靠退回 torch 来刷分**，是真的在写 cuTile。
+后两条已经放行了 cuTile launcher 必需的宿主端脚手架：`nn.Module`/`nn.Parameter`、
+`torch.empty_like`、`.contiguous()` 等等。
+
+这条线比 KernelBench 原始口径严格得多——有 **88 个样本数值正确但没被计入**，因为它们
+把 conv、norm 之类留在了 PyTorch 里。
 
 ---
 
@@ -52,42 +57,47 @@ KernelBench 允许模型只替换一部分算子、其余留给 PyTorch。所以
 | 指标 | 比例 |
 | --- | --- |
 | 产出了代码 | 99.7% |
-| 真的用了 cuTile | 95.3% |
+| 完全用 cuTile 实现 | 81.6% |
 | 模块能 import | 91.4% |
-| 正确（raw） | 18.1% |
-| 正确且用了 cuTile | **15.9%** |
+| 数值正确 | 18.1% |
+| **通过**（正确 + 完全 cuTile） | **12.6%** |
 
-| pass@k | raw | cuTile 门控 |
-| --- | --- | --- |
-| pass@1 | 18.1% | **15.9%** |
-| pass@2 | 27.4% | 23.4% |
-| pass@4 | 39.8% | 33.3% |
-| pass@8 | 54.0% | **45.0%** |
+| pass@k | |
+| --- | --- |
+| pass@1 | **12.6%** |
+| pass@2 | 17.5% |
+| pass@4 | 23.3% |
+| pass@8 | **29.5%** |
 
-200 道题里，有 90 道至少被写对过一次。
+200 道题里，有 59 道至少被通过一次。
 
 ### 2.2 分 Level
 
 | | Level 1（单算子） | Level 2（融合） |
 | --- | --- | --- |
-| 真的用了 cuTile | 94.2% | 96.4% |
+| 完全用 cuTile 实现 | 88.2% | 75.0% |
 | 能 import | 90.8% | 92.0% |
-| pass@1（门控） | 20.8% | 11.1% |
-| pass@8（门控） | 39.0% | 51.0% |
-| 至少写对一次的题 | 39/100 | 51/100 |
+| 数值正确 | 23.2% | 13.0% |
+| pass@1 | 20.8%→**19.8%** | 11.1%→**5.5%** |
+| pass@8 | **34.0%** | **25.0%** |
+| 至少通过一次的题 | 34/100 | 25/100 |
 
-Level 2 的 pass@1 更低但 pass@8 更高。融合题一次写对更难（要同时正确处理多个算子），
-但多采几次更容易撞对——因为 Level 2 的算子本身（elementwise 链、简单归约）比 Level 1
-里那些 3D 卷积、各种 pooling 更适合 tile 模型。
+Level 2 掉得比 Level 1 狠得多（数值正确 13.0% → 通过 5.5%，砍掉一半以上）。原因很
+直接：Level 2 是融合题，模型的典型做法是把好写的 elementwise 部分移植成 cuTile、把
+conv / norm / pooling 留给 PyTorch。这种"半移植"在 KernelBench 原始口径下算完整通过，
+但它恰恰绕开了最难的部分。60 个 Level 2 样本属于这种情况。
 
 ### 2.3 速度
 
 | | Level 1 | Level 2 |
 | --- | --- | --- |
-| fast_1（正确且快于 torch 的题占比） | 5.0% | 11.0% |
+| fast_1（通过且快于 torch 的题占比） | 5.0% | 4.0% |
 | fast_2 | 1.0% | 0.0% |
-| 每样本加速比中位数 | 0.115x | 0.996x |
-| 快于 torch 的样本 | 15/166 | 15/89 |
+| 每样本加速比中位数 | 0.105x | 0.109x |
+| 快于 torch 的样本 | 15/158 | 4/44 |
+
+（Level 2 之前看起来加速比中位数接近 1.0x，是因为那些"半移植"样本里真正的重活仍由
+cuDNN 在做。按完全移植的口径重算之后，两个 level 的中位数都在 0.1x 左右。）
 
 **这一栏不要单独解读成模型的问题。** 我手写的三个 golden 解同样明显慢于 torch：
 
@@ -216,22 +226,32 @@ eval 中断；断点续跑只按 problem_id 判重、会跳过同题剩余样本
 
 **能力画像**：Qwen3-Coder-Next 拿到文档后能建立起 cuTile 的基本心智模型——它知道要
 `@ct.kernel` + `ct.launch`、知道用 `ct.load/store` 配 `PaddingMode`、知道 `ct.mma`
-要配 fp32 累加器，而且**不会退化去写 Triton**。它写出来的东西 95% 是真 cuTile。
+要配 fp32 累加器，而且**不会退化去写 Triton**（1600 个样本里 Triton 泄漏为 0）。
+81.6% 的输出是完全用 cuTile 实现的。
 
-**短板**：一次写对的概率只有 15.9%，错误高度集中在几个 cuTile 特有的约束上——
-tile 与 array 的 rank 必须一致、grid 最多 3 维、Array 不是 tensor。这些都是文档里
-写了但模型没有内化的规则，尤其"4D 张量要在 host 端折叠维度"这类 idiom，文档没有直接
-给例子，模型就想不到。
+**短板有两个，性质不同**：
+
+一是**一次写对的概率只有 12.6%**，错误高度集中在几个 cuTile 特有的约束上——tile 与
+array 的 rank 必须一致、grid 最多 3 维、Array 不是 tensor。这些都是文档里写了但模型
+没有内化的规则，尤其"4D 张量要在 host 端折叠维度"这类 idiom，文档没有直接给例子，
+模型就想不到。
+
+二是**遇到难算子会退回 PyTorch**。88 个样本数值正确却没通过，因为把 conv、norm、
+pooling 留在了 torch 里。这在 Level 2 尤其明显（数值正确 13.0% 但通过只有 5.5%）。
+模型不是不会写 cuTile，而是在"好写的部分写 cuTile、难写的部分交给库"——这恰恰绕开了
+最需要能力的地方。训练时要专门针对这种规避行为设计奖励。
 
 **可改进的方向**（按预期收益排序）：
 
-1. **文档里补 idiom 而不只是 API**。当前 API reference 已经很全（96 个 op），但
-   165 个样本栽在 grid 维度上，说明缺的是"4D/5D 张量怎么映射到 3D grid"这种模式。
-   在导读里加 2-3 个这样的 worked example，成本极低。
-2. **上 agentic 修复循环**。失败里很大一部分是编译期就能发现的（rank 不匹配、grid
+1. **上 agentic 修复循环**。失败里很大一部分是编译期就能发现的（rank 不匹配、grid
    超维、传了 None），报错信息也相当具体（cuTile 的报错带行号和列号）。给模型看一眼
    报错再改，pass@1 应该有明显提升。本次是单轮生成，没有用上模型主打的 agentic 能力。
-3. **性能要单独设计题目**。现在的速度指标主要在测"朴素 tile kernel vs 厂商库"，
+2. **文档里补 idiom 而不只是 API**。当前 API reference 已经很全（96 个 op），但
+   165 个样本栽在 grid 维度上，说明缺的是"4D/5D 张量怎么映射到 3D grid"这种模式。
+   在导读里加 2-3 个这样的 worked example，成本极低。
+3. **训练时把"完全移植"作为硬约束**。本次评测的判据（正确 + 完全 cuTile）可以直接
+   当 RLVR 的 reward，避免模型学会用部分移植来骗过验证。
+4. **性能要单独设计题目**。现在的速度指标主要在测"朴素 tile kernel vs 厂商库"，
    我手写的解也是 0.07x–0.54x，区分不出模型的性能优化能力。
 
 ---

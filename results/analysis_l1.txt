@@ -3,26 +3,27 @@ cuTile KernelBench run: cutile_l1  (level 1, 100 problems x 8 samples = 800)
 ==============================================================================
 
 -- Per-sample rates --
+  A sample passes only if it is numerically correct AND implemented
+  entirely in cuTile; a partial port counts as a failure.
   generated                   99.4%
-  contains real cuTile        94.2%
-  compiled                    90.8%
-  correct (raw KernelBench)   23.2%
-  correct AND uses cuTile     20.8%
+  entirely cuTile             88.2%
+  module imported             90.8%
+  numerically correct         23.2%
+  PASSED                      19.8%
 
 -- pass@k --
-    k       raw   cuTile-gated
-    1     23.2%          20.8%
-    2     31.2%          26.6%
-    4     40.3%          32.5%
-    8     51.0%          39.0%
+  pass@1    19.8%
+  pass@2    25.1%
+  pass@4    29.9%
+  pass@8    34.0%
 
--- Speed vs torch eager (correct cuTile only) --
+-- Speed vs torch eager (passing samples only) --
   fast_p over problems (best sample per problem):
-    fast_0.5:  21.0%
+    fast_0.5:  18.0%
     fast_1:   5.0%
     fast_2:   1.0%
-  per-sample speedup: median 0.115x  max 4.95x  n=166
-  samples beating torch: 15/166
+  per-sample speedup: median 0.105x  max 4.95x  n=158
+  samples beating torch: 15/158
 
 -- Where samples died --
   (KernelBench's 'compiled' only means the module imported; @ct.kernel
@@ -76,11 +77,28 @@ cuTile KernelBench run: cutile_l1  (level 1, 100 problems x 8 samples = 800)
       4  builtins.AssertionError
       2  builtins.OverflowError
 
--- Why the cuTile gate rejected samples --
+-- Why the purity gate rejected samples --
      37  Missing ct.launch(...) call (kernel is never dispatched)
+     19  Uses torch.nn.functional op: torch.nn.functional.pad
+      9  Uses torch.nn compute layer (only containers, Parameter, init allowed)
       5  no code generated
       3  Missing @ct.kernel decorated kernel definition
+      3  Uses torch.nn.functional op: nn.functional.conv2d
+      3  Uses torch.nn.functional op: torch.nn.functional.conv2d
+      2  Uses torch computation op: torch.matmul
+      2  Uses torch.nn.functional op: torch.nn.functional.unfold
+      1  Uses torch computation op: torch.log_softmax
+      1  Uses torch.nn.functional op: nn.functional.batch_norm
+      1  Uses torch.nn.functional op: torch.nn.functional.group_norm
+      1  Uses torch.nn.functional op: torch.nn.functional.avg_pool3d
+      1  Uses torch.nn.functional op: torch.nn.functional.conv_transpose3d
+      1  Uses torch.nn.functional op: torch.nn.functional.conv1d
       1  Missing 'import cuda.tile' (no cuTile import found)
+      1  Uses torch.nn.functional op: F.conv
+      1  Uses torch.nn.functional op: torch.nn.functional.kl_div
+      1  Uses torch.nn.functional op: torch.nn.functional.triplet_margin_loss
+      1  Uses torch computation op: torch.relu
+  -> 28 samples were numerically correct but not counted, having left PyTorch compute in place
 
 -- Most-invented ct.* APIs (do not exist in cuda.tile) --
      16  ct.tid
@@ -105,6 +123,6 @@ cuTile KernelBench run: cutile_l1  (level 1, 100 problems x 8 samples = 800)
       1  ct.width
 
 -- Coverage --
-  problems with >=1 correct cuTile sample: 39/100
+  problems with >=1 passing sample: 34/100
 
 wrote per-sample records to /ws/runs/cutile_l1/analysis.json

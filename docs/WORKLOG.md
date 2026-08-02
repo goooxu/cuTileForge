@@ -131,14 +131,29 @@ KernelBench 的 backend 抽象是 TOML 驱动的，接入点很干净。改动�
 `local_chat`，把字符串包成 user message 走 `/v1/chat/completions`。同时该分支原本
 把 `top_k` 丢了，改成用 `extra_body` 透传。
 
-### cuTile 使用度门控
+### 通过判据：完全用 cuTile 实现
 
 KernelBench 允许模型只替换一部分算子，所以一个只调 `torch.matmul` 的 `ModelNew`
-能拿到"正确 + 约 1.0x 加速"，却一行 cuTile 都没有。标准 pass@k 会因此**高估** cuTile
-能力。`check_cutile_impl` 要求四件事同时成立：import 了 `cuda.tile`、有
-`@ct.kernel` 定义、有 `ct.launch(...)` 调用、用到了真正的 tile 算子。别名（如
-`import cuda.tile as cutile`）也能识别。`scripts/test_cutile_checker.py` 六个用例
-全过，其中关键的两个负例是"纯 torch passthrough"和"定义了 kernel 但从不 launch"。
+能拿到"正确 + 约 1.0x 加速"却一行 cuTile 都没有，一个只移植了一半的实现也算完整通过。
+标准 pass@k 会因此**高估** cuTile 能力。
+
+判据定为三条同时成立：
+
+1. `check_cutile_impl`（新写）——import 了 `cuda.tile`、有 `@ct.kernel` 定义、有
+   `ct.launch(...)` 调用、用到了真正的 tile 算子。别名（如
+   `import cuda.tile as cutile`）也能识别。
+2. `check_torch_computation_ops`（KernelBench 自带）——没有残留 torch 计算算子
+3. `check_pytorch_wrap`（KernelBench 自带）——没有残留 `torch.nn` 计算层
+
+后两条上游本来是 WARNING 级，这里提成硬性要求。它们已经放行了 cuTile launcher 必需的
+宿主端脚手架：`nn.Module`/`nn.Parameter`、`torch.empty_like`、`.contiguous()`。
+
+`scripts/test_cutile_checker.py` 六个用例全过，其中关键的两个负例是"纯 torch
+passthrough"和"定义了 kernel 但从不 launch"。
+
+这条线的代价不小：**88 个数值正确的样本因此不算通过**，其中 60 个来自 Level 2——
+融合题里模型的典型做法就是把 elementwise 部分移植成 cuTile、把 conv/norm 留给 PyTorch。
+这正是要抓的规避行为，它绕开了最需要能力的部分。
 
 ---
 
@@ -274,11 +289,14 @@ MaxPool2D 这道最关键：它证伪了"grid 只能 3 维所以 4D 张量做不
 2. 错误信息分散在三个 metadata 键里——`runtime_error`（运行期）、
    `compilation_error`（import 期）、`other_error`。一开始只读第一个，导致 93 个
    失败样本的信息是空的、全落进 "other"。
+3. 通过判据一开始只要求"有 cuTile kernel 被派发"，没有要求**全部**计算都在 cuTile 里。
+   收紧后 Level 2 的 pass@1 从 11.1% 掉到 5.5%——差的那一半全是半移植样本。
 
 最终报告：[../results/REPORT.md](../results/REPORT.md)
 
-核心数字（200 题 × 8 样本）：真的用了 cuTile 95.3%，能 import 91.4%，
-cuTile 门控 pass@1 = 15.9%、pass@8 = 45.0%，200 题里 90 题至少写对过一次。
+核心数字（200 题 × 8 样本，判据为"数值正确且完全用 cuTile 实现"）：
+完全 cuTile 实现 81.6%，能 import 91.4%，数值正确 18.1%，
+**pass@1 = 12.6%、pass@8 = 29.5%**，200 题里 59 题至少通过一次。
 
 ---
 

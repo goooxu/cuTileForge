@@ -1,14 +1,20 @@
 """Score a cuTile KernelBench run and classify what went wrong.
 
-Reports two families of numbers:
+A sample counts as a pass only if it is numerically correct *and* implemented
+entirely in cuTile. KernelBench itself permits leaving operators in PyTorch, so
+by its own rules a ModelNew that just calls torch.matmul scores as correct at
+~1x speedup while containing no cuTile at all, and a partial port scores as a
+full pass. Neither answers "can this model write cuTile", so both are counted as
+failures here.
 
-  * Raw KernelBench metrics (pass@k, fast_p), directly comparable with published
-    results for other backends.
-  * cuTile-gated metrics, which additionally require that the sample actually
-    contains a dispatched cuTile kernel. KernelBench permits leaving operators in
-    PyTorch, so a ModelNew that just calls torch.matmul scores as correct at ~1x
-    speedup while containing no cuTile at all. The gated number is the one that
-    answers "can this model write cuTile".
+"Entirely in cuTile" means all three of:
+  * a cuTile kernel is defined and actually dispatched (check_cutile_impl)
+  * no torch compute ops remain (check_torch_computation_ops)
+  * no torch.nn compute layers remain (check_pytorch_wrap)
+
+The latter two are KernelBench's own definitions, which already permit the host
+scaffolding a cuTile launcher needs: nn.Module/Parameter, torch.empty_like,
+.contiguous(), and so on.
 
 Usage:
     python3 scripts/analyze_cutile_run.py --run-name cutile_l1 --level 1 --num-samples 8
@@ -21,7 +27,11 @@ import os
 import re
 
 from kernelbench.dataset import construct_kernelbench_dataset
-from kernelbench.kernel_static_checker import check_cutile_impl
+from kernelbench.kernel_static_checker import (
+    check_cutile_impl,
+    check_pytorch_wrap,
+    check_torch_computation_ops,
+)
 
 # Every public cuda.tile symbol; anything else referenced as ct.<name> is invented.
 try:
@@ -206,12 +216,24 @@ def main() -> None:
             correct = bool(res.get("correctness", False))
             meta = res.get("metadata", {}) or {}
 
-            uses_torch_only, gate_msg = check_cutile_impl(code) if code else (True, "no code generated")
+            # Purity gate. Ordered so the reported reason is the most
+            # fundamental one: no kernel at all beats "kernel plus leftovers".
+            if not code:
+                impure, gate_msg = True, "no code generated"
+            else:
+                impure, gate_msg = check_cutile_impl(code)
+                if not impure:
+                    impure, gate_msg = check_torch_computation_ops(code)
+                if not impure:
+                    impure, gate_msg = check_pytorch_wrap(code)
+            fully_cutile = not impure
+
+            passed = correct and fully_cutile
 
             speedup = None
             base = baselines.get(problem.name, {})
             base_ms = base.get("mean") if isinstance(base, dict) else None
-            if correct and res.get("runtime", -1) > 0 and base_ms:
+            if passed and res.get("runtime", -1) > 0 and base_ms:
                 speedup = base_ms / res["runtime"]
 
             records.append({
@@ -221,13 +243,15 @@ def main() -> None:
                 "generated": bool(code),
                 "evaluated": evaluated,
                 "compiled": compiled,
-                "correct": correct,
-                "uses_cutile": not uses_torch_only,
+                "numerically_correct": correct,
+                "fully_cutile": fully_cutile,
                 "gate_reason": gate_msg,
-                "cutile_correct": correct and not uses_torch_only,
+                "passed": passed,
                 "runtime_ms": res.get("runtime", -1),
                 "baseline_ms": base_ms,
                 "speedup": speedup,
+                # Error classification describes the numerics/compile outcome, so
+                # it is keyed on correctness rather than on the purity gate.
                 "error_class": (None if correct
                                 else classify_error(res, code, evaluated, bool(code))),
                 "failure_stage": (None if correct
@@ -264,34 +288,33 @@ def report(records: list[dict], args) -> None:
     print("=" * 78)
 
     print("\n-- Per-sample rates --")
+    print("  A sample passes only if it is numerically correct AND implemented")
+    print("  entirely in cuTile; a partial port counts as a failure.")
     print(f"  generated                 {rate('generated'):6.1f}%")
-    print(f"  contains real cuTile      {rate('uses_cutile'):6.1f}%")
-    print(f"  compiled                  {rate('compiled'):6.1f}%")
-    print(f"  correct (raw KernelBench) {rate('correct'):6.1f}%")
-    print(f"  correct AND uses cuTile   {rate('cutile_correct'):6.1f}%")
+    print(f"  entirely cuTile           {rate('fully_cutile'):6.1f}%")
+    print(f"  module imported           {rate('compiled'):6.1f}%")
+    print(f"  numerically correct       {rate('numerically_correct'):6.1f}%")
+    print(f"  PASSED                    {rate('passed'):6.1f}%")
 
     print("\n-- pass@k --")
-    print(f"  {'k':>3}  {'raw':>8}  {'cuTile-gated':>13}")
     for k in (1, 2, 4, 8):
         if k > n_samples:
             continue
-        raw = sum(pass_at_k(n_samples, sum(r["correct"] for r in rs), k)
-                  for rs in by_problem.values()) / n_problems * 100
-        gated = sum(pass_at_k(n_samples, sum(r["cutile_correct"] for r in rs), k)
-                    for rs in by_problem.values()) / n_problems * 100
-        print(f"  {k:>3}  {raw:7.1f}%  {gated:12.1f}%")
+        p = sum(pass_at_k(n_samples, sum(r["passed"] for r in rs), k)
+                for rs in by_problem.values()) / n_problems * 100
+        print(f"  pass@{k:<2} {p:6.1f}%")
 
     # fast_p in KernelBench is the fraction of *problems* that are both correct
-    # and faster than p, so take each problem's best correct cuTile sample.
+    # and faster than p, so take each problem's best passing sample.
     best_per_problem = {}
     for pid, rs in by_problem.items():
-        cands = [r["speedup"] for r in rs if r["cutile_correct"] and r["speedup"]]
+        cands = [r["speedup"] for r in rs if r["passed"] and r["speedup"]]
         if cands:
             best_per_problem[pid] = max(cands)
 
-    sample_speedups = [r["speedup"] for r in records if r["cutile_correct"] and r["speedup"]]
+    sample_speedups = [r["speedup"] for r in records if r["passed"] and r["speedup"]]
     if sample_speedups:
-        print("\n-- Speed vs torch eager (correct cuTile only) --")
+        print("\n-- Speed vs torch eager (passing samples only) --")
         print("  fast_p over problems (best sample per problem):")
         for p in (0.5, 1.0, 2.0):
             frac = sum(s > p for s in best_per_problem.values()) / n_problems * 100
@@ -302,9 +325,10 @@ def report(records: list[dict], args) -> None:
         faster = [s for s in sample_speedups if s > 1.0]
         print(f"  samples beating torch: {len(faster)}/{len(sample_speedups)}")
     else:
-        print("\n-- Speed: no baseline supplied or no correct samples, skipping --")
+        print("\n-- Speed: no baseline supplied or no passing samples, skipping --")
 
-    fails = [r for r in records if not r["correct"]]
+    # Numerically-incorrect samples: what broke, independent of purity.
+    fails = [r for r in records if not r["numerically_correct"]]
 
     print("\n-- Where samples died --")
     print("  (KernelBench's 'compiled' only means the module imported; @ct.kernel")
@@ -322,11 +346,19 @@ def report(records: list[dict], args) -> None:
         for name, cnt in excs.most_common(12):
             print(f"  {cnt:5d}  {name}")
 
-    print("\n-- Why the cuTile gate rejected samples --")
+    print("\n-- Why the purity gate rejected samples --")
     gate_fails = collections.Counter(
-        r["gate_reason"] for r in records if not r["uses_cutile"])
+        r["gate_reason"] for r in records if not r["fully_cutile"])
     for reason, cnt in gate_fails.most_common():
         print(f"  {cnt:5d}  {reason}")
+
+    # The samples this stricter gate costs us: numerically correct, but not a
+    # complete port. Worth calling out separately, since KernelBench's own rules
+    # would have counted every one of these as a pass.
+    impure_but_correct = [r for r in records
+                          if r["numerically_correct"] and not r["fully_cutile"]]
+    print(f"  -> {len(impure_but_correct)} samples were numerically correct but "
+          f"not counted, having left PyTorch compute in place")
 
     halluc = collections.Counter()
     for r in records:
@@ -336,9 +368,9 @@ def report(records: list[dict], args) -> None:
         for name, cnt in halluc.most_common(20):
             print(f"  {cnt:5d}  ct.{name}")
 
-    solved = [pid for pid, rs in by_problem.items() if any(r["cutile_correct"] for r in rs)]
+    solved = [pid for pid, rs in by_problem.items() if any(r["passed"] for r in rs)]
     print(f"\n-- Coverage --")
-    print(f"  problems with >=1 correct cuTile sample: {len(solved)}/{n_problems}")
+    print(f"  problems with >=1 passing sample: {len(solved)}/{n_problems}")
 
 
 if __name__ == "__main__":

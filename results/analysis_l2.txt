@@ -3,26 +3,27 @@ cuTile KernelBench run: cutile_l2  (level 2, 100 problems x 8 samples = 800)
 ==============================================================================
 
 -- Per-sample rates --
+  A sample passes only if it is numerically correct AND implemented
+  entirely in cuTile; a partial port counts as a failure.
   generated                  100.0%
-  contains real cuTile        96.4%
-  compiled                    92.0%
-  correct (raw KernelBench)   13.0%
-  correct AND uses cuTile     11.1%
+  entirely cuTile             75.0%
+  module imported             92.0%
+  numerically correct         13.0%
+  PASSED                       5.5%
 
 -- pass@k --
-    k       raw   cuTile-gated
-    1     13.0%          11.1%
-    2     23.6%          20.2%
-    4     39.3%          34.0%
-    8     57.0%          51.0%
+  pass@1     5.5%
+  pass@2    10.0%
+  pass@4    16.8%
+  pass@8    25.0%
 
--- Speed vs torch eager (correct cuTile only) --
+-- Speed vs torch eager (passing samples only) --
   fast_p over problems (best sample per problem):
-    fast_0.5:  42.0%
-    fast_1:  11.0%
+    fast_0.5:  16.0%
+    fast_1:   4.0%
     fast_2:   0.0%
-  per-sample speedup: median 0.996x  max 1.18x  n=89
-  samples beating torch: 15/89
+  per-sample speedup: median 0.109x  max 1.18x  n=44
+  samples beating torch: 4/44
 
 -- Where samples died --
   (KernelBench's 'compiled' only means the module imported; @ct.kernel
@@ -74,9 +75,47 @@ cuTile KernelBench run: cutile_l2  (level 2, 100 problems x 8 samples = 800)
       5  builtins.AssertionError
       2  cuda.tile._exception.TileInternalError
 
--- Why the cuTile gate rejected samples --
+-- Why the purity gate rejected samples --
      28  Missing ct.launch(...) call (kernel is never dispatched)
+     16  Uses torch computation op: torch.clamp
+     15  Uses torch.nn.functional op: torch.nn.functional.conv_transpose3d
+     15  Uses torch computation op: torch.logsumexp
+     14  Uses torch computation op: torch.tanh
+     11  Uses torch.nn.functional op: torch.nn.functional.conv2d
+     10  Uses torch computation op: torch.sigmoid
+     10  Uses torch.nn.functional op: torch.nn.functional.pad
+      9  Uses torch computation op: torch.softmax
+      8  Uses torch.nn.functional op: torch.nn.functional.conv3d
+      7  Uses torch.nn.functional op: torch.nn.functional.gelu
+      6  Uses torch.nn.functional op: torch.nn.functional.conv_transpose2d
+      5  Uses torch.nn compute layer (only containers, Parameter, init allowed)
+      4  Uses torch.nn.functional op: nn.functional.group_norm
+      4  Uses torch.nn.functional op: torch.nn.functional.leaky_relu
+      3  Uses torch.nn.functional op: torch.nn.functional.unfold
+      3  Uses torch computation op: torch.matmul
+      3  Uses torch computation op: torch.conv3d
+      2  Uses torch.nn.functional op: torch.nn.functional.layer_norm
+      2  Uses torch.nn.functional op: torch.nn.functional.avg_pool3d
+      2  Uses torch.nn.functional op: torch.nn.functional.max_pool2d
+      2  Uses torch.nn.functional op: nn.functional.conv_transpose3d
+      2  Uses torch.nn.functional op: torch.nn.functional.linear
+      2  Uses torch.nn.functional op: torch.nn.functional.hardswish
+      2  Uses torch.nn.functional op: F.conv
+      2  Uses torch.nn.functional op: torch.nn.functional.batch_norm
+      1  Uses torch.nn.functional op: nn.functional.layer_norm
+      1  Uses torch computation op: torch.group_norm
+      1  Uses torch.nn.functional op: F.relu
+      1  Uses torch.nn.functional op: torch.nn.functional.group_norm
+      1  Uses torch.nn.functional op: torch.nn.functional.softplus
+      1  Uses torch computation op: torch.conv_transpose3d
+      1  Uses torch.nn.functional op: torch.nn.functional.adaptive_avg_pool2d
+      1  Uses torch.nn.functional op: nn.functional.conv2d
+      1  Uses torch computation op: torch.relu
+      1  Uses torch.nn.functional op: nn.functional.batch_norm
       1  Missing @ct.kernel decorated kernel definition
+      1  Uses torch.nn.functional op: nn.functional.conv_transpose2d
+      1  Uses torch.nn.functional op: torch.nn.functional.max_pool3d
+  -> 60 samples were numerically correct but not counted, having left PyTorch compute in place
 
 -- Most-invented ct.* APIs (do not exist in cuda.tile) --
      12  ct.tid
@@ -101,6 +140,6 @@ cuTile KernelBench run: cutile_l2  (level 2, 100 problems x 8 samples = 800)
       1  ct.log1p
 
 -- Coverage --
-  problems with >=1 correct cuTile sample: 51/100
+  problems with >=1 passing sample: 25/100
 
 wrote per-sample records to /ws/runs/cutile_l2/analysis.json
