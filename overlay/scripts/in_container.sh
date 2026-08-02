@@ -37,6 +37,10 @@ DETACH="${DETACH:-0}"
 
 args=(--user "$(id -u):$(id -g)" --ipc=host --network host
       -e HOME=/tmp
+      # The container has no /etc/passwd entry for the mounted-in uid, so
+      # getpass.getuser() raises when torch resolves its cache directory.
+      # It checks $USER before falling back to getpwuid().
+      -e USER=cutile
       -e PYTHONPATH="/ws/$REL/src"
       -e HF_HOME=/ws/models/hf-cache
       -e NVIDIA_TF32_OVERRIDE=0
