@@ -29,11 +29,11 @@ GPUS=none scripts/in_container.sh python3 scripts/generate_samples.py \
     temperature=1.0 \
     top_p=0.95 \
     top_k=40 \
-    max_tokens=8192 \
+    max_tokens="${MAX_TOKENS:-8192}" \
     backend=cutile \
     precision=fp32 \
     prompt_option=one_shot \
     custom_prompt_key=cutile_docs \
-    num_workers=32 \
+    num_workers="${NUM_WORKERS:-32}" \
     check_kernel=False \
     "$@"

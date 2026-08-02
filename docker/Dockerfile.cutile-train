@@ -1,0 +1,23 @@
+# LoRA fine-tuning image for Qwen3-Coder-Next.
+#
+# Built on the same NGC PyTorch base as the eval image, which is the build that
+# actually works on GB200. flash-linear-attention and causal-conv1d give
+# transformers' Qwen3-Next its fused fast path; without them it falls back to
+# torch_chunk_gated_delta_rule, which is pure PyTorch and still differentiable,
+# just slower.
+FROM nvcr.io/nvidia/pytorch:26.06-py3
+
+RUN pip install --no-cache-dir \
+        transformers \
+        peft \
+        accelerate \
+        datasets \
+        safetensors
+
+# Optional fused kernels for the Gated DeltaNet path. Not fatal if unavailable
+# on this platform, since transformers has a differentiable fallback.
+RUN pip install --no-cache-dir flash-linear-attention causal-conv1d || \
+    echo "WARNING: fused linear-attention kernels unavailable; using torch fallback"
+
+ENV NVIDIA_TF32_OVERRIDE=0
+WORKDIR /ws

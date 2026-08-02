@@ -19,6 +19,11 @@ PORT="${PORT:-8000}"
 # plenty and keeps far more KV cache available than the model's native 262k.
 MAX_LEN="${MAX_LEN:-40960}"
 
+# Extra server flags. On GB200 (sm_100) the public vLLM image's inductor path
+# produces an illegal memory access during profile_run, so --enforce-eager is
+# needed there; NVIDIA's internal builds do not need it.
+EXTRA_ARGS="${EXTRA_ARGS:---enforce-eager}"
+
 docker rm -f qwen-vllm 2>/dev/null || true
 
 # Runs as root deliberately. FlashInfer resolves its cubin cache to a path inside
@@ -41,7 +46,8 @@ docker run -d --name qwen-vllm \
         --gpu-memory-utilization 0.90 \
         --enable-prefix-caching \
         --port "$PORT" \
-        --host 0.0.0.0
+        --host 0.0.0.0 \
+        $EXTRA_ARGS
 
 echo "started container qwen-vllm on port $PORT"
 echo "follow startup with: docker logs -f qwen-vllm"

@@ -1,0 +1,23 @@
+# vLLM server image for GB200 (sm_100).
+#
+# The stock vllm/vllm-openai image dies during startup on this hardware with
+# "CUDA error: an illegal memory access was encountered" inside FlashInfer's
+# autotuning warmup (vllm/model_executor/warmup/kernel_warmup.py). vLLM has a
+# config field for this, kernel_config.enable_flashinfer_autotune, but no CLI
+# flag reaches it, and uninstalling flashinfer outright fails because the
+# Qwen3-Next path imports it. So the autotune call site is disabled here.
+#
+# Everything else about FlashInfer stays available; only the tuning sweep at
+# startup is skipped, and vLLM falls back to its heuristic tactics.
+#
+# --enforce-eager is also required on this hardware; see EXTRA_ARGS in
+# scripts/serve_qwen.sh.
+FROM vllm/vllm-openai:latest
+
+ARG WARMUP=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/warmup/kernel_warmup.py
+
+RUN sed -i \
+    's/^\( *\)elif has_flashinfer() and current_platform.has_device_capability(90):/\1elif False:  # GB200: FlashInfer autotune crashes with an illegal memory access/' \
+    "$WARMUP" \
+ && grep -q "GB200: FlashInfer autotune crashes" "$WARMUP" \
+ && python3 -c "import ast, sys; ast.parse(open('$WARMUP').read()); print('kernel_warmup.py patched and still parses')"
