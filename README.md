@@ -102,11 +102,24 @@ def cutile_gelu(x: torch.Tensor) -> torch.Tensor:
 
 ### 例 2：栽在 grid 最多 3 维上（两个 level 合计 165 个样本）
 
-Level 1 第 34 题 InstanceNorm，输入是 4D 的 (N, C, H, W)。模型很自然地想一个 block
-管一块空间区域：
+输入的参考实现（Level 1 第 34 题 InstanceNorm，输入 112×64×512×512）：
 
 ```python
-# 模型输出
+class Model(nn.Module):
+    def __init__(self, num_features: int):
+        super(Model, self).__init__()
+        self.inorm = nn.InstanceNorm2d(num_features=num_features)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (batch_size, num_features, height, width)
+        return self.inorm(x)
+```
+
+张量是 4D 的 (N, C, H, W)，模型很自然地想一个 block 管一块空间区域，于是开了个
+4 维的 grid：
+
+```python
+# 模型输出（节选）
 grid = (batch_size, num_features, ct.cdiv(height, TILE_H), ct.cdiv(width, TILE_W))
 ct.launch(torch.cuda.current_stream(), grid, instance_norm_forward_kernel, ...)
 ```
@@ -128,7 +141,16 @@ ct.launch(..., (x.view(-1), out.view(-1), ...))
 
 ### 例 3：把 cuTile Array 当成 torch tensor
 
-Level 1 第 3 题 batched matmul：
+输入的参考实现（Level 1 第 3 题 batched matmul，128×512×1024 @ 128×1024×2048）：
+
+```python
+class Model(nn.Module):
+    def forward(self, A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+        # A: (batch_size, m, k), B: (batch_size, k, n)
+        return torch.bmm(A, B)
+```
+
+模型在 kernel 内部对传进来的 Array 调了 `.view()`：
 
 ```python
 # 模型输出（kernel 内部）
