@@ -5,8 +5,10 @@
 # Qwen3NextForCausalLM (the hybrid Gated DeltaNet + MoE architecture). BF16
 # weights are ~159 GB, so TP=4 leaves ample room for KV cache on 4x189 GB.
 #
-# Generation and kernel evaluation run in separate phases, so this takes all
-# four GPUs; stop it before running eval_from_generations.py.
+# Batch generation and evaluation run in separate phases, so by default this
+# takes all four GPUs; stop it before running eval_from_generations.py. The
+# repair loop is the exception -- it verifies while the server is up -- so set
+# GPU_UTIL well below the default there to leave the verifier room.
 set -euo pipefail
 
 WS="${CUTILE_WS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
@@ -21,6 +23,12 @@ PORT="${PORT:-8000}"
 # Prompts run ~15k tokens and completions are capped at 8k; 40k of context is
 # plenty and keeps far more KV cache available than the model's native 262k.
 MAX_LEN="${MAX_LEN:-40960}"
+
+# Fraction of each GPU vLLM may claim. 0.90 suits a phase that owns the machine.
+# Anything sharing the GPUs concurrently -- the repair loop's verifier workers --
+# needs this lowered or they will OOM against the server's reservation; 0.55
+# leaves ~82 GB per GPU and is what the repair runs used.
+GPU_UTIL="${GPU_UTIL:-0.90}"
 
 # Extra server flags. Empty by default: the nightly needs no workarounds on
 # GB200. Set EXTRA_ARGS=--enforce-eager if pinning to an older image that does.
@@ -45,7 +53,7 @@ docker run -d --name qwen-vllm \
         --served-model-name Qwen3-Coder-Next \
         --tensor-parallel-size 4 \
         --max-model-len "$MAX_LEN" \
-        --gpu-memory-utilization 0.90 \
+        --gpu-memory-utilization "$GPU_UTIL" \
         --enable-prefix-caching \
         --port "$PORT" \
         --host 0.0.0.0 \
