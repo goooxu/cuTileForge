@@ -16,7 +16,6 @@ Usage:
 import argparse
 import collections
 import json
-import re
 
 
 CATEGORY_RULES = [

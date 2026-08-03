@@ -156,7 +156,6 @@ def main() -> None:
           % (written, out_dir, rejected))
 
     import collections
-    cats = collections.Counter()
     tiers = collections.Counter()
     for f in os.listdir(out_dir):
         if not f.endswith(".py"):

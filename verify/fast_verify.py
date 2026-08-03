@@ -19,11 +19,9 @@ import argparse
 import json
 import multiprocessing as mp
 import os
-import queue
 import re
-import sys
+import signal
 import time
-import traceback
 
 # Set before torch is imported in any worker.
 os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "0")
@@ -47,6 +45,16 @@ def _worker(task_q: "mp.Queue", result_q: "mp.Queue", device_id: int,
 
     import importlib.util
     import tempfile
+
+    class Timeout(Exception):
+        pass
+
+    def _on_alarm(signum, frame):
+        raise Timeout("exceeded %.0fs" % timeout_s)
+
+    # A generated kernel can loop forever, which would otherwise wedge this
+    # worker for the rest of the run.
+    signal.signal(signal.SIGALRM, _on_alarm)
 
     def purity(code: str):
         """Same gate as the benchmark: real cuTile, and nothing left in torch."""
@@ -84,6 +92,7 @@ def _worker(task_q: "mp.Queue", result_q: "mp.Queue", device_id: int,
         rec = {"key": key, "passed": False, "stage": "", "error": ""}
         tmp_path = None
         t0 = time.perf_counter()
+        signal.alarm(int(timeout_s))
         try:
             ok, msg = purity(code)
             if not ok:
@@ -127,6 +136,9 @@ def _worker(task_q: "mp.Queue", result_q: "mp.Queue", device_id: int,
 
             rec["passed"] = True
             rec["stage"] = "pass"
+        except Timeout as e:
+            rec["stage"] = "timeout"
+            rec["error"] = str(e)
         except torch.cuda.OutOfMemoryError as e:
             # Several workers share each GPU, so OOM says nothing about the
             # candidate. Flag it separately instead of counting it as a failure.
@@ -136,6 +148,7 @@ def _worker(task_q: "mp.Queue", result_q: "mp.Queue", device_id: int,
             rec["stage"] = "exec"
             rec["error"] = "%s: %s" % (type(e).__name__, str(e)[:300])
         finally:
+            signal.alarm(0)
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             # Keep peak memory from creeping up across candidates.

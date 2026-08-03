@@ -369,7 +369,7 @@ def report(records: list[dict], args) -> None:
             print(f"  {cnt:5d}  ct.{name}")
 
     solved = [pid for pid, rs in by_problem.items() if any(r["passed"] for r in rs)]
-    print(f"\n-- Coverage --")
+    print("\n-- Coverage --")
     print(f"  problems with >=1 passing sample: {len(solved)}/{n_problems}")
 
 
