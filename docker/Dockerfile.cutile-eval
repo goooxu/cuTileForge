@@ -9,7 +9,7 @@
 # workspace via PYTHONPATH so edits to the backend take effect without a rebuild;
 # get_package_resource_path() falls back to a repo-relative lookup, so prompt
 # resources resolve correctly that way.
-FROM nvcr.io/nvidia/pytorch:26.06-py3
+FROM nvcr.io/nvidia/pytorch:26.07-py3
 
 # modal is imported unconditionally by eval_from_generations.py even when
 # eval_mode=local, so it is needed despite all evaluation running on this host.

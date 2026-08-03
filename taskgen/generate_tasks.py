@@ -85,8 +85,28 @@ def validate(source: str) -> str:
         return "%s: %s" % (type(e).__name__, str(e)[:120])
 
 
-def pick_builders(tier: int):
-    return [(b, w) for b, w, tiers in BUILDERS if tier in tiers]
+def builder_category(builder, tier: int) -> str:
+    """Category a builder emits, discovered by asking it to build one."""
+    return builder(tier, random.Random(0)).category
+
+
+def pick_builders(tier: int, only=None, weight_overrides=None):
+    """Builders available at a tier, optionally filtered and reweighted.
+
+    Filtering by category is how a run is pointed at a specific weakness --
+    convolution here -- without editing the operator table.
+    """
+    out = []
+    for b, w, tiers in BUILDERS:
+        if tier not in tiers:
+            continue
+        cat = builder_category(b, tier)
+        if only and cat not in only:
+            continue
+        if weight_overrides and cat in weight_overrides:
+            w = weight_overrides[cat]
+        out.append((b, w))
+    return out
 
 
 def main() -> None:
@@ -101,6 +121,10 @@ def main() -> None:
                     help="Spread across tiers 0-5.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--clean", action="store_true", help="Empty the level dir first.")
+    ap.add_argument("--only-categories", default=None,
+                    help="Comma-separated categories to keep, e.g. conv,norm,pool.")
+    ap.add_argument("--category-weights", default=None,
+                    help="Comma-separated cat=weight overrides, e.g. conv=40,norm=5.")
     args = ap.parse_args()
 
     if (args.tier is None) == (not args.curriculum):
@@ -113,6 +137,14 @@ def main() -> None:
         for f in os.listdir(out_dir):
             if f.endswith(".py"):
                 os.remove(os.path.join(out_dir, f))
+
+    only_cats = set(args.only_categories.split(",")) if args.only_categories else None
+    weight_overrides = None
+    if args.category_weights:
+        weight_overrides = {}
+        for pair in args.category_weights.split(","):
+            cat, _, w = pair.partition("=")
+            weight_overrides[cat.strip()] = float(w)
 
     # Weighted toward the tiers where the model has room to learn: mostly the
     # tiny weak-category tier and the parameterised step above it.
@@ -129,7 +161,7 @@ def main() -> None:
         else:
             tier = args.tier
 
-        builders = pick_builders(tier)
+        builders = pick_builders(tier, only_cats, weight_overrides)
         if not builders:
             continue
         builder = rng.choices([b for b, _ in builders],

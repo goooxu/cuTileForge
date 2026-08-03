@@ -1,0 +1,56 @@
+{
+  "per_round": [
+    {
+      "round": 0,
+      "attempted": 1000,
+      "passed": 236,
+      "no_code": 20,
+      "inconclusive": 0,
+      "sample_s": 185.2,
+      "verify_s": 316.0
+    },
+    {
+      "round": 1,
+      "attempted": 744,
+      "passed": 100,
+      "no_code": 2,
+      "inconclusive": 0,
+      "sample_s": 179.4,
+      "verify_s": 151.1
+    },
+    {
+      "round": 2,
+      "attempted": 642,
+      "passed": 56,
+      "no_code": 2,
+      "inconclusive": 0,
+      "sample_s": 105.6,
+      "verify_s": 251.9
+    },
+    {
+      "round": 3,
+      "attempted": 584,
+      "passed": 35,
+      "no_code": 2,
+      "inconclusive": 0,
+      "sample_s": 105.5,
+      "verify_s": 136.8
+    }
+  ],
+  "args": {
+    "level": 93,
+    "samples": 4,
+    "max_rounds": 3,
+    "out": "/ws/runs/repair_l93",
+    "base_url": "http://localhost:8000/v1",
+    "model": "Qwen3-Coder-Next",
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 40,
+    "max_tokens": 6144,
+    "concurrency": 96,
+    "verify_workers": 8,
+    "gpus": 4,
+    "limit_tasks": null
+  }
+}

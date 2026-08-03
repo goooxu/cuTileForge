@@ -1,0 +1,68 @@
+conv candidates: 480 over 120 problems
+
+### where conv candidates end up (final attempt)
+
+  other                    144   30.0%
+  numeric_mismatch         114   23.8%
+  type_error               105   21.9%
+  rank_mismatch             48   10.0%
+  invalid_argument          23    4.8%
+  no_code                   16    3.3%
+  syntax_error              10    2.1%
+  shape_mismatch             7    1.5%
+  array_used_as_tensor       4    0.8%
+  grid_rank_exceeded         4    0.8%
+  name_error                 2    0.4%
+  bad_attribute              2    0.4%
+  purity                     1    0.2%
+
+### representative errors
+
+  --- other ---
+    [Conv2d] RuntimeError: permute(sparse_coo): number of dimensions in the tensor input does not match the length of the desired ordering of dimensions i.e. input.dim() = 4 is not equal to len(dims) = 2
+    [PointwiseConv] 
+    [PointwiseConv] AssertionError: M_TILE (64) must be <= out_channels (32)
+
+  --- numeric_mismatch ---
+    [PointwiseConv] AssertionError: output mismatch, max diff 1.679
+    [PointwiseConv] AssertionError: output mismatch, max diff 2.052
+    [PointwiseConv] AssertionError: output mismatch, max diff 0.1341
+
+  --- type_error ---
+    [Conv2d] TileTypeError: Module 'cuda.tile' has no attribute 'zeros_like' "/tmp/tmplltxb8pb.py", line 48, col 50-62, in conv1x1_padding_kernel: h_in_padded = ct.where(valid_mask, h_in, ct.zeros_like(h_in))
+    [Conv2d] TileTypeError: Module 'cuda.tile' has no attribute 'squeeze' "/tmp/tmpzjvsbee0.py", line 42, col 21-30, in conv1x1_padding1_kernel: acc = acc + ct.squeeze(channel_sum, axis=1) ^^^^^^^^^^
+    [PointwiseConv] TileTypeError: Expect acc shape to be (64, 32), got (32, 64) "/tmp/tmpf6987vu1.py", line 27, col 15-41, in gemm_1x1_kernel: acc = ct.mma(x_tile, w_tile, acc) ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+  --- rank_mismatch ---
+    [Conv2d] TileTypeError: Invalid argument "shape" of load(): Expected shape length to be 4, got 2 "/tmp/tmp237wp7be.py", line 37, col 13-111, in conv2d_1x1_kernel: w = ct.load(weight, index=(by, k_tile, 0, 0), 
+    [PointwiseConv] TileTypeError: Invalid argument "tile_shape" of tiled_view(): Expected shape length to be 4, got 2 "/tmp/tmpysomtpx0.py", line 25, col 26-52, in pointwise_conv_kernel: w_tile = ct.load(weight.tiled_vi
+    [PointwiseConv] TileTypeError: Invalid argument "shape" of num_tiles(): Expected shape length to be 1, got 2 "/tmp/tmpyqxmafpi.py", line 18, col 19-57, in pointwise_conv_gemm_kernel: num_k_tiles = ct.num_tiles(W, axi
+
+  --- invalid_argument ---
+    [PointwiseConv1d] TileTypeError: Invalid argument "shape" of load(): Expected a constant integer tuple, but given value is not constant "/tmp/tmpu5rzy04y.py", lines 23--25, col 14-58, in pointwise_conv1d_kernel: x_tile
+    [Conv2d] TileTypeError: Invalid argument for int(x.shape[0]) "/tmp/tmpzamxsn1s.py", line 18, col 9-23, in conv1x1_kernel: N = int(batch_size) * int(height) * int(width) ^^^^^^^^^^^^^^^
+    [Conv2d] TileTypeError: Invalid argument "shape" of zeros(): Expected a constant integer tuple, but given value is not constant "/tmp/tmpz2_db4lu.py", line 27, col 11-50, in conv2d_fp32_kernel: acc = ct.zeros(
+
+### most common first-attempt -> final-attempt transitions
+
+  numeric_mismatch     stayed numeric_mismatch       59
+  other                stayed other                  55
+  numeric_mismatch     became other                  31
+  type_error           stayed type_error             24
+  type_error           became other                  19
+  rank_mismatch        became type_error             18
+  purity               became type_error             18
+  rank_mismatch        became other                  17
+
+### conv by tier (all failed; shows where they die)
+
+  tier 1 ( 52 cands): other:16, rank_mismatch:11, numeric_mismatch:10
+  tier 2 (176 cands): other:73, numeric_mismatch:51, type_error:25
+  tier 3 (164 cands): type_error:42, numeric_mismatch:38, other:37
+  tier 5 ( 88 cands): type_error:28, other:18, numeric_mismatch:15
+
+### conv candidates that compiled but computed wrong values
+
+  attempts reaching a numeric comparison: 431
+  max-diff percentiles: p10 0.908  p50 1.68  p90 25
+  within 1e-2 of correct: 0 (0.0%)

@@ -10,19 +10,21 @@
 set -euo pipefail
 
 WS="${CUTILE_WS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-# Any vLLM >= 0.15 image that registers Qwen3NextForCausalLM will do; override
-# with VLLM_IMAGE. Must match the host architecture (this ran on aarch64).
-IMAGE="${VLLM_IMAGE:?set VLLM_IMAGE to a vLLM image with Qwen3Next support}"
+# Any vLLM image that registers Qwen3NextForCausalLM will do, but it must match
+# the host architecture. The v0.26.0 release image crashes on GB200 during
+# startup (illegal memory access in FlashInfer's autotune warmup) and needs both
+# a patched image and --enforce-eager; the nightly fixes this, runs unpatched
+# with CUDA graphs, and is ~60x faster in decode as a result.
+IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:nightly-aarch64}"
 PORT="${PORT:-8000}"
 
 # Prompts run ~15k tokens and completions are capped at 8k; 40k of context is
 # plenty and keeps far more KV cache available than the model's native 262k.
 MAX_LEN="${MAX_LEN:-40960}"
 
-# Extra server flags. On GB200 (sm_100) the public vLLM image's inductor path
-# produces an illegal memory access during profile_run, so --enforce-eager is
-# needed there; NVIDIA's internal builds do not need it.
-EXTRA_ARGS="${EXTRA_ARGS:---enforce-eager}"
+# Extra server flags. Empty by default: the nightly needs no workarounds on
+# GB200. Set EXTRA_ARGS=--enforce-eager if pinning to an older image that does.
+EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 docker rm -f qwen-vllm 2>/dev/null || true
 

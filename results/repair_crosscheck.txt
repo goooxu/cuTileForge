@@ -1,0 +1,44 @@
+cross-checking 40 kernels against KernelBench's evaluator
+
+  181_L2Norm_t3.py             AGREE    
+  127_Conv2d_t2.py             AGREE    
+  153_PointwiseConv_t2.py      AGREE    
+  192_ChainAddBiasSigmoidReLU_ AGREE    
+  35_ChainSigmoidTanhAddBias_t AGREE    
+  231_MatmulAddBias_t4.py      AGREE    
+  96_MatmulTanh_t4.py          AGREE    
+  228_PointwiseConv_t2.py      AGREE    
+  94_RMSNorm_t5.py             AGREE    
+  22_L2Norm_t0.py              AGREE    
+  213_PointwiseConv_t2.py      AGREE    
+  82_Conv2d_t2.py              AGREE    
+  167_Softmax_t0.py            AGREE    
+  134_L2Norm_t2.py             AGREE    
+  66_Softmax_t2.py             AGREE    
+  91_Softmax_t0.py             AGREE    
+  18_MatmulReLU_t4.py          AGREE    
+  41_MatmulReLU_t4.py          AGREE    
+  177_L2Norm_t2.py             AGREE    
+  180_PointwiseConv_t2.py      AGREE    
+  107_MatmulScale_t4.py        AGREE    
+  52_Conv2d_t2.py              AGREE    
+  229_MatmulScale_t4.py        AGREE    
+  175_PointwiseConv_t5.py      AGREE    
+  90_MatmulSigmoid_t4.py       AGREE    
+  72_MatmulReLU_t4.py          AGREE    
+  39_Softmax_t0.py             AGREE    
+  107_MatmulScale_t4.py        AGREE    
+  10_PointwiseConv_t5.py       AGREE    
+  169_L2Norm_t0.py             AGREE    
+  154_L2Norm_t0.py             AGREE    
+  54_MatmulScale_t4.py         AGREE    
+  107_MatmulScale_t4.py        AGREE    
+  97_MatmulTanh_t4.py          AGREE    
+  243_ChainReLUSigmoidReLU_t4. AGREE    
+  141_PointwiseConv_t3.py      AGREE    
+  149_MatmulReLU_t4.py         AGREE    
+  131_L2Norm_t2.py             AGREE    
+  216_PointwiseConv_t2.py      AGREE    
+  151_PointwiseConv_t5.py      AGREE    
+
+40/40 agree with KernelBench (100%)
