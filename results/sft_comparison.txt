@@ -1,0 +1,39 @@
+samples per problem: before 8, after 4 -> comparing at k=4
+==========================================================================
+held-out KernelBench Level 1+2: baseline vs fine-tuned
+==========================================================================
+metric                         before      after      delta
+pass rate (samples)             12.9%      13.9%     +1.0pp
+pass@1                          12.9%      13.9%     +1.0pp
+pass@2                          17.8%      18.5%     +0.8pp
+pass@4                          23.5%      23.0%     -0.5pp
+numerically correct             19.1%      18.4%     -0.8pp
+entirely cuTile                 80.2%      82.5%     +2.2pp
+problems solved                    47         46         -1
+
+-- by operator category (pass rate over samples) --
+category             problems     before      after      delta
+activation                 13      61.5%      59.6%     -1.9pp
+conv                       76       2.3%       3.6%     +1.3pp
+loss                        6      16.7%      20.8%     +4.2pp
+matmul                     78      18.9%      18.3%     -0.6pp
+norm                       10       0.0%      12.5%    +12.5pp
+pool                        6       0.0%       0.0%     +0.0pp
+reduction                  11       2.3%       4.5%     +2.3pp
+
+-- error classes (%% of all samples) --
+error                          before      after      delta
+rank_mismatch                   14.1%      11.1%     -3.0pp
+wrong_numerics                  11.9%      12.9%     +1.0pp
+grid_rank_exceeded               9.8%      11.9%     +2.1pp
+other                            6.6%       6.9%     +0.3pp
+undefined_name                   6.1%       7.8%     +1.6pp
+none_kernel_argument             5.8%       5.8%     +0.0pp
+wrong_arg_type                   4.9%       4.6%     -0.2pp
+array_used_as_tensor             3.5%       2.1%     -1.4pp
+attribute_error                  2.1%       2.1%     +0.0pp
+kernel_call_convention           1.8%       1.5%     -0.3pp
+host_shape_error                 1.6%       1.0%     -0.6pp
+timeout                          1.5%       2.1%     +0.6pp
+dtype_mismatch                   1.5%       1.8%     +0.3pp
+type_depends_on_path             1.4%       2.4%     +1.0pp

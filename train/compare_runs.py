@@ -57,11 +57,30 @@ def pass_at_k(n, c, k):
     return 1.0 - p
 
 
-def load(paths):
+def load(paths, subsample=None):
+    """Load per-sample records, optionally keeping only the first N per problem.
+
+    The two sides of the comparison were run at different k. Trimming the larger
+    one to the smaller k makes pass@k and "problems solved" directly comparable
+    instead of rewarding whichever side simply drew more samples.
+    """
     recs = []
     for p in paths:
         recs += json.load(open(p))
-    return recs
+    if subsample is None:
+        return recs
+    by_problem = collections.defaultdict(list)
+    for r in recs:
+        by_problem[(r["problem"], r["problem_id"])].append(r)
+    out = []
+    for rs in by_problem.values():
+        out += sorted(rs, key=lambda r: r["sample_id"])[:subsample]
+    return out
+
+
+def samples_per_problem(recs):
+    by_problem = collections.Counter((r["problem"], r["problem_id"]) for r in recs)
+    return max(by_problem.values()) if by_problem else 0
 
 
 def summarise(recs, n_samples=8):
@@ -79,7 +98,9 @@ def summarise(recs, n_samples=8):
         "solved_problems": sum(1 for rs in by_problem.values()
                                if any(x["passed"] for x in rs)),
     }
-    for k in (1, 8):
+    for k in (1, 2, 4, 8):
+        if k > n_samples:
+            continue
         out["pass@%d" % k] = sum(
             pass_at_k(n_samples, sum(x["passed"] for x in rs), k)
             for rs in by_problem.values()) / P * 100
@@ -91,8 +112,9 @@ def summarise(recs, n_samples=8):
         cats[c][0] += r["passed"]
     out["by_category"] = {c: (p, t) for c, (p, t) in cats.items()}
 
+    # As rates, not counts: the two runs can have different sample totals.
     errs = collections.Counter(r["error_class"] for r in recs if r["error_class"])
-    out["errors"] = dict(errs.most_common(10))
+    out["errors"] = {k: v / n * 100 for k, v in errs.items()}
     return out
 
 
@@ -100,25 +122,30 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--before", nargs="+", required=True)
     ap.add_argument("--after", nargs="+", required=True)
-    ap.add_argument("--num-samples", type=int, default=8)
     args = ap.parse_args()
 
-    b = summarise(load(args.before), args.num_samples)
-    a = summarise(load(args.after), args.num_samples)
+    # Equalise k across the two runs before computing anything per-problem.
+    n_before = samples_per_problem(load(args.before))
+    n_after = samples_per_problem(load(args.after))
+    k_common = min(n_before, n_after)
+    print("samples per problem: before %d, after %d -> comparing at k=%d"
+          % (n_before, n_after, k_common))
+
+    b = summarise(load(args.before, subsample=k_common), k_common)
+    a = summarise(load(args.after, subsample=k_common), k_common)
 
     def delta(x, y, unit="pp"):
-        d = y - x
-        return "%+.1f%s" % (d, unit)
+        return "%+.1f%s" % (y - x, unit)
 
     print("=" * 74)
     print("held-out KernelBench Level 1+2: baseline vs fine-tuned")
     print("=" * 74)
     print("%-26s %10s %10s %10s" % ("metric", "before", "after", "delta"))
-    for key, label in (("passed", "pass rate (samples)"),
-                       ("pass@1", "pass@1"),
-                       ("pass@8", "pass@8"),
-                       ("numerically_correct", "numerically correct"),
-                       ("fully_cutile", "entirely cuTile")):
+    rows = [("passed", "pass rate (samples)")]
+    rows += [("pass@%d" % k, "pass@%d" % k) for k in (1, 2, 4, 8) if k <= k_common]
+    rows += [("numerically_correct", "numerically correct"),
+             ("fully_cutile", "entirely cuTile")]
+    for key, label in rows:
         print("%-26s %9.1f%% %9.1f%% %10s"
               % (label, b[key], a[key], delta(b[key], a[key])))
     print("%-26s %10d %10d %+10d"
@@ -134,16 +161,16 @@ def main() -> None:
         br = bp / bt * 100 if bt else 0.0
         ar = apn / at * 100 if at else 0.0
         print("%-20s %8d %9.1f%% %9.1f%% %10s"
-              % (cat, max(bt, at) // args.num_samples, br, ar, delta(br, ar)))
+              % (cat, max(bt, at) // k_common, br, ar, delta(br, ar)))
 
     print()
-    print("-- error classes (count over all samples) --")
+    print("-- error classes (%% of all samples) --")
     keys = sorted(set(b["errors"]) | set(a["errors"]),
                   key=lambda k: -(b["errors"].get(k, 0)))
     print("%-26s %10s %10s %10s" % ("error", "before", "after", "delta"))
-    for k in keys[:12]:
-        bv, av = b["errors"].get(k, 0), a["errors"].get(k, 0)
-        print("%-26s %10d %10d %+10d" % (k, bv, av, av - bv))
+    for k in keys[:14]:
+        bv, av = b["errors"].get(k, 0.0), a["errors"].get(k, 0.0)
+        print("%-26s %9.1f%% %9.1f%% %10s" % (k, bv, av, delta(bv, av)))
 
 
 if __name__ == "__main__":

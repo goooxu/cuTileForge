@@ -167,6 +167,7 @@ def main() -> None:
     dev = next(model.parameters()).device
     step = 0
     micro = 0
+    n_skipped = 0
     running = []
     history = []
     t_start = time.time()
@@ -176,17 +177,37 @@ def main() -> None:
         if done:
             break
         for input_ids, labels, attn in loader:
+            n_labels = int((labels != -100).sum())
             out = model(input_ids=input_ids.to(dev),
                         attention_mask=attn.to(dev),
                         labels=labels.to(dev))
             loss = out.loss
             if not torch.isfinite(loss):
-                raise SystemExit("non-finite loss at micro-batch %d" % micro)
+                # A single bad example should not end the run. Drop its
+                # contribution and keep going, but refuse to train on garbage if
+                # it turns out to be widespread.
+                n_skipped += 1
+                print("  skipped micro-batch %d: non-finite loss "
+                      "(seq %d tokens, %d labels)"
+                      % (micro, input_ids.shape[1], n_labels))
+                opt.zero_grad(set_to_none=True)
+                micro += 1
+                if n_skipped > max(10, 0.05 * len(loader)):
+                    raise SystemExit("too many non-finite losses (%d); aborting"
+                                     % n_skipped)
+                continue
             (loss / args.grad_accum).backward()
             running.append(loss.item())
             micro += 1
+            if micro <= 4:
+                print("  micro %d: loss %.4f (seq %d, labels %d)"
+                      % (micro - 1, loss.item(), input_ids.shape[1], n_labels))
 
             if micro % args.grad_accum == 0:
+                if not running:
+                    # Every micro-batch in this window was skipped.
+                    opt.zero_grad(set_to_none=True)
+                    continue
                 gnorm = torch.nn.utils.clip_grad_norm_(params, 1.0)
                 opt.step()
                 sched.step()
@@ -214,6 +235,7 @@ def main() -> None:
 
     print("\ntruncated %d/%d examples at max_len=%d"
           % (ds.n_truncated, len(ds), args.max_len))
+    print("skipped %d micro-batches for non-finite loss" % n_skipped)
     print("peak GPU memory: %.1f GB"
           % (max(torch.cuda.max_memory_allocated(i)
                  for i in range(torch.cuda.device_count())) / 1e9))
