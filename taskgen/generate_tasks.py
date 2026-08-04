@@ -147,7 +147,9 @@ def main() -> None:
             weight_overrides[cat.strip()] = float(w)
 
     # Weighted toward the tiers where the model has room to learn: mostly the
-    # tiny weak-category tier and the parameterised step above it.
+    # tiny weak-category tier and the parameterised step above it. Tier 6 is the
+    # speed curriculum and is excluded here; ask for it with --tier 6, since
+    # mixing it in would put unmeasurably small tasks in a set meant for timing.
     tier_weights = {0: 1, 1: 1, 2: 4, 3: 4, 4: 2, 5: 2}
 
     written, rejected = 0, 0

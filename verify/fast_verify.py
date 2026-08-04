@@ -22,7 +22,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from worker import VerifierPool  # noqa: E402
+from worker import VerifierPool, verify_and_time  # noqa: E402
 
 
 def load_candidates(kernel_dir: str, level: int, refs: dict, limit=None):
@@ -51,6 +51,10 @@ def main() -> None:
     ap.add_argument("--num-correct-trials", type=int, default=2)
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--measure-time", action="store_true",
+                    help="Also time correct candidates against the reference. "
+                         "Adds a second, GPU-exclusive phase.")
+    ap.add_argument("--num-perf-trials", type=int, default=20)
     args = ap.parse_args()
 
     from kernelbench.dataset import construct_kernelbench_dataset
@@ -63,10 +67,16 @@ def main() -> None:
           % (len(tasks), args.workers, args.gpus))
 
     start = time.time()
-    with VerifierPool(workers=args.workers, gpus=args.gpus,
-                      num_correct_trials=args.num_correct_trials,
-                      timeout_s=args.timeout) as pool:
-        results = pool.verify_batch(tasks)
+    if args.measure_time:
+        results = verify_and_time(
+            tasks, workers=args.workers, gpus=args.gpus,
+            num_correct_trials=args.num_correct_trials, timeout_s=args.timeout,
+            num_perf_trials=args.num_perf_trials, progress=print)
+    else:
+        with VerifierPool(workers=args.workers, gpus=args.gpus,
+                          num_correct_trials=args.num_correct_trials,
+                          timeout_s=args.timeout) as pool:
+            results = pool.verify_batch(tasks)
 
     n_pass = sum(r["passed"] for r in results.values())
     n_oom = sum(r["stage"] == "oom" for r in results.values())
@@ -82,6 +92,13 @@ def main() -> None:
              n_oom, elapsed, len(tasks) / max(elapsed, 1e-9)))
     if n_oom:
         print("  rerun OOM candidates with fewer --workers to resolve them")
+
+    speedups = sorted(r["speedup"] for r in results.values()
+                      if r.get("speedup"))
+    if speedups:
+        faster = sum(1 for s in speedups if s > 1.0)
+        print("  speed: median %.3fx, %d/%d beat the reference"
+              % (speedups[len(speedups) // 2], faster, len(speedups)))
     print("wrote", args.out)
 
 

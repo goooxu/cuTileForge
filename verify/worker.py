@@ -24,9 +24,22 @@ os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "0")
 STOP = None
 
 
+def _median(xs):
+    """Median rather than mean: one descheduled trial should not set the number."""
+    s = sorted(xs)
+    return s[len(s) // 2] if s else 0.0
+
+
 def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
-            timeout_s: float) -> None:
-    """Import torch once, then verify candidates until told to stop."""
+            timeout_s: float, measure_time: bool = False,
+            num_perf_trials: int = 20) -> None:
+    """Import torch once, then verify candidates until told to stop.
+
+    With measure_time, a candidate that passes is also timed against the
+    reference. That must only be used by a pool with one worker per GPU: several
+    workers sharing a device contaminate each other's measurements, and a
+    speedup measured under contention is not a speedup.
+    """
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
 
     import importlib.util
@@ -38,6 +51,10 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
     from kernelbench.kernel_static_checker import (
         check_cutile_impl, check_pytorch_wrap, check_torch_computation_ops,
     )
+    # The benchmark's own timing function, deliberately: warmup, L2 flush and
+    # CUDA-event bracketing all have to match or the training signal and the
+    # reported number stop meaning the same thing.
+    from kernelbench.timing import time_execution_with_cuda_event
 
     enforce_reference_precision()
     device = torch.device("cuda:0")
@@ -136,6 +153,25 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
 
             rec["passed"] = True
             rec["stage"] = "pass"
+
+            if measure_time:
+                # Time the reference here rather than reading a cached baseline
+                # file: it costs one extra measurement but keeps both sides on
+                # the same device in the same thermal and clock state, and means
+                # synthetic task sets need no baseline artefact of their own.
+                with torch.no_grad():
+                    set_seed(1)
+                    inputs = [x.cuda() if hasattr(x, "cuda") else x
+                              for x in get_inputs()]
+                    ref_ms = _median(time_execution_with_cuda_event(
+                        ref_model, inputs, num_warmup=5, num_trials=num_perf_trials,
+                        verbose=False, device=device))
+                    new_ms = _median(time_execution_with_cuda_event(
+                        new_model, inputs, num_warmup=5, num_trials=num_perf_trials,
+                        verbose=False, device=device))
+                rec["ref_ms"] = round(ref_ms, 5)
+                rec["kernel_ms"] = round(new_ms, 5)
+                rec["speedup"] = round(ref_ms / new_ms, 4) if new_ms > 0 else None
         except Timeout as e:
             rec["stage"] = "timeout"
             rec["error"] = str(e)
@@ -171,11 +207,19 @@ class VerifierPool:
     """
 
     def __init__(self, workers: int = 16, gpus: int = 4,
-                 num_correct_trials: int = 2, timeout_s: float = 120.0):
+                 num_correct_trials: int = 2, timeout_s: float = 120.0,
+                 measure_time: bool = False, num_perf_trials: int = 20):
+        if measure_time and workers > gpus:
+            raise ValueError(
+                "timing needs exclusive GPUs: %d workers over %d gpus would have "
+                "them contend and the speedups would be meaningless"
+                % (workers, gpus))
         self.workers = workers
         self.gpus = gpus
         self.num_correct_trials = num_correct_trials
         self.timeout_s = timeout_s
+        self.measure_time = measure_time
+        self.num_perf_trials = num_perf_trials
         self.ctx = mp.get_context("spawn")
         self.task_q = self.ctx.Queue()
         self.result_q = self.ctx.Queue()
@@ -186,7 +230,8 @@ class VerifierPool:
     def _spawn(self, i: int) -> None:
         p = self.ctx.Process(target=_worker,
                              args=(self.task_q, self.result_q, i % self.gpus,
-                                   self.num_correct_trials, self.timeout_s),
+                                   self.num_correct_trials, self.timeout_s,
+                                   self.measure_time, self.num_perf_trials),
                              daemon=True)
         p.start()
         self.procs[i] = p
@@ -274,3 +319,45 @@ class VerifierPool:
 
     def __exit__(self, *exc):
         self.close()
+
+
+def verify_and_time(items, workers: int = 16, gpus: int = 4,
+                    num_correct_trials: int = 2, timeout_s: float = 120.0,
+                    num_perf_trials: int = 20, progress=None) -> dict:
+    """Screen for correctness in parallel, then time the survivors exclusively.
+
+    Timing and throughput pull in opposite directions. Correctness screening
+    wants every GPU oversubscribed; timing wants each GPU to itself. Since only
+    a minority of candidates are correct, running them as two phases costs
+    little: the expensive phase only sees what survived the cheap one.
+
+    Returns {key: record}, where records that reached timing also carry
+    speedup, ref_ms and kernel_ms.
+    """
+    items = list(items)
+    by_key = {k: (k, c, r) for k, c, r in items}
+
+    with VerifierPool(workers=workers, gpus=gpus,
+                      num_correct_trials=num_correct_trials,
+                      timeout_s=timeout_s) as pool:
+        results = pool.verify_batch(items)
+
+    survivors = [by_key[k] for k, r in results.items() if r["passed"]]
+    if progress:
+        progress("correct: %d/%d, timing survivors on %d exclusive GPUs"
+                 % (len(survivors), len(items), gpus))
+    if not survivors:
+        return results
+
+    with VerifierPool(workers=gpus, gpus=gpus,
+                      num_correct_trials=num_correct_trials,
+                      timeout_s=timeout_s, measure_time=True,
+                      num_perf_trials=num_perf_trials) as pool:
+        timed = pool.verify_batch(survivors)
+
+    for key, rec in timed.items():
+        # A candidate that passed the screen but failed here is a flake, not a
+        # verdict; keep the screening result and leave it without a speedup.
+        if rec["passed"]:
+            results[key] = rec
+    return results

@@ -345,6 +345,145 @@ FUSION_TAILS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Fusion tasks, for teaching speed rather than correctness
+# ---------------------------------------------------------------------------
+# Everything above exists to teach the model to write a *correct* kernel, and
+# uses small shapes so verification is cheap. That makes those tasks useless for
+# teaching it to write a *fast* one: at tier 2, (2, 4, 16, 16) is 2048 elements,
+# the launch dominates, both implementations measure the same, and there is
+# nothing in the comparison to learn from.
+#
+# These shapes are all large enough to be memory-bound, so a fused kernel can
+# actually win. The advantage a kernel DSL has over a library is not doing any
+# single operator faster -- torch calls cuBLAS and cuDNN -- but not writing the
+# intermediate out between operators, so the payoff scales with how big the
+# intermediates are and how many of them a chain has.
+PERF_2D = [(4096, 4096), (8192, 2048), (2048, 8192), (8192, 8192)]
+PERF_NCHW = [(16, 64, 128, 128), (8, 128, 128, 128), (32, 32, 256, 256)]
+
+
+def long_elementwise_chain(tier, rng):
+    """A long elementwise chain on a large tensor.
+
+    The easiest fusion win there is, and one the model already gets: its best
+    kernel on the whole benchmark is a 4.95x on Level 1's GELU, which is exactly
+    this shape of problem at 8192x8192. Included as the curriculum's floor and as
+    a control -- if speed does not improve here, it will not improve anywhere.
+    """
+    m, k = rng.choice(PERF_2D)
+    picked = [rng.choice(FUSION_TAILS) for _ in range(rng.choice([4, 6, 8]))]
+    expr = "x"
+    for _, tmpl in picked:
+        expr = tmpl.format(expr)
+    return Spec(
+        name="LongChain%d" % len(picked),
+        category="elementwise", tier=tier,
+        init_sig="",
+        init_body="        pass",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % expr,
+        consts={"batch_size": m, "dim": k},
+        inputs="    return [torch.rand(batch_size, dim)]",
+        init_inputs="    return []",
+    )
+
+
+def fused_matmul_bias_act(tier, rng):
+    """Matmul, bias, activation: torch must land the product before the bias."""
+    m, k = rng.choice(PERF_2D)
+    n = rng.choice([1024, 2048, 4096])
+    label, tmpl = rng.choice(FUSION_TAILS)
+    return Spec(
+        name="MatmulBias%s" % label,
+        category="matmul", tier=tier,
+        init_sig="n: int",
+        init_body="        self.bias = nn.Parameter(torch.randn(n))",
+        forward_sig="A: torch.Tensor, B: torch.Tensor",
+        forward_body="        return %s" % tmpl.format("torch.matmul(A, B) + self.bias"),
+        consts={"M": m, "K": k, "N": n},
+        inputs="    return [torch.rand(M, K), torch.rand(K, N)]",
+        init_inputs="    return [N]",
+    )
+
+
+def fused_matmul_residual(tier, rng):
+    """Matmul, activation, then a residual add: three intermediates to avoid."""
+    m, k = rng.choice(PERF_2D)
+    label, tmpl = rng.choice(FUSION_TAILS)
+    return Spec(
+        name="MatmulResidual%s" % label,
+        category="matmul", tier=tier,
+        init_sig="",
+        init_body="        pass",
+        forward_sig="A: torch.Tensor, B: torch.Tensor, C: torch.Tensor",
+        forward_body="        return %s + C" % tmpl.format("torch.matmul(A, B)"),
+        consts={"M": m, "K": k, "N": m},
+        inputs="    return [torch.rand(M, K), torch.rand(K, N), torch.rand(M, N)]",
+        init_inputs="    return []",
+    )
+
+
+def fused_conv_bias_act(tier, rng):
+    """1x1 conv, bias, activation, at a size where the intermediate is large."""
+    n, c, h, w = rng.choice(PERF_NCHW)
+    out_c = rng.choice([32, 64])
+    label, tmpl = rng.choice(FUSION_TAILS)
+    return Spec(
+        name="ConvBias%s" % label,
+        category="conv", tier=tier,
+        init_sig="in_channels: int, out_channels: int",
+        init_body=("        self.conv = nn.Conv2d(in_channels, out_channels, 1,\n"
+                   "                              bias=False)\n"
+                   "        self.bias = nn.Parameter(torch.randn(out_channels, 1, 1))"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % tmpl.format("self.conv(x) + self.bias"),
+        consts={"batch_size": n, "in_channels": c, "out_channels": out_c,
+                "height": h, "width": w},
+        inputs="    return [torch.rand(batch_size, in_channels, height, width)]",
+        init_inputs="    return [in_channels, out_channels]",
+    )
+
+
+def fused_norm_residual(tier, rng):
+    """Normalise, add a residual, activate: the classic transformer block tail."""
+    m, k = rng.choice(PERF_2D)
+    label, tmpl = rng.choice(FUSION_TAILS)
+    return Spec(
+        name="NormResidual%s" % label,
+        category="norm", tier=tier,
+        init_sig="dim: int, eps: float = 1e-5",
+        init_body="        self.eps = eps",
+        forward_sig="x: torch.Tensor, r: torch.Tensor",
+        forward_body=(
+            "        mean = x.mean(dim=1, keepdim=True)\n"
+            "        var = x.var(dim=1, keepdim=True, unbiased=False)\n"
+            "        h = (x - mean) / torch.sqrt(var + self.eps)\n"
+            "        return %s" % tmpl.format("h + r")),
+        consts={"batch_size": m, "dim": k},
+        inputs="    return [torch.rand(batch_size, dim), torch.rand(batch_size, dim)]",
+        init_inputs="    return [dim]",
+    )
+
+
+def fused_softmax_chain(tier, rng):
+    """Scale, softmax, activation: attention's tail, and reduction-bound."""
+    m, k = rng.choice(PERF_2D)
+    label, tmpl = rng.choice(FUSION_TAILS)
+    return Spec(
+        name="SoftmaxChain%s" % label,
+        category="norm", tier=tier,
+        init_sig="scale: float",
+        init_body="        self.scale = scale",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % tmpl.format(
+            "torch.softmax(x * self.scale, dim=1)"),
+        consts={"batch_size": m, "dim": k, "scale": 0.125},
+        inputs="    return [torch.rand(batch_size, dim)]",
+        init_inputs="    return [scale]",
+    )
+
+
 def fused_elementwise_chain(tier, rng):
     m, k = rng.choice(shapes_for(MAT2D_BY_TIER, tier))
     n_ops = rng.choice([2, 3])
@@ -552,4 +691,13 @@ BUILDERS = [
     (reduction,              4, [0, 2, 3, 5]),
     (fused_elementwise_chain, 3, [4]),
     (fused_matmul_chain,      3, [4]),
+    # Tier 6 is the speed curriculum: large shapes and long chains, the only
+    # tier where a measured speedup means anything. Ordered easiest first --
+    # the long elementwise chain is where the model already beats torch.
+    (long_elementwise_chain, 10, [6]),
+    (fused_softmax_chain,     8, [6]),
+    (fused_norm_residual,     8, [6]),
+    (fused_matmul_bias_act,   9, [6]),
+    (fused_matmul_residual,   8, [6]),
+    (fused_conv_bias_act,     9, [6]),
 ]

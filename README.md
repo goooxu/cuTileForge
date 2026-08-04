@@ -11,17 +11,18 @@ cuTile 比大多数模型的训练数据都新，所以值得问的不是"模型
 - [x] **二：拒绝采样 SFT**——程序化生成任务、编译器验证、LoRA 微调
 - [x] **三：多轮编译反馈修复**——把编译器报错回灌给模型，让它改自己的 kernel
 - [x] **四：第二轮 SFT**——卷积解出题数 5 → 14，pass@4 23.5% → 26.0%
-- [ ] 五：RLVR
+- [ ] **五：让"快"成为训练目标**——判据加入性能；融合任务已产出 103 条比 torch 快的样本，训练已完成，评测待做
+- [ ] 六：RLVR
 
-## 四个阶段一览
+## 五个阶段一览
 
-| | 一：基线评测 | 二：拒绝采样 SFT | 三：编译反馈修复 | 四：第二轮 SFT |
-| --- | --- | --- | --- | --- |
-| 做了什么 | 加 `cutile` backend，量基线 | 自造数据 + LoRA 微调 | 把报错回灌，让模型改自己的 kernel | 把修复循环产出的正样本喂回训练 |
-| 手段作用在 | —— | 训练时 | **推理时**（不改权重） | 训练时 |
-| 评测题集 | KernelBench 200 | KernelBench 200 | 250 道合成题 | KernelBench 200 |
-| 判据 | 官方 harness | 官方 harness | 快速验证器（已与官方对齐） | 官方 harness |
-| 主指标 | pass@1 **12.6%** | pass@1 12.9% → **13.9%** | 通过率 23.6% → **42.7%** | pass@4 23.5% → **26.0%** |
+| | 一：基线评测 | 二：拒绝采样 SFT | 三：编译反馈修复 | 四：第二轮 SFT | 五：让"快"成为目标 |
+| --- | --- | --- | --- | --- | --- |
+| 做了什么 | 加 `cutile` backend，量基线 | 自造数据 + LoRA 微调 | 把报错回灌，让模型改自己的 kernel | 把修复循环产出的正样本喂回训练 | 判据加性能，造大形状融合任务 |
+| 手段作用在 | —— | 训练时 | **推理时**（不改权重） | 训练时 | 训练时 |
+| 评测题集 | KernelBench 200 | KernelBench 200 | 250 道合成题 | KernelBench 200 | 待评测 |
+| 判据 | 官方 harness | 官方 harness | 快速验证器（已与官方对齐） | 官方 harness | 官方 harness + 加速比 |
+| 主指标 | pass@1 **12.6%** | pass@1 12.9% → **13.9%** | 通过率 23.6% → **42.7%** | pass@4 23.5% → **26.0%** | 融合任务上 103 条 >1x |
 
 **哪些能比、哪些不能比**：第一、二、四阶段同题集、同判据、k 对齐到 4，可以直接比。
 **第三阶段不能和它们比**——它换了题集（合成题而非 KernelBench 200）、换了验证器，跑的
@@ -30,6 +31,10 @@ cuTile 比大多数模型的训练数据都新，所以值得问的不是"模型
 **整条主线的落点是卷积**：98 道卷积题（占全部 200 题的一半），解出题数从基线的 5 道
 涨到 **14 道**。这条线走过"第二阶段判定冷启动无解 → 第三阶段发现是验证器 bug →
 第四阶段把恢复出的数据喂回去"。
+
+**但前四轮都在优化一件不完整的事**：判据只问"对不对"，不问"快不快"。加上"不慢于
+torch"重算之后，最好的模型是 200 题里 9 道，而不是 52 道——而正确率最高的那一版
+（第四阶段 A）速度反而**低于基线**。第五阶段起把 fast_1.0 与正确率并列为头条指标。
 
 ---
 
@@ -194,7 +199,45 @@ A 的强项（归一化、池化、激活）恰好是它比 B 多喂的类别，
 "N 和 C 折叠进 3 维 grid"这个 idiom 逼了出来，于是几乎腰斩。
 
 详见 [results/sft2_comparison.txt](results/sft2_comparison.txt) 与
-[results/sft2_error_classes.txt](results/sft2_error_classes.txt)，
+[results/sft2_error_classes.txt](results/sft2_error_classes.txt)。
+
+---
+
+## 第五阶段：让"快"成为训练目标（评测未完成）
+
+判据加入性能后，前四轮的真实位置是这样的：
+
+| | pass@1 | fast_1.0（也快过 torch） |
+| --- | ---: | ---: |
+| 基线 | 12.9% | 5/200 |
+| 第二阶段 | 13.9% | 8/200 |
+| 第四阶段 A | **14.2%** | **4/200** |
+| 第四阶段 B | 14.0% | 9/200 |
+
+旧的训练任务在性能上完全无用——tier 2 的形状是 `(2, 4, 16, 16)`，2048 个元素，纯
+kernel 启动延迟主导。所以新建了一档大形状融合任务（全部 ≥16M 元素），采样 800 个候选、
+470 个正确，计时之后模型能赢在哪里非常清楚：
+
+| 融合模式 | 中位加速 | 快过 torch |
+| --- | ---: | ---: |
+| 8 个算子的逐元素链 | **2.75x** | **100%** |
+| 6 个算子 | 2.48x | 97% |
+| 4 个算子 | 1.80x | 98% |
+| norm + residual | 0.63x | 27% |
+| softmax 链 | 0.28x | 4% |
+| conv/matmul + bias | 0.03–0.16x | **0%** |
+
+**融合收益随链长单调上升**（4→6→8 个算子对应 1.80→2.48→2.75x），说明模型是真的在融合。
+而**凡是碰 matmul 或 conv 的一次都没赢过**——那些走 cuBLAS/cuDNN，几十年手工调优的汇编，
+不是数据量能弥补的。
+
+聚合中位数是 0.082x，看上去像彻底失败，底下却藏着 98% 胜率的 3.98x。只看总数会把两个
+相反的事实一起抹掉。
+
+产出 103 条**已证明比 torch 快**的训练样本（中位 2.21x），配 246 条正确性数据压舱。
+训练已完成，开发机到期导致 200 题评测尚未进行。
+
+详见 [results/phase5_fusion_speed.txt](results/phase5_fusion_speed.txt)，
 全过程记录（含所有踩坑）见 [docs/WORKLOG.md](docs/WORKLOG.md)。
 
 ---
@@ -433,14 +476,35 @@ kernelbench/scripts/in_container.sh "python3 verify/cross_check.py \
     --kernel-dir /ws/runs/repair_l93 --level 93 -n 40"
 ```
 
+### 第五阶段：速度课程
+
+```bash
+# 大形状融合任务，并确认它们大到能测出时间
+python3 taskgen/generate_tasks.py --level 94 --tier 6 --count 200 --clean --seed 606
+kernelbench/scripts/in_container.sh "python3 taskgen/audit_timing.py --level 94"
+
+# 采样后连同计时一起验证（第二段会独占 GPU）
+kernelbench/scripts/in_container.sh "python3 verify/fast_verify.py \
+    --kernel-dir /ws/runs/repair_l94 --level 94 --measure-time \
+    --out /ws/runs/repair_l94_verified.jsonl"
+
+# 看模型在哪些融合模式上真能赢
+python3 verify/speed_report.py --verified ../runs/repair_l94_verified.jsonl --level 94
+
+# 只把跑得比 torch 快的拿去训练
+kernelbench/scripts/in_container.sh "python3 train/build_sft_dataset.py \
+    --run 94:/ws/runs/repair_l94:/ws/runs/repair_l94_verified.jsonl \
+    --min-speedup 1.0 --out /ws/runs/sft_speed_only.jsonl"
+```
+
 硬件要求：cuTile 需要 Blackwell 或 Ampere/Ada、CUDA 13.1+、driver r580+。
 本次基线跑在 GB200（sm_100）上。
 
 ---
 
-## 三个方法学要点
+## 四个方法学要点
 
-评测这类任务时，这三点不处理会让数字完全失真，细节见 WORKLOG。
+评测这类任务时，这四点不处理会让数字完全失真，细节见 WORKLOG。
 
 **参考解必须跑在真 fp32 上。** NGC 容器默认 `allow_tf32=True`，torch 的 fp32 矩阵乘
 相对 float64 误差 2.1e-2，而 cuTile `ct.mma` 只有 1.65e-5——不精确的是**参考解**。
@@ -456,6 +520,12 @@ KernelBench 的 fp32 容差是 1e-4，不处理的话所有算得准的 cuTile �
 
 这条线比原始口径严格得多：88 个数值正确的样本因为把 conv / norm 留在 PyTorch 里而
 未被计入，其中 60 个来自 Level 2。
+
+**测速度要独占 GPU，而且任务得够大。** 正确性筛查为了吞吐会把每张卡超卖到 4 个 worker，
+但在共享 GPU 上测出来的时间被邻居污染，加速比毫无意义——所以流程拆成两段：并行筛正确性，
+再让存活者独占 GPU 计时。另一半同样重要：训练任务的形状必须大到 kernel 不被启动延迟
+主导，否则两个实现测出来一样快，加速比是噪声。`taskgen/audit_timing.py` 就是这个闸门，
+先前 tier 2 的 `(2, 4, 16, 16)` 只有 2048 个元素，完全不合格。
 
 **为速度重写的验证器必须跟官方 harness 对表。** 拒绝采样的吞吐要求让我另写了一个只查
 正确性的快速验证器，它复现了 KernelBench 的协议——但漏了一处：构造参考模型和候选模型

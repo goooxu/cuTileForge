@@ -17,6 +17,7 @@ import argparse
 import os
 import random
 import re
+import sys
 
 
 def main() -> None:
@@ -27,6 +28,10 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--category", default=None,
                     help="Restrict to one category, e.g. conv.")
+    ap.add_argument("--check-speed", action="store_true",
+                    help="Also compare kernel timings against the harness.")
+    ap.add_argument("--num-perf-trials", type=int, default=20)
+    ap.add_argument("--gpus", type=int, default=4)
     args = ap.parse_args()
 
     from kernelbench.dataset import construct_kernelbench_dataset
@@ -64,36 +69,84 @@ def main() -> None:
     print("cross-checking %d kernels against KernelBench's evaluator%s\n"
           % (len(cands), " (%s only)" % args.category if args.category else ""))
 
-    agree = disagree = 0
-    for pid, path in cands:
-        with open(path) as f:
-            code = f.read()
+    # Run our verifier over the same sample rather than assuming it accepted
+    # everything in the directory. A generation directory holds failures too, and
+    # assuming otherwise reports every one of them as a disagreement.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from worker import verify_and_time
+
+    items = [("%d:%d" % (pid, i),
+              open(p, encoding="utf-8", errors="replace").read(), refs[pid])
+             for i, (pid, p) in enumerate(cands)]
+    ours = verify_and_time(items, workers=args.gpus, gpus=args.gpus,
+                           num_perf_trials=args.num_perf_trials)
+
+    agree = 0
+    lenient = []   # we pass, the harness rejects
+    strict = []    # the harness passes, we reject
+    ratios = []
+    for i, (pid, path) in enumerate(cands):
+        code = open(path, encoding="utf-8", errors="replace").read()
+        key = "%d:%d" % (pid, i)
+        mine_ok = ours.get(key, {}).get("passed", False)
         try:
             res = eval_kernel_against_ref(
                 original_model_src=refs[pid], custom_model_src=code,
-                seed_num=42, num_correct_trials=2, num_perf_trials=1,
-                measure_performance=False, verbose=False,
+                seed_num=42, num_correct_trials=2,
+                num_perf_trials=args.num_perf_trials,
+                measure_performance=args.check_speed, verbose=False,
                 backend="cutile", precision=dtype,
                 device=__import__("torch").device("cuda:0"))
-            ok = bool(res and res.correctness)
-            detail = "" if ok else str((res.metadata if res else {}))[:90]
-        except Exception as e:
-            ok, detail = False, "%s: %s" % (type(e).__name__, str(e)[:80])
+            theirs_ok = bool(res and res.correctness)
+        except Exception:
+            res, theirs_ok = None, False
 
-        # Every kernel here was accepted by the fast verifier, so anything the
-        # harness rejects is a disagreement.
-        if ok:
+        # The harness has no purity gate, so it can accept a partial port that
+        # we reject by design. Only compare where our purity gate also passed.
+        our_stage = ours.get(key, {}).get("stage", "")
+        verdict = "AGREE"
+        if mine_ok and not theirs_ok:
+            verdict, _ = "LENIENT", lenient.append(names[pid])
+        elif theirs_ok and not mine_ok and our_stage != "purity":
+            verdict, _ = "STRICT", strict.append(names[pid])
+        elif mine_ok == theirs_ok or our_stage == "purity":
             agree += 1
-        else:
-            disagree += 1
-        print("  %-28s %-8s %s" % (names[pid][:28], "AGREE" if ok else "DIFFER",
-                                   detail))
 
-    print("\n%d/%d agree with KernelBench (%.0f%%)"
+        detail = ""
+        if args.check_speed and mine_ok and theirs_ok and res is not None:
+            mine = ours[key].get("kernel_ms")
+            theirs = getattr(res, "runtime", None)
+            if mine and theirs and theirs > 0:
+                ratios.append(mine / theirs)
+                detail = "kernel %.3f ms here vs %.3f ms there (%.2fx)" % (
+                    mine, theirs, mine / theirs)
+        elif not mine_ok:
+            detail = "we reject: %s" % our_stage
+
+        print("  %-28s %-8s %s" % (names[pid][:28], verdict, detail))
+
+    print("\n%d/%d verdicts agree with KernelBench (%.0f%%)"
           % (agree, len(cands), agree / max(len(cands), 1) * 100))
-    if disagree:
-        print("%d disagreements: the fast verifier is too lenient somewhere"
-              % disagree)
+    if lenient:
+        print("%d too lenient (we pass, harness rejects): %s"
+              % (len(lenient), ", ".join(n[:24] for n in lenient[:4])))
+    if strict:
+        print("%d too strict (harness passes, we reject on numerics): %s"
+              % (len(strict), ", ".join(n[:24] for n in strict[:4])))
+
+    if ratios:
+        # Both sides call the same timing function, so the kernel measurement
+        # should agree closely. Systematic drift here would mean training is
+        # selecting for something the benchmark does not reward -- the same
+        # class of silent divergence as the seeding bug.
+        ratios.sort()
+        med = ratios[len(ratios) // 2]
+        worst = max(abs(1 - r) for r in ratios)
+        print("\nkernel timing agreement over %d samples: median ratio %.3f, "
+              "worst deviation %.0f%%" % (len(ratios), med, worst * 100))
+        if abs(1 - med) > 0.15:
+            print("MISMATCH: the two timings differ systematically; the training "
+                  "signal and the reported speedup are not measuring the same thing")
 
 
 if __name__ == "__main__":

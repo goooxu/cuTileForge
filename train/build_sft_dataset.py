@@ -77,6 +77,9 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-per-problem", type=int, default=3,
                     help="Cap solutions kept per task so easy tasks do not dominate.")
+    ap.add_argument("--min-speedup", type=float, default=None,
+                    help="Drop solutions slower than this multiple of the torch "
+                         "reference. Samples with no timing are kept.")
     ap.add_argument("--category-quota", default=None,
                     help="Comma-separated cat=N caps, e.g. matmul=100,elementwise=60. "
                          "Use '*=N' for a default. Uncapped categories keep everything.")
@@ -105,12 +108,29 @@ def main() -> None:
             r = json.loads(line)
             if r.get("passed"):
                 pid, sid = r["key"].split(":")
-                passed.append((int(pid), int(sid)))
+                passed.append((int(pid), int(sid), r.get("speedup")))
         print("level %d: %d verified passing samples" % (level, len(passed)))
 
+        n_slow = 0
+        if args.min_speedup is not None:
+            before = len(passed)
+            # A kernel with no timing cannot be judged, so keep it: correctness
+            # sets that were verified without --measure-time would otherwise
+            # vanish entirely.
+            passed = [p for p in passed
+                      if p[2] is None or p[2] >= args.min_speedup]
+            n_slow = before - len(passed)
+            print("  dropped %d below %.2fx" % (n_slow, args.min_speedup))
+
         by_problem = collections.defaultdict(list)
-        for pid, sid in sorted(passed):
-            by_problem[pid].append(sid)
+        for pid, sid, sp in passed:
+            by_problem[pid].append((sid, sp))
+        # Fastest first, so the per-problem cap keeps the best solutions rather
+        # than whichever the sampler happened to emit first. Among several
+        # correct kernels for one task, the difference between them is the most
+        # direct signal about speed the dataset can carry.
+        for pid in by_problem:
+            by_problem[pid].sort(key=lambda t: (-(t[1] or 0.0), t[0]))
         n_tasks += len(by_problem)
 
         for pid, sids in sorted(by_problem.items()):
@@ -123,7 +143,7 @@ def main() -> None:
                 precision="fp32",
             )
             n_for_problem = 0
-            for sid in sids:
+            for sid, speedup in sids:
                 if n_for_problem >= args.max_per_problem:
                     dropped_cap += 1
                     continue
@@ -148,6 +168,7 @@ def main() -> None:
                     "sample_id": sid,
                     "problem": problem.name,
                     "category": category_of(problem.code),
+                    "speedup": speedup,
                     "prompt": prompt,
                     # Fenced so the target matches the format the model is asked
                     # for and the eval-time extractor expects.
@@ -176,6 +197,11 @@ def main() -> None:
 
     tasks = {(r["level"], r["problem_id"]) for r in kept}
     print("  distinct tasks covered: %d" % len(tasks))
+
+    sp = sorted(r["speedup"] for r in kept if r.get("speedup"))
+    if sp:
+        print("  speedup of kept solutions: median %.2fx, %d/%d beat torch"
+              % (sp[len(sp) // 2], sum(1 for s in sp if s > 1.0), len(sp)))
     print("wrote", args.out)
 
 

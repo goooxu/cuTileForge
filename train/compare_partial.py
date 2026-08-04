@@ -104,6 +104,20 @@ def main() -> None:
         ap.error("--baseline needs one file per level")
 
     def load_run(run_dir, lvl):
+        """Return {(level, problem, sample): (passed, speedup)}.
+
+        analyze_cutile_run.py's records already carry both, and carry speedup at
+        all, which eval_results.json does not -- it has a raw runtime with no
+        reference to divide by. So prefer them, and fall back to recomputing the
+        verdict from eval_results.json for runs that were never fully evaluated,
+        accepting that those have no speed data.
+        """
+        analysis = os.path.join(run_dir, "analysis.json")
+        if os.path.exists(analysis):
+            return {(lvl, r["problem_id"], r["sample_id"]):
+                    (bool(r["passed"]), r.get("speedup"))
+                    for r in json.load(open(analysis))}
+
         results = json.load(open(os.path.join(run_dir, "eval_results.json")))
         out = {}
         for pid, recs in results.items():
@@ -115,7 +129,7 @@ def main() -> None:
                 if os.path.exists(path):
                     code = open(path, encoding="utf-8", errors="replace").read()
                 out[(lvl, int(pid), rec["sample_id"])] = (
-                    bool(rec.get("correctness")) and bool(code) and pure(code))
+                    bool(rec.get("correctness")) and bool(code) and pure(code), None)
         return out
 
     runs = []
@@ -134,7 +148,8 @@ def main() -> None:
         rows = json.load(open(f))
         total.extend((lvl, r) for r in rows)
         for r in rows:
-            baseline[(lvl, r["problem_id"], r["sample_id"])] = bool(r["passed"])
+            baseline[(lvl, r["problem_id"], r["sample_id"])] = (
+                bool(r["passed"]), r.get("speedup"))
 
     pids = set.intersection(*[{(l, p) for l, p, _ in d} for _, d in runs])
     keys = [(l, p, s) for l, p in sorted(pids) for s in range(args.k)]
@@ -149,22 +164,37 @@ def main() -> None:
     print("criterion: numerically correct AND entirely cuTile\n")
 
     def row(d, subset=None):
-        """pass@1 over samples, and the count of problems solved at least once."""
+        """pass@1, problems solved, and how many of those beat torch.
+
+        fast_1.0 follows KernelBench: a problem counts if its *best* passing
+        sample is faster than torch eager, so it is a per-problem measure rather
+        than a per-sample one.
+        """
         ks = subset if subset is not None else keys
-        ok = sum(1 for k in ks if d[k])
-        solved = len({(l, p) for l, p, s in ks if d[(l, p, s)]})
-        return ok, ok / max(len(ks), 1) * 100, solved
+        ok = sum(1 for k in ks if d[k][0])
+        solved = {(l, p) for l, p, s in ks if d[(l, p, s)][0]}
+        best = {}
+        for l, p, s in ks:
+            passed, sp = d[(l, p, s)]
+            if passed and sp:
+                best[(l, p)] = max(best.get((l, p), 0.0), sp)
+        fast = sum(1 for v in best.values() if v > 1.0)
+        med = sorted(best.values())[len(best) // 2] if best else 0.0
+        return ok, ok / max(len(ks), 1) * 100, len(solved), fast, med
 
     n_probs = len({(l, p) for l, p, _ in keys})
-    print("  %-18s %8s %8s %12s" % ("", "pass@1", "pass@%d" % args.k, "solved"))
-    b_ok, b_pct, b_solved = row(baseline)
-    print("  %-18s %7.1f%% %7.1f%% %8d/%d"
-          % ("baseline", b_pct, b_solved / n_probs * 100, b_solved, n_probs))
+    print("  %-18s %8s %8s %10s %9s %9s"
+          % ("", "pass@1", "pass@%d" % args.k, "solved", "fast_1.0", "median x"))
+    b_ok, b_pct, b_solved, b_fast, b_med = row(baseline)
+    print("  %-18s %7.1f%% %7.1f%% %6d/%-4d %6d/%-4d %8.2fx"
+          % ("baseline", b_pct, b_solved / n_probs * 100, b_solved, n_probs,
+             b_fast, n_probs, b_med))
     for label, d in runs:
-        ok, pct, solved = row(d)
-        print("  %-18s %7.1f%% %7.1f%% %8d/%d   %+5.1fpp pass@1, %+5.1fpp pass@%d"
+        ok, pct, solved, fast, med = row(d)
+        print("  %-18s %7.1f%% %7.1f%% %6d/%-4d %6d/%-4d %8.2fx   "
+              "%+5.1fpp pass@1, %+d fast"
               % (label, pct, solved / n_probs * 100, solved, n_probs,
-                 pct - b_pct, (solved - b_solved) / n_probs * 100, args.k))
+                 fast, n_probs, med, pct - b_pct, fast - b_fast))
 
     if not args.by_category:
         return
@@ -175,21 +205,23 @@ def main() -> None:
     for lp in pids:
         bycat.setdefault(categorise(names.get(lp, "")), []).append(lp)
 
-    print("\n  by category -- pass@1, and problems solved\n")
+    print("\n  by category -- problems solved, and of those how many beat torch\n")
     header = "  %-12s %6s %14s" % ("category", "probs", "baseline")
     for label, _ in runs:
-        header += " %20s" % label[:20]
+        header += " %21s" % label[:21]
     print(header)
     for cat in sorted(bycat, key=lambda c: -len(bycat[c])):
         members = set(bycat[cat])
         subset = [k for k in keys if (k[0], k[1]) in members]
         if not subset:
             continue
-        _, bp, bs = row(baseline, subset)
-        line = "  %-12s %6d %8.1f%% %2d/%-2d" % (cat, len(members), bp, bs, len(members))
+        _, _, bs, bf, _ = row(baseline, subset)
+        line = "  %-12s %6d %7d/%-2d f%-3d" % (cat, len(members), bs,
+                                               len(members), bf)
         for _, d in runs:
-            _, pct, solved = row(d, subset)
-            line += " %10.1f%% %2d/%-2d %+5.1f" % (pct, solved, len(members), pct - bp)
+            _, _, solved, fast, _ = row(d, subset)
+            line += " %12d/%-2d f%-3d %+3d" % (solved, len(members), fast,
+                                               fast - bf)
         print(line)
 
 

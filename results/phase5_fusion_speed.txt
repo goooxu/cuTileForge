@@ -1,0 +1,13 @@
+fusion pattern              n    median       max   beat torch
+MatmulBias                137    0.070x     0.09x      0 (  0%)
+MatmulResidual             91    0.031x     0.08x      0 (  0%)
+SoftmaxChain               56    0.281x     1.36x      2 (  4%)
+NormResidual               49    0.629x     3.66x     13 ( 27%)
+LongChain4                 43    1.798x     2.18x     42 ( 98%)
+LongChain6                 35    2.478x     3.26x     34 ( 97%)
+ConvBias                   33    0.160x     0.42x      0 (  0%)
+LongChain8                 26    2.748x     3.98x     26 (100%)
+
+470 timed, 117 beat torch (25%), median 0.082x
+wins on: LongChain4, LongChain6, LongChain8
+never wins on: ConvBias, MatmulBias, MatmulResidual

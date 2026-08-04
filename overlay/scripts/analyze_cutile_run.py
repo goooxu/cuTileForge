@@ -287,6 +287,33 @@ def report(records: list[dict], args) -> None:
           f"{n_problems} problems x {n_samples} samples = {total})")
     print("=" * 78)
 
+    # fast_p in KernelBench is the fraction of *problems* that are both correct
+    # and faster than p, so take each problem's best passing sample.
+    best_per_problem = {}
+    for pid, rs in by_problem.items():
+        cands = [r["speedup"] for r in rs if r["passed"] and r["speedup"]]
+        if cands:
+            best_per_problem[pid] = max(cands)
+
+    sample_speedups = [r["speedup"] for r in records if r["passed"] and r["speedup"]]
+
+    print("\n-- Headline --")
+    print("  Correctness and speed are reported side by side. A kernel that is")
+    print("  correct but slower than the library it replaces is not a kernel")
+    print("  anyone would ship, and optimising correctness alone has been shown")
+    print("  here to trade speed away: the fourth round's highest pass rate came")
+    print("  with the lowest fast_1.0 of any run.")
+    p1 = sum(pass_at_k(n_samples, sum(r["passed"] for r in rs), 1)
+             for rs in by_problem.values()) / n_problems * 100
+    print(f"  pass@1 (correct + entirely cuTile)   {p1:6.1f}%")
+    if best_per_problem:
+        f10 = sum(s > 1.0 for s in best_per_problem.values()) / n_problems * 100
+        print(f"  fast_1.0 (also beats torch eager)    {f10:6.1f}%"
+              f"   {sum(s > 1.0 for s in best_per_problem.values())}/{n_problems}"
+              " problems")
+    else:
+        print("  fast_1.0                                n/a   (no --baseline given)")
+
     print("\n-- Per-sample rates --")
     print("  A sample passes only if it is numerically correct AND implemented")
     print("  entirely in cuTile; a partial port counts as a failure.")
@@ -304,15 +331,6 @@ def report(records: list[dict], args) -> None:
                 for rs in by_problem.values()) / n_problems * 100
         print(f"  pass@{k:<2} {p:6.1f}%")
 
-    # fast_p in KernelBench is the fraction of *problems* that are both correct
-    # and faster than p, so take each problem's best passing sample.
-    best_per_problem = {}
-    for pid, rs in by_problem.items():
-        cands = [r["speedup"] for r in rs if r["passed"] and r["speedup"]]
-        if cands:
-            best_per_problem[pid] = max(cands)
-
-    sample_speedups = [r["speedup"] for r in records if r["passed"] and r["speedup"]]
     if sample_speedups:
         print("\n-- Speed vs torch eager (passing samples only) --")
         print("  fast_p over problems (best sample per problem):")
@@ -324,6 +342,8 @@ def report(records: list[dict], args) -> None:
               f"max {max(srt):.2f}x  n={len(srt)}")
         faster = [s for s in sample_speedups if s > 1.0]
         print(f"  samples beating torch: {len(faster)}/{len(sample_speedups)}")
+        print("  (per-category speed, and comparisons against other runs, come")
+        print("   from train/compare_partial.py over the --out records)")
     else:
         print("\n-- Speed: no baseline supplied or no passing samples, skipping --")
 
