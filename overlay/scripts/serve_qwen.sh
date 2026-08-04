@@ -30,6 +30,12 @@ MAX_LEN="${MAX_LEN:-40960}"
 # leaves ~82 GB per GPU and is what the repair runs used.
 GPU_UTIL="${GPU_UTIL:-0.90}"
 
+# Which weights to serve, and anything extra to mount to reach them. Fine-tuned
+# models are merged onto local NVMe rather than the workspace, so serving one
+# means pointing both of these at /raid.
+MODEL="${MODEL:-$WS/models/Qwen3-Coder-Next}"
+read -r -a extra_mounts <<< "${MOUNTS:-}"
+
 # Extra server flags. Empty by default: the nightly needs no workarounds on
 # GB200. Set EXTRA_ARGS=--enforce-eager if pinning to an older image that does.
 EXTRA_ARGS="${EXTRA_ARGS:-}"
@@ -47,9 +53,10 @@ docker run -d --name qwen-vllm \
     -e HF_HOME=/tmp/hf \
     -e VLLM_CACHE_ROOT=/tmp/vllm-cache \
     -v "$WS":"$WS":ro \
+    "${extra_mounts[@]}" \
     --entrypoint python3 \
     "$IMAGE" -m vllm.entrypoints.openai.api_server \
-        --model "$WS/models/Qwen3-Coder-Next" \
+        --model "$MODEL" \
         --served-model-name Qwen3-Coder-Next \
         --tensor-parallel-size 4 \
         --max-model-len "$MAX_LEN" \

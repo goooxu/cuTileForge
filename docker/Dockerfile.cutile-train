@@ -1,8 +1,15 @@
 # LoRA fine-tuning image for Qwen3-Coder-Next.
 #
-# Built on the same NGC PyTorch base as the eval image, which is the build that
-# actually works on GB200. flash-linear-attention and causal-conv1d give
-# transformers' Qwen3-Next its fused fast path; without them it falls back to
+# Deliberately pinned to 26.06 while the eval image moved to 26.07. The two are
+# independent, and 26.07 makes this training run unusable: bf16 loss goes
+# non-finite on roughly a third of the ~16k-token sequences that make up most of
+# this dataset, against 3.5% on 26.06. transformers resolves to the same version
+# on both, so the difference is the torch build. The failures track sequence
+# length, which points at the DeltaNet chunked delta rule accumulating in bf16,
+# but the fix here is simply to stay on the base that is known to converge.
+#
+# flash-linear-attention and causal-conv1d give transformers' Qwen3-Next its
+# fused fast path; on aarch64 Triton is unavailable so it falls back to
 # torch_chunk_gated_delta_rule, which is pure PyTorch and still differentiable,
 # just slower.
 FROM nvcr.io/nvidia/pytorch:26.06-py3
@@ -20,4 +27,8 @@ RUN pip install --no-cache-dir flash-linear-attention causal-conv1d || \
     echo "WARNING: fused linear-attention kernels unavailable; using torch fallback"
 
 ENV NVIDIA_TF32_OVERRIDE=0
+# Activations dominate the budget because gradient checkpointing cannot be used
+# with this model, and the allocator was leaving several GB reserved but
+# unallocated at the sizes involved.
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 WORKDIR /ws

@@ -1,0 +1,13 @@
+level 1: 32 of 100 problems evaluated in every run, k=4 (128 samples)
+PARTIAL -- the baseline below is recomputed on this same subset, not the published full-set figure
+
+  baseline             74 passed   57.8%    27/32 problems
+  A (from base)        86 passed   67.2%    25/32 problems    +9.4pp vs baseline
+  B (continued)        81 passed   63.3%    25/32 problems    +5.5pp vs baseline
+
+level 2: 38 of 100 problems evaluated in every run, k=4 (152 samples)
+PARTIAL -- the baseline below is recomputed on this same subset, not the published full-set figure
+
+  baseline              7 passed    4.6%     6/38 problems
+  A (from base)         8 passed    5.3%     6/38 problems    +0.7pp vs baseline
+  B (continued)         9 passed    5.9%     8/38 problems    +1.3pp vs baseline

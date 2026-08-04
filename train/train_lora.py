@@ -14,6 +14,7 @@ Usage inside the training image:
 """
 
 import argparse
+import collections
 import json
 import math
 import os
@@ -78,7 +79,10 @@ class CompletionOnlyDataset(Dataset):
             labels = labels[overflow:]
             self.n_truncated += 1
 
-        return {"input_ids": ids, "labels": labels}
+        # Category rides along so the trainer can report whether dropped
+        # micro-batches are concentrated in one operator family.
+        return {"input_ids": ids, "labels": labels,
+                "category": row.get("category", "?")}
 
 
 def collate(batch, pad_id):
@@ -89,7 +93,53 @@ def collate(batch, pad_id):
         input_ids.append(b["input_ids"] + [pad_id] * pad)
         labels.append(b["labels"] + [-100] * pad)
         attn.append([1] * len(b["input_ids"]) + [0] * pad)
-    return (torch.tensor(input_ids), torch.tensor(labels), torch.tensor(attn))
+    return (torch.tensor(input_ids), torch.tensor(labels), torch.tensor(attn),
+            [b.get("category", "?") for b in batch])
+
+
+def unwrap(model):
+    """Reach the transformer body and the LM head through PEFT's wrappers.
+
+    PeftModel forwards unknown attributes to the model it wraps, so probing with
+    hasattr finds lm_head on the wrapper itself and stops one level too high --
+    .model there is still the causal LM, not the body. Descend explicitly
+    instead. LoRA layers are injected into the wrapped modules, so going through
+    the base model still applies the adapter.
+    """
+    m = model
+    while hasattr(m, "get_base_model"):
+        m = m.get_base_model()
+    if not (hasattr(m, "lm_head") and hasattr(m, "model")):
+        raise SystemExit("expected a causal LM with .model and .lm_head, got %s"
+                         % type(m).__name__)
+    return m.model, m.lm_head
+
+
+def sparse_lm_loss(model, input_ids, attn, labels):
+    """Cross-entropy over only the positions that carry a label.
+
+    Passing labels= to the model projects every position through the LM head,
+    which at a 152k vocabulary and 16k tokens is a 5 GB logits tensor before the
+    fp32 upcast that cross-entropy does. Prompts here are ~14k tokens of fixed
+    documentation and only the completion is supervised, so fewer than one
+    position in ten carries a label. Selecting first makes that tensor two orders
+    of magnitude smaller, which is what lets this train without gradient
+    checkpointing. The value is identical: the mean is over the same tokens.
+    """
+    import torch.nn.functional as F
+
+    body, lm_head = unwrap(model)
+    hidden = body(input_ids=input_ids, attention_mask=attn).last_hidden_state
+
+    # Standard causal shift: position t predicts token t+1.
+    hidden = hidden[:, :-1]
+    # The model is sharded, so the last layer's output need not be on the device
+    # the inputs were placed on.
+    target = labels[:, 1:].to(hidden.device)
+    keep = target != -100
+    if not keep.any():
+        return torch.tensor(float("nan"), device=hidden.device)
+    return F.cross_entropy(lm_head(hidden[keep]).float(), target[keep])
 
 
 def main() -> None:
@@ -105,6 +155,16 @@ def main() -> None:
     ap.add_argument("--warmup-frac", type=float, default=0.05)
     ap.add_argument("--log-every", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--gradient-checkpointing", action="store_true",
+                    help="Trade compute for activation memory. Required to fit, but "
+                         "makes some losses NaN; see the comment at the call site.")
+    ap.add_argument("--max-skip-frac", type=float, default=0.05,
+                    help="Abort if more than this fraction of micro-batches have a "
+                         "non-finite loss.")
+    ap.add_argument("--resume-adapter", default=None,
+                    help="Continue training an existing adapter instead of a fresh "
+                         "one. Note this stacks rounds: the result inherits whatever "
+                         "the earlier round's data distribution taught it.")
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -132,19 +192,36 @@ def main() -> None:
     if not any(counts[t] for t in DELTANET_TARGETS):
         raise SystemExit("no DeltaNet projections matched")
 
-    # lora_dropout must stay 0: some of these targets are fused MoE parameters
-    # rather than nn.Linear, and peft wraps those with ParamWrapper, which
-    # rejects any nonzero dropout.
-    model = get_peft_model(model, LoraConfig(
-        r=args.lora_r, lora_alpha=args.lora_r * 2, lora_dropout=0.0,
-        bias="none", task_type="CAUSAL_LM", target_modules=DEFAULT_TARGETS))
+    if args.resume_adapter:
+        from peft import PeftModel
+        print("resuming from adapter", args.resume_adapter)
+        # is_trainable is required: without it peft loads the adapter frozen for
+        # inference and the run would silently optimise nothing.
+        model = PeftModel.from_pretrained(model, args.resume_adapter,
+                                          is_trainable=True)
+    else:
+        # lora_dropout must stay 0: some of these targets are fused MoE parameters
+        # rather than nn.Linear, and peft wraps those with ParamWrapper, which
+        # rejects any nonzero dropout.
+        model = get_peft_model(model, LoraConfig(
+            r=args.lora_r, lora_alpha=args.lora_r * 2, lora_dropout=0.0,
+            bias="none", task_type="CAUSAL_LM", target_modules=DEFAULT_TARGETS))
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("trainable %s (%.3f%%)"
           % (f"{trainable:,}",
              trainable / sum(p.numel() for p in model.parameters()) * 100))
 
-    model.gradient_checkpointing_enable()
-    model.enable_input_require_grads()
+    # This is a genuine trade, not a free win. With checkpointing off, the same
+    # ~16k-token examples that give NaN give a finite loss -- so the NaNs are
+    # caused by checkpointing, not by the data -- but activations then need over
+    # 180 GB on the first GPU and the run dies partway through an epoch. With it
+    # on, peak is ~90 GB and a fraction of micro-batches have to be dropped.
+    # Dropping some is the lesser evil, so long as what gets dropped is not
+    # concentrated in one operator family; the run prints that breakdown at the
+    # end so the choice can be checked rather than assumed.
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+        model.enable_input_require_grads()
     model.train()
     model.config.use_cache = False
 
@@ -156,7 +233,12 @@ def main() -> None:
     steps_per_epoch = math.ceil(len(loader) / args.grad_accum)
     total_steps = max(1, int(steps_per_epoch * args.epochs))
     params = [p for p in model.parameters() if p.requires_grad]
-    opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.95))
+    # foreach=False costs some step throughput but avoids the multi-tensor
+    # temporaries, which matter here: gradient checkpointing is unusable with
+    # this model (see above), so activations already take most of the budget and
+    # the optimiser step was where it tipped into OOM.
+    opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0,
+                            betas=(0.9, 0.95), foreach=False)
     sched = torch.optim.lr_scheduler.OneCycleLR(
         opt, max_lr=args.lr, total_steps=total_steps,
         pct_start=args.warmup_frac, anneal_strategy="cos")
@@ -168,6 +250,8 @@ def main() -> None:
     step = 0
     micro = 0
     n_skipped = 0
+    seen_cats = collections.Counter()
+    skipped_cats = collections.Counter()
     running = []
     history = []
     t_start = time.time()
@@ -176,23 +260,24 @@ def main() -> None:
     for epoch in range(math.ceil(args.epochs)):
         if done:
             break
-        for input_ids, labels, attn in loader:
+        for input_ids, labels, attn, cats in loader:
             n_labels = int((labels != -100).sum())
-            out = model(input_ids=input_ids.to(dev),
-                        attention_mask=attn.to(dev),
-                        labels=labels.to(dev))
-            loss = out.loss
+            seen_cats[cats[0]] += 1
+            loss = sparse_lm_loss(model, input_ids.to(dev), attn.to(dev),
+                                  labels.to(dev))
             if not torch.isfinite(loss):
                 # A single bad example should not end the run. Drop its
                 # contribution and keep going, but refuse to train on garbage if
                 # it turns out to be widespread.
                 n_skipped += 1
-                print("  skipped micro-batch %d: non-finite loss "
-                      "(seq %d tokens, %d labels)"
-                      % (micro, input_ids.shape[1], n_labels))
+                skipped_cats[cats[0]] += 1
+                if n_skipped <= 10 or n_skipped % 25 == 0:
+                    print("  skipped micro-batch %d: non-finite loss "
+                          "(seq %d tokens, %d labels) [%d skipped so far]"
+                          % (micro, input_ids.shape[1], n_labels, n_skipped))
                 opt.zero_grad(set_to_none=True)
                 micro += 1
-                if n_skipped > max(10, 0.05 * len(loader)):
+                if n_skipped > max(10, args.max_skip_frac * len(loader)):
                     raise SystemExit("too many non-finite losses (%d); aborting"
                                      % n_skipped)
                 continue
@@ -239,6 +324,18 @@ def main() -> None:
     print("peak GPU memory: %.1f GB"
           % (max(torch.cuda.max_memory_allocated(i)
                  for i in range(torch.cuda.device_count())) / 1e9))
+
+    if n_skipped:
+        # Dropping micro-batches is only acceptable if it is spread across
+        # operator families. A category-specific drop rate would quietly recreate
+        # the coverage gap this dataset was rebuilt to close.
+        print("dropped %d/%d micro-batches (%.1f%%) to non-finite loss:"
+              % (n_skipped, micro, n_skipped / max(micro, 1) * 100))
+        for cat in sorted(seen_cats, key=lambda c: -seen_cats[c]):
+            n_seen, n_drop = seen_cats[cat], skipped_cats.get(cat, 0)
+            print("    %-12s %4d seen, %4d dropped (%4.1f%%)"
+                  % (cat, n_seen, n_drop, n_drop / max(n_seen, 1) * 100))
+
     print("saved adapter to", args.out)
 
 

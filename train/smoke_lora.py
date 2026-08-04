@@ -39,11 +39,10 @@ def main() -> None:
     print("arch", cfg.architectures, "| layers", cfg.num_hidden_layers,
           "| full_attention_interval", getattr(cfg, "full_attention_interval", "?"))
 
-    try:
-        import fla  # noqa: F401
-        print("flash-linear-attention: present (fused path)")
-    except Exception:
-        print("flash-linear-attention: absent (torch fallback, differentiable)")
+    import importlib.util
+    print("flash-linear-attention: %s"
+          % ("present (fused path)" if importlib.util.find_spec("fla")
+             else "absent (torch fallback, differentiable)"))
 
     t0 = time.time()
     print("loading weights ...")

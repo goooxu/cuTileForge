@@ -34,6 +34,42 @@ def normalise(code: str) -> str:
     return "\n".join(out)
 
 
+def category_of(ref_src: str) -> str:
+    """Operator family, read from the docstring the task generator writes."""
+    m = re.search(r'"""(\w+) \(tier (\d+), (\w+)\)', ref_src)
+    return m.group(3) if m else "?"
+
+
+def apply_quota(records, quota: dict):
+    """Cap each category, spending the budget on breadth of tasks first.
+
+    Without this the mix follows how easy each family is to sample rather than
+    where the model needs help: matmul and elementwise pass 80-100% of the time
+    and would take well over half the dataset, yet both are already at their
+    ceiling on the benchmark -- feeding ~170 matmul examples in the previous
+    round moved it -0.6pp. Convolution and pooling are the opposite.
+
+    Selection is round-robin over distinct problems, so a category that gets cut
+    loses repeated solutions to the same task before it loses coverage.
+    """
+    by_cat = collections.defaultdict(lambda: collections.defaultdict(list))
+    for rec in records:
+        # Problem ids restart per level, so a task is only unique with its level.
+        by_cat[rec["category"]][(rec["level"], rec["problem_id"])].append(rec)
+
+    kept = []
+    for cat, by_problem in by_cat.items():
+        limit = quota.get(cat, quota.get("*", None))
+        flat = []
+        # Round-robin: one solution from each problem, then a second, and so on.
+        for i in range(max(len(v) for v in by_problem.values())):
+            for pid in sorted(by_problem):
+                if i < len(by_problem[pid]):
+                    flat.append(by_problem[pid][i])
+        kept.extend(flat if limit is None else flat[:limit])
+    return kept
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", action="append", required=True, metavar="LEVEL:KERNEL_DIR:VERIFIED",
@@ -41,7 +77,16 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-per-problem", type=int, default=3,
                     help="Cap solutions kept per task so easy tasks do not dominate.")
+    ap.add_argument("--category-quota", default=None,
+                    help="Comma-separated cat=N caps, e.g. matmul=100,elementwise=60. "
+                         "Use '*=N' for a default. Uncapped categories keep everything.")
     args = ap.parse_args()
+
+    quota = {}
+    if args.category_quota:
+        for pair in args.category_quota.split(","):
+            cat, _, n = pair.partition("=")
+            quota[cat.strip()] = int(n)
 
     from kernelbench.dataset import construct_kernelbench_dataset
     from kernelbench.prompt_constructor_toml import get_custom_prompt
@@ -102,11 +147,17 @@ def main() -> None:
                     "problem_id": pid,
                     "sample_id": sid,
                     "problem": problem.name,
+                    "category": category_of(problem.code),
                     "prompt": prompt,
                     # Fenced so the target matches the format the model is asked
                     # for and the eval-time extractor expects.
                     "completion": "```python\n%s\n```" % code.strip(),
                 })
+
+    before = collections.Counter(r["category"] for r in kept)
+    if quota:
+        kept = apply_quota(kept, quota)
+    after = collections.Counter(r["category"] for r in kept)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
@@ -116,11 +167,15 @@ def main() -> None:
     print("kept %d examples from %d distinct tasks" % (len(kept), n_tasks))
     print("  dropped %d duplicates, %d over per-task cap" % (dropped_dup, dropped_cap))
 
-    cats = collections.Counter()
-    for rec in kept:
-        m = re.match(r"\d+_(.+?)_t\d+", rec["problem"].replace(".py", ""))
-        cats[m.group(1) if m else "?"] += 1
-    print("  top operators:", dict(cats.most_common(12)))
+    print("  by category:")
+    for cat in sorted(before, key=lambda c: -before[c]):
+        n_after = after.get(cat, 0)
+        note = "" if n_after == before[cat] else "  (capped from %d)" % before[cat]
+        print("    %-12s %4d  %4.1f%%%s"
+              % (cat, n_after, n_after / max(len(kept), 1) * 100, note))
+
+    tasks = {(r["level"], r["problem_id"]) for r in kept}
+    print("  distinct tasks covered: %d" % len(tasks))
     print("wrote", args.out)
 
 

@@ -35,6 +35,13 @@ GPUS="${GPUS:-all}"
 NAME="${NAME:-}"
 DETACH="${DETACH:-0}"
 
+# Training needs a different image (peft, accelerate) and reads weights from
+# local NVMe rather than the workspace, since loading 159 GB of mmap'd
+# safetensors over NFS wedges on futex_do_wait. Hence both are overridable:
+#   IMAGE=cutile-train:latest MOUNTS="-v /raid/tmp:/raid/tmp:ro" ./in_container.sh ...
+IMAGE="${IMAGE:-cutile-eval:latest}"
+read -r -a extra_mounts <<< "${MOUNTS:-}"
+
 args=(--user "$(id -u):$(id -g)" --ipc=host --network host
       -e HOME=/tmp
       # The container has no /etc/passwd entry for the mounted-in uid, so
@@ -49,6 +56,8 @@ args=(--user "$(id -u):$(id -g)" --ipc=host --network host
       -e SGLANG_API_KEY=local-no-auth
       -v "$WS":/ws
       -w "/ws/$REL")
+
+[[ ${#extra_mounts[@]} -gt 0 ]] && args+=("${extra_mounts[@]}")
 
 # GPUS=none skips GPU passthrough entirely, for CPU-only steps such as generation
 # (which just talks to the vLLM server over HTTP).
@@ -71,4 +80,4 @@ else
     cmd="$(printf '%q ' "$@")"
 fi
 
-exec docker run "${args[@]}" --entrypoint bash cutile-eval:latest -lc "$cmd"
+exec docker run "${args[@]}" --entrypoint bash "$IMAGE" -lc "$cmd"
