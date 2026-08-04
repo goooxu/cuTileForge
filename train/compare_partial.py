@@ -28,6 +28,36 @@ import json
 import os
 
 
+# Same buckets compare_runs.py uses, so the two agree on what "conv" means.
+CATEGORY_RULES = [
+    ("conv", ["convtranspose", "conv1d", "conv2d", "conv3d", "conv",
+              "depthwise", "pointwise", "separable"]),
+    ("pool", ["maxpool", "avgpool", "pool", "adaptive"]),
+    ("norm", ["batchnorm", "layernorm", "groupnorm", "instancenorm", "rmsnorm",
+              "l1norm", "l2norm", "frobenius", "norm", "softmax", "logsoftmax"]),
+    ("activation", ["relu", "gelu", "elu", "selu", "silu", "swish", "sigmoid",
+                    "tanh", "softplus", "softsign", "hardtanh", "hardsigmoid",
+                    "hardswish", "mish", "leakyrelu"]),
+    ("loss", ["loss", "crossentropy", "kldiv", "hinge", "huber", "cosine",
+              "triplet", "margin"]),
+    ("matmul", ["matmul", "matrixmul", "bmm", "batched_matrix", "gemm", "dot",
+                "matrixvector", "matrixscalar", "linear", "innerproduct",
+                "matrixmultiplication", "tallskinny", "irregularshape",
+                "symmetric", "triangular", "diagonal"]),
+    ("reduction", ["sum", "mean", "max", "min", "argmax", "argmin", "prod",
+                   "cumsum", "cumprod", "cumulative", "reduction", "reverse",
+                   "masked", "logsumexp"]),
+]
+
+
+def categorise(name: str) -> str:
+    low = name.lower()
+    for cat, keys in CATEGORY_RULES:
+        if any(k in low for k in keys):
+            return cat
+    return "other"
+
+
 def load_checker(repo_root):
     """Import the static checker without dragging in torch via the package."""
     path = os.path.join(repo_root, "kernelbench", "src", "kernelbench",
@@ -40,13 +70,19 @@ def load_checker(repo_root):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--level", type=int, required=True)
+    # Levels are scored together by default because the headline figures are
+    # over all 200 problems; the lists below are positionally matched.
+    ap.add_argument("--level", required=True,
+                    help="Comma-separated levels, e.g. 1,2.")
     ap.add_argument("--baseline", required=True,
-                    help="level<N>_per_sample.json from the baseline analysis.")
+                    help="Comma-separated level<N>_per_sample.json, one per level.")
     ap.add_argument("--run", action="append", required=True,
-                    metavar="LABEL:DIR", help="Repeatable: a run to compare.")
+                    metavar="LABEL:DIR[,DIR...]",
+                    help="Repeatable: a run to compare, one directory per level.")
     ap.add_argument("--k", type=int, default=4,
                     help="Samples per problem to score, for both sides.")
+    ap.add_argument("--by-category", action="store_true",
+                    help="Break the comparison down by operator family.")
     ap.add_argument("--repo-root", default=os.path.join(
         os.path.dirname(os.path.abspath(__file__)), ".."))
     args = ap.parse_args()
@@ -60,54 +96,99 @@ def main() -> None:
                 return False
         return True
 
-    def load_run(run_dir):
+    levels = [int(x) for x in args.level.split(",")]
+    baseline_files = args.baseline.split(",")
+    if len(baseline_files) != len(levels):
+        ap.error("--baseline needs one file per level")
+
+    def load_run(run_dir, lvl):
         results = json.load(open(os.path.join(run_dir, "eval_results.json")))
         out = {}
         for pid, recs in results.items():
             for rec in recs:
                 path = os.path.join(
                     run_dir, "level_%d_problem_%s_sample_%d_kernel.py"
-                    % (args.level, pid, rec["sample_id"]))
+                    % (lvl, pid, rec["sample_id"]))
                 code = ""
                 if os.path.exists(path):
                     code = open(path, encoding="utf-8", errors="replace").read()
-                out[(int(pid), rec["sample_id"])] = (
+                out[(lvl, int(pid), rec["sample_id"])] = (
                     bool(rec.get("correctness")) and bool(code) and pure(code))
         return out
 
     runs = []
     for spec in args.run:
-        label, _, path = spec.rpartition(":")
-        runs.append((label or os.path.basename(path), load_run(path)))
+        label, _, paths = spec.rpartition(":")
+        dirs = paths.split(",")
+        if len(dirs) != len(levels):
+            ap.error("run %r needs one directory per level" % label)
+        merged = {}
+        for lvl, d in zip(levels, dirs):
+            merged.update(load_run(d, lvl))
+        runs.append((label or os.path.basename(dirs[0]), merged))
 
-    baseline = {(r["problem_id"], r["sample_id"]): bool(r["passed"])
-                for r in json.load(open(args.baseline))}
+    baseline, total = {}, []
+    for lvl, f in zip(levels, baseline_files):
+        rows = json.load(open(f))
+        total.extend((lvl, r) for r in rows)
+        for r in rows:
+            baseline[(lvl, r["problem_id"], r["sample_id"])] = bool(r["passed"])
 
-    pids = set.intersection(*[{p for p, _ in d} for _, d in runs])
-    keys = [(p, s) for p in sorted(pids) for s in range(args.k)]
+    pids = set.intersection(*[{(l, p) for l, p, _ in d} for _, d in runs])
+    keys = [(l, p, s) for l, p in sorted(pids) for s in range(args.k)]
     keys = [k for k in keys if all(k in d for _, d in runs) and k in baseline]
 
-    total = json.load(open(args.baseline))
-    n_all = len({r["problem_id"] for r in total})
-    print("level %d: %d of %d problems evaluated in every run, k=%d (%d samples)"
+    n_all = len({(lvl, r["problem_id"]) for lvl, r in total})
+    print("level %s: %d of %d problems evaluated in every run, k=%d (%d samples)"
           % (args.level, len(pids), n_all, args.k, len(keys)))
     if len(pids) < n_all:
         print("PARTIAL -- the baseline below is recomputed on this same subset, "
               "not the published full-set figure")
-    print()
+    print("criterion: numerically correct AND entirely cuTile\n")
 
-    def row(label, d):
-        ok = sum(1 for k in keys if d[k])
-        solved = len({p for p, s in keys if d[(p, s)]})
-        return ok, ok / max(len(keys), 1) * 100, solved
+    def row(d, subset=None):
+        """pass@1 over samples, and the count of problems solved at least once."""
+        ks = subset if subset is not None else keys
+        ok = sum(1 for k in ks if d[k])
+        solved = len({(l, p) for l, p, s in ks if d[(l, p, s)]})
+        return ok, ok / max(len(ks), 1) * 100, solved
 
-    b_ok, b_pct, b_solved = row("baseline", baseline)
-    print("  %-18s %4d passed  %5.1f%%   %3d/%d problems"
-          % ("baseline", b_ok, b_pct, b_solved, len(pids)))
+    n_probs = len({(l, p) for l, p, _ in keys})
+    print("  %-18s %8s %8s %12s" % ("", "pass@1", "pass@%d" % args.k, "solved"))
+    b_ok, b_pct, b_solved = row(baseline)
+    print("  %-18s %7.1f%% %7.1f%% %8d/%d"
+          % ("baseline", b_pct, b_solved / n_probs * 100, b_solved, n_probs))
     for label, d in runs:
-        ok, pct, solved = row(label, d)
-        print("  %-18s %4d passed  %5.1f%%   %3d/%d problems   %+5.1fpp vs baseline"
-              % (label, ok, pct, solved, len(pids), pct - b_pct))
+        ok, pct, solved = row(d)
+        print("  %-18s %7.1f%% %7.1f%% %8d/%d   %+5.1fpp pass@1, %+5.1fpp pass@%d"
+              % (label, pct, solved / n_probs * 100, solved, n_probs,
+                 pct - b_pct, (solved - b_solved) / n_probs * 100, args.k))
+
+    if not args.by_category:
+        return
+
+    # Categories come from the baseline files, the only place holding names.
+    names = {(lvl, r["problem_id"]): r["problem"] for lvl, r in total}
+    bycat = {}
+    for lp in pids:
+        bycat.setdefault(categorise(names.get(lp, "")), []).append(lp)
+
+    print("\n  by category -- pass@1, and problems solved\n")
+    header = "  %-12s %6s %14s" % ("category", "probs", "baseline")
+    for label, _ in runs:
+        header += " %20s" % label[:20]
+    print(header)
+    for cat in sorted(bycat, key=lambda c: -len(bycat[c])):
+        members = set(bycat[cat])
+        subset = [k for k in keys if (k[0], k[1]) in members]
+        if not subset:
+            continue
+        _, bp, bs = row(baseline, subset)
+        line = "  %-12s %6d %8.1f%% %2d/%-2d" % (cat, len(members), bp, bs, len(members))
+        for _, d in runs:
+            _, pct, solved = row(d, subset)
+            line += " %10.1f%% %2d/%-2d %+5.1f" % (pct, solved, len(members), pct - bp)
+        print(line)
 
 
 if __name__ == "__main__":

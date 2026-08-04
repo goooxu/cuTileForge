@@ -1,0 +1,19 @@
+level 1,2: 200 of 200 problems evaluated in every run, k=4 (800 samples)
+criterion: numerically correct AND entirely cuTile
+
+                       pass@1   pass@4       solved
+  baseline              12.9%    23.5%       47/200
+  A (from base)         14.2%    24.0%       48/200    +1.4pp pass@1,  +0.5pp pass@4
+  B (continued)         14.0%    26.0%       52/200    +1.1pp pass@1,  +2.5pp pass@4
+
+  by category -- pass@1, and problems solved
+
+  category      probs       baseline        A (from base)        B (continued)
+  conv             98      1.8%  5/98        2.3%  8/98  +0.5        4.1% 14/98  +2.3
+  activation       29     37.1% 19/29       44.0% 19/29  +6.9       39.7% 19/29  +2.6
+  norm             24      2.1%  2/24        4.2%  3/24  +2.1        2.1%  2/24  +0.0
+  matmul           15     43.3% 11/15       41.7%  9/15  -1.7       43.3%  9/15  +0.0
+  reduction        11      2.3%  1/11        2.3%  1/11  +0.0        4.5%  2/11  +2.3
+  pool             10      0.0%  0/10        2.5%  1/10  +2.5        0.0%  0/10  +0.0
+  other             7     71.4%  7/7        78.6%  6/7   +7.1       67.9%  5/7   -3.6
+  loss              6     16.7%  2/6         4.2%  1/6  -12.5        4.2%  1/6  -12.5
