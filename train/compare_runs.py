@@ -1,11 +1,17 @@
-"""Compare a fine-tuned run against the baseline on the held-out benchmark.
+"""Compare a fine-tuned run against the baseline, including error classes.
 
 Both sides must come from the same evaluation protocol -- same prompt, same
 "numerically correct AND entirely cuTile" criterion -- or the delta means
-nothing. This reads two analyze_cutile_run.py outputs and reports the change,
-including the per-category view, which is where the interesting movement is:
-convolution, normalisation and pooling accounted for 92 of the 200 problems and
-only 13 were ever solved at baseline.
+nothing. This reads two analyze_cutile_run.py outputs and reports the change.
+
+Use this one when you want the **error-class** breakdown, which is what says
+whether a round taught the model a rule rather than just moving a rate: after
+the second SFT round grid_rank_exceeded halved, having gone up in the first.
+That needs analyze_cutile_run.py to have classified every sample, so both runs
+must be fully evaluated.
+
+For a comparison straight from eval_results.json, or one covering a partially
+evaluated run, or more than two runs at once, use compare_partial.py instead.
 
 Usage:
     python3 train/compare_runs.py \\

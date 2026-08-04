@@ -123,8 +123,10 @@ def sparse_lm_loss(model, input_ids, attn, labels):
     fp32 upcast that cross-entropy does. Prompts here are ~14k tokens of fixed
     documentation and only the completion is supervised, so fewer than one
     position in ten carries a label. Selecting first makes that tensor two orders
-    of magnitude smaller, which is what lets this train without gradient
-    checkpointing. The value is identical: the mean is over the same tokens.
+    of magnitude smaller, which is most of the difference between a run that
+    fits in 87 GB and one that does not fit at all. The value is identical: the
+    mean is over the same tokens, and test_sparse_loss.py checks that against
+    the model's own labels= path.
     """
     import torch.nn.functional as F
 
@@ -211,14 +213,15 @@ def main() -> None:
           % (f"{trainable:,}",
              trainable / sum(p.numel() for p in model.parameters()) * 100))
 
-    # This is a genuine trade, not a free win. With checkpointing off, the same
-    # ~16k-token examples that give NaN give a finite loss -- so the NaNs are
-    # caused by checkpointing, not by the data -- but activations then need over
-    # 180 GB on the first GPU and the run dies partway through an epoch. With it
-    # on, peak is ~90 GB and a fraction of micro-batches have to be dropped.
-    # Dropping some is the lesser evil, so long as what gets dropped is not
-    # concentrated in one operator family; the run prints that breakdown at the
-    # end so the choice can be checked rather than assumed.
+    # A genuine trade, not a free win. Checkpointing is what makes losses go
+    # non-finite here: with it off, 1-2% of micro-batches are dropped, with it on,
+    # 20-30%, on the same data. But with it off activations exceed 180 GB on the
+    # first GPU and the run dies partway through an epoch, and that survived every
+    # attempt to economise -- selecting labelled positions, foreach=False,
+    # expandable_segments, a lower max_len -- each of which only moved the OOM
+    # later. So: keep checkpointing, drop the bad micro-batches. That is only
+    # acceptable while the drops stay spread across operator families, which the
+    # summary at the end of the run reports rather than assumes.
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
         model.enable_input_require_grads()
@@ -234,9 +237,9 @@ def main() -> None:
     total_steps = max(1, int(steps_per_epoch * args.epochs))
     params = [p for p in model.parameters() if p.requires_grad]
     # foreach=False costs some step throughput but avoids the multi-tensor
-    # temporaries, which matter here: gradient checkpointing is unusable with
-    # this model (see above), so activations already take most of the budget and
-    # the optimiser step was where it tipped into OOM.
+    # temporaries. Kept from the attempt to train without checkpointing, where
+    # the optimiser step was where memory tipped over; harmless now that
+    # checkpointing is back on, and useful again if it ever has to come off.
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0,
                             betas=(0.9, 0.95), foreach=False)
     sched = torch.optim.lr_scheduler.OneCycleLR(

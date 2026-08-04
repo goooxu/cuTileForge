@@ -180,7 +180,21 @@ bug。** KernelBench 在构造参考模型和候选模型前各重设一次随�
 A 的强项（归一化、池化、激活）恰好是它比 B 多喂的类别，所以两者差异基本能用数据构成
 解释，而不是"从哪起步"本身。
 
-详见 [results/sft2_comparison.txt](results/sft2_comparison.txt)，
+### 一个跨越三轮才闭合的问题
+
+`grid_rank_exceeded`（"grid 最多 3 维"）是第一阶段就找出的最高频单一失败模式：
+
+| | 基线 | 第二阶段 | 第四阶段 A | 第四阶段 B |
+| --- | ---: | ---: | ---: | ---: |
+| grid_rank_exceeded 占样本比 | 9.8% | **11.9%**（变差） | **5.0%** | **4.5%** |
+
+第二阶段它反而涨了——训练任务全是低维的，模型对 4D 的错误做法被强化。第三阶段发现修复
+循环对这类错误的修复成功率是 **0/43**：报错写得很清楚，模型读得懂却改不对，说明它缺的
+不是提示而是**正确写法**。这一轮训练数据里有 157 条卷积、全是 NCHW 四维张量，把
+"N 和 C 折叠进 3 维 grid"这个 idiom 逼了出来，于是几乎腰斩。
+
+详见 [results/sft2_comparison.txt](results/sft2_comparison.txt) 与
+[results/sft2_error_classes.txt](results/sft2_error_classes.txt)，
 全过程记录（含所有踩坑）见 [docs/WORKLOG.md](docs/WORKLOG.md)。
 
 ---
@@ -341,7 +355,7 @@ overlay/     cuTile backend 新增的文件（21 个，约 3500 行，占改动�
 patches/     对 KernelBench 自身文件的修改（8 个文件，约 280 行）
 golden/      手写的 cuTile 参考解，用于验证题目可解性
 docker/      评测容器
-results/     基线评测的汇总产物（约 1.1 MB，让报告里的数字可核验）
+results/     各轮评测的汇总产物（约 2.6 MB，让报告里的数字可核验）
 docs/        工作记录
 upstream.lock  钉死的上游 commit
 ```

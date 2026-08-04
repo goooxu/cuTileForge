@@ -1,10 +1,12 @@
-"""Compare runs on whatever subset of the benchmark they all finished.
+"""Compare any number of runs on whatever subset of the benchmark they finished.
 
 compare_runs.py needs analyze_cutile_run.py's output, which needs a complete
-evaluation. Dev machines here are time-limited and have repeatedly expired
-mid-run, so this reads eval_results.json directly, intersects the problems every
-run actually evaluated, and recomputes the baseline on exactly that subset at
-matching k.
+evaluation, and takes exactly one run. Dev machines here are time-limited and
+have repeatedly expired mid-run, so this reads eval_results.json directly,
+intersects the problems every run actually evaluated, and recomputes the
+baseline on exactly that subset at matching k.
+
+It does not classify errors -- use compare_runs.py for that.
 
 That last part is the point. The evaluator walks problems in order, so a partial
 run covers the low-numbered problems, which in Level 1 are mostly matmul and

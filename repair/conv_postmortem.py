@@ -1,9 +1,16 @@
-"""Why convolution stays at zero.
+"""Group one category's failures by their actual cuTile diagnostic.
 
-The repair loop lifted every other category but left conv at 0 of 480
-candidates over four attempts each. That is too systematic to be difficulty
-alone, so this groups conv failures by their actual cuTile diagnostic to see
-whether one blocker accounts for them.
+Written for convolution, which at the time sat at 0 of 480 candidates after four
+attempts each while every other category improved -- too systematic to be
+difficulty alone. It is what found the cause: 853 conv attempts had compiled and
+run, none landed within 1e-2, and the median error was 1.78, which is far too
+large for arithmetic and characteristic of comparing against something
+unrelated. That turned out to be the verifier's seeding bug, and convolution
+reaches 25.6% once it is fixed.
+
+Kept because the question generalises. When a category refuses to move, the
+aggregate pass rate says nothing about why, and the distribution of final-attempt
+diagnostics usually does.
 
 Usage:
     python3 repair/conv_postmortem.py --run runs/repair_l93 --level 93
