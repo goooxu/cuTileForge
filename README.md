@@ -5,6 +5,26 @@
 cuTile 比大多数模型的训练数据都新，所以值得问的不是"模型记没记住这个 DSL"，而是
 "给了文档之后能不能用起来、以及怎么让它用得更好"。
 
+## 最好的结果
+
+held-out KernelBench Level 1+2（200 题），判据是**数值正确且完全用 cuTile**，全部用官方
+harness 评测：
+
+| | 解出题数 | 其中快过 torch |
+| --- | ---: | ---: |
+| 基座模型，单次生成 | 47/200 | 5 |
+| 微调六轮后，单次生成 | 51/200 | 11 |
+| **微调后 + 编译反馈修复** | **76/200** | **17** |
+
+**六轮训练把解出题数从 47 推到 51，一次推理时的修复循环把它推到 76。** 在这个任务上，
+让模型看到自己的报错比继续微调它划算得多。代价是 3.3 倍的模型调用，而且那是另一种协议
+（见[第七阶段](#第七阶段把修复循环用到基准上)）。
+
+卷积是主力：98 道卷积题从 5 道涨到 23 道。Level 2（融合算子链，前六轮里推不动的那一半）
+从 16 道涨到 28 道。
+
+---
+
 当前进度：
 
 - [x] **一：基线评测**——给 KernelBench 加 `cutile` backend，量出 Qwen3-Coder-Next 的基线能力
@@ -13,8 +33,9 @@ cuTile 比大多数模型的训练数据都新，所以值得问的不是"模型
 - [x] **四：第二轮 SFT**——卷积解出题数 5 → 14，pass@4 23.5% → 26.0%
 - [x] **五：让"快"成为训练目标**——判据加入性能；Level 1 pass@1 +4.0pp，但 Level 2 未受益
 - [x] **六：GRPO**——跑通了，但指标没动；顺带查出前几轮一直在全量微调 MoE 专家
+- [x] **七：把修复循环用到基准上**——解出题数 51 → **76/200**，项目至今最大的一次提升
 
-## 六个阶段一览
+## 七个阶段一览
 
 | | 做了什么 | 手段作用在 | 主指标 |
 | --- | --- | --- | --- |
@@ -24,6 +45,7 @@ cuTile 比大多数模型的训练数据都新，所以值得问的不是"模型
 | 四：第二轮 SFT | 把修复循环产出的正样本喂回训练 | 训练时 | pass@4 23.5% → **26.0%** |
 | 五：让"快"成为目标 | 判据加性能，造大形状融合任务 | 训练时 | Level 1 pass@1 **+4.0pp**，Level 2 退步 |
 | 六：GRPO | 组内归一化 advantage + 分档 reward | 训练时 | **没动**（全在噪声内） |
+| 七：修复循环上基准 | 把编译报错回灌，最多 3 轮 | **推理时**（不改权重） | 解出题数 51 → **76/200** |
 
 **哪些能比、哪些不能比**：第一、二、四、五、六阶段同题集（KernelBench 200）、同判据、
 k 对齐到 4，可以直接比。**第三阶段不能和它们比**——它换了题集（合成题）、换了验证器，
@@ -311,6 +333,37 @@ RL 因此冻结专家、只训注意力与 DeltaNet：可训练量 6.88B → 34M
 
 ---
 
+## 第七阶段：把修复循环用到基准上
+
+回看六轮，效果最大的一次干预是第三阶段的修复循环（合成任务 23.6% → 42.7%）。
+**但我们只把它当数据挖矿机，从没在 held-out 的 200 题上跑过**——所有基准数字都是单次生成。
+
+model-E 起手 k=4、最多 3 轮修复，产出的 kernel 用官方 harness 重验：
+
+| | 解出题数 | fast_1.0 |
+| --- | ---: | ---: |
+| 基线 | 47/200 | 5 |
+| E 单次（k=4） | 51/200 | 11 |
+| **E + 编译反馈** | **76/200** | **17** |
+
+| | Level 1（单算子） | Level 2（融合链） |
+| --- | ---: | ---: |
+| 基线 | 31/100 | 16/100 |
+| E 单次 | 36/100 | 15/100 |
+| **E + 反馈** | **48/100** | **28/100** |
+
+按类别，卷积 5 → 8 → **23**（98 道题），池化第一次脱零（0 → 3），Level 2 从 15 到 28。
+
+**口径要说清楚**：这不是 pass@4。2635 次模型调用对单次 k=4 的 800 次，**3.3 倍算力**。
+一部分增益本来也能靠多采样拿到，严格的等算力对照需要 E 在 k=13 上的单次数据，我们没有。
+第三阶段在合成任务上量过这个差别（修复是以报错为条件的，多采样不是），但这 200 题上没做
+等算力对照。另外反馈里含数值比对结果，那是来自参考实现的信息——在真实开发流程里正常
+（你手上就有 PyTorch 版本当测试），但不等同于一次性生成。
+
+详见 [results/phase7_feedback_comparison.txt](results/phase7_feedback_comparison.txt)。
+
+---
+
 ## 测试集划分
 
 | | 用途 | 状态 |
@@ -478,7 +531,7 @@ patches/     对 KernelBench 自身文件的修改（8 个文件，约 280 行�
 golden/      手写的 cuTile 参考解，用于验证题目可解性
 rl/          GRPO：分档 reward、可学边界筛选、循环驱动
 docker/      评测容器
-results/     各轮评测的汇总产物（约 4 MB，让报告里的数字可核验）
+results/     各轮评测的汇总产物（约 4.1 MB，让报告里的数字可核验）
 docs/        工作记录
 upstream.lock  钉死的上游 commit
 ```
@@ -554,6 +607,29 @@ kernelbench/scripts/in_container.sh "python3 repair/analyze_repair.py \
     --run /ws/runs/repair_l93 --level 93"
 kernelbench/scripts/in_container.sh "python3 verify/cross_check.py \
     --kernel-dir /ws/runs/repair_l93 --level 93 -n 40"
+```
+
+### 第七阶段：修复循环上基准（当前最好的结果）
+
+```bash
+# 起微调后的模型（留出显存给验证器，修复循环边采样边验证）
+GPU_UTIL=0.55 MODEL=/raid/.../model-E MOUNTS="-v /raid/tmp:/raid/tmp:ro" \
+    kernelbench/scripts/serve_qwen.sh
+
+# 每题 4 个起始样本，最多 3 轮编译反馈修复
+for L in 1 2; do
+  kernelbench/scripts/in_container.sh "python3 repair/repair_loop.py \
+      --level $L --samples 4 --max-rounds 3 --out /ws/runs/repairE_l$L"
+done
+
+# 用官方 harness 重验（修复循环内部走的是快速验证器）
+cd kernelbench && DETACH=1 scripts/run_eval.sh repairE_l1 1 4
+
+# 对比
+python3 train/compare_partial.py --level 1,2 \
+    --baseline results/level1_per_sample.json,results/level2_per_sample.json \
+    --run "single-shot":../runs/E_l1,../runs/E_l2 \
+    --run "with feedback":../runs/repairE_l1,../runs/repairE_l2 --by-category
 ```
 
 ### 第五阶段：速度课程
