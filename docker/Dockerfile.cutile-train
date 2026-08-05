@@ -21,6 +21,18 @@ RUN pip install --no-cache-dir \
         datasets \
         safetensors
 
+# Reinforcement learning needs both stacks in one process: peft to hold the
+# policy, and KernelBench to build prompts, load tasks and score rollouts. Until
+# then training only ever imported the first, so these were only in the eval
+# image. Kept in sync with docker/Dockerfile.cutile-eval.
+RUN pip install --no-cache-dir \
+        pydra-config \
+        tomli \
+        python-dotenv \
+        openai \
+        litellm \
+        modal
+
 # Optional fused kernels for the Gated DeltaNet path. Not fatal if unavailable
 # on this platform, since transformers has a differentiable fallback.
 RUN pip install --no-cache-dir flash-linear-attention causal-conv1d || \
