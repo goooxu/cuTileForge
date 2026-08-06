@@ -288,10 +288,10 @@ index 7d97eff..40818e7 100644
  }
  
 diff --git a/src/kernelbench/prompt_constructor_toml.py b/src/kernelbench/prompt_constructor_toml.py
-index 4349a74..298e1fa 100644
+index 4349a74..af5e9fa 100644
 --- a/src/kernelbench/prompt_constructor_toml.py
 +++ b/src/kernelbench/prompt_constructor_toml.py
-@@ -202,6 +202,13 @@ def render_prompt_by_option(
+@@ -202,6 +202,19 @@ def render_prompt_by_option(
          "instruction": instruction,
      }
      
@@ -302,14 +302,20 @@ index 4349a74..298e1fa 100644
 +    if doc_reference:
 +        context["backend_doc"] = read_file(resolve_path(doc_reference))
 +
++    # A shorter alternative to the full reference, for prompt tiers that give the
++    # programming model but not the per-op API listing.
++    concepts_reference = backend_data.get("concepts_reference")
++    if concepts_reference:
++        context["backend_concepts"] = read_file(resolve_path(concepts_reference))
++
      # Load precision details if provided
      if precision:
          try:
 diff --git a/src/kernelbench/prompts/prompts.toml b/src/kernelbench/prompts/prompts.toml
-index 6a7dfca..8ed07c5 100644
+index 6a7dfca..8bb0dcb 100644
 --- a/src/kernelbench/prompts/prompts.toml
 +++ b/src/kernelbench/prompts/prompts.toml
-@@ -44,6 +44,15 @@ backend_display = "CuTe (CUTLASS) kernels"
+@@ -44,6 +44,17 @@ backend_display = "CuTe (CUTLASS) kernels"
  one_shot_new_arch = "src/kernelbench/prompts/model_new_ex_add_cute.py"
  # No few_shot_examples - will use one-shot when few_shot option is selected
  
@@ -320,12 +326,14 @@ index 6a7dfca..8ed07c5 100644
 +# reference that can be composed into the prompt via the backend_doc_block
 +# component. Regenerate with scripts/build_cutile_docs.py.
 +doc_reference = "src/kernelbench/prompts/cutile_api_reference.md"
++# The programming-model introduction, for the lighter prompt tiers.
++concepts_reference = "src/kernelbench/prompts/cutile_concepts.md"
 +# No few_shot_examples - will use one-shot when few_shot option is selected
 +
  [backends.tilelang]
  backend_display = "TileLang kernels"
  one_shot_new_arch = "src/kernelbench/prompts/model_new_ex_add_tilelang.py"
-@@ -133,6 +142,21 @@ Note: The kernels should be optimized for {precision_display} precision.
+@@ -133,6 +144,33 @@ Note: The kernels should be optimized for {precision_display} precision.
  """
  
  # -------------------------------------------------------------------------
@@ -343,11 +351,23 @@ index 6a7dfca..8ed07c5 100644
 +{backend_doc}
 +"""
 +
++# A lighter tier: the programming model without the per-op API reference. The
++# full reference is 55k characters and 91% of every training sequence, so a model
++# that only needs the concepts can be trained on an order of magnitude more
++# examples for the same compute -- and a model that needs neither is what
++# "knows the DSL" actually means.
++backend_concepts_block = """
++Here is an introduction to the {backend_display} programming model. Use only
++this DSL; APIs from other GPU DSLs do not exist in it.
++
++{backend_concepts}
++"""
++
 +# -------------------------------------------------------------------------
  # Custom Templates: Optional user-defined building blocks
  # -------------------------------------------------------------------------
  # Add any custom template blocks here and reference them from components lists.
-@@ -196,6 +220,21 @@ requires_example = "few_shot"
+@@ -196,6 +234,49 @@ requires_example = "few_shot"
  # -------------------------------------------------------------------------
  
  
@@ -359,6 +379,34 @@ index 6a7dfca..8ed07c5 100644
 +components = [
 +    "problem_statement",
 +    "backend_doc_block",
++    "examples_block",
++    "arch_block",
++    "precision_note",
++    "instruction",
++]
++
++
++[custom_prompts.cutile_concepts]
++# Middle tier: the programming model, no per-op reference. About 5.7k characters
++# of documentation instead of 55k.
++components = [
++    "problem_statement",
++    "backend_concepts_block",
++    "examples_block",
++    "arch_block",
++    "precision_note",
++    "instruction",
++]
++
++
++[custom_prompts.cutile_nodocs]
++# No documentation at all. The prompt drops from ~59k characters to ~3.5k, which
++# is the difference between training on hundreds of examples and tens of
++# thousands -- and asking the model to write the DSL from memory is the actual
++# test of whether it knows it. The worked example is kept: it fixes the output
++# format rather than teaching the API.
++components = [
++    "problem_statement",
 +    "examples_block",
 +    "arch_block",
 +    "precision_note",

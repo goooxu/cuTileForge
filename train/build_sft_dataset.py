@@ -77,6 +77,18 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-per-problem", type=int, default=3,
                     help="Cap solutions kept per task so easy tasks do not dominate.")
+    ap.add_argument("--prompt-tier", default="cutile_docs",
+                    help="Which prompt composition to train on. The full "
+                         "reference is 91%% of every sequence, so cutile_concepts "
+                         "(6.2x shorter) or cutile_nodocs (15.9x) is what makes a "
+                         "large dataset affordable. Generation still uses the full "
+                         "docs; this only changes what the model is trained to "
+                         "condition on.")
+    ap.add_argument("--nodocs-fraction", type=float, default=0.0,
+                    help="Share of examples rendered with no documentation at "
+                         "all, mixed into the tier above. Writing the DSL from "
+                         "memory is the goal, and the model already manages it "
+                         "5.5%% of the time untrained.")
     ap.add_argument("--min-speedup", type=float, default=None,
                     help="Drop solutions slower than this multiple of the torch "
                          "reference. Samples with no timing are kept.")
@@ -135,8 +147,15 @@ def main() -> None:
 
         for pid, sids in sorted(by_problem.items()):
             problem = dataset.get_problem_by_id(pid)
+            # Deterministic per task, so the same task always lands in the same
+            # tier and the two do not disagree about what it looks like.
+            tier = args.prompt_tier
+            if args.nodocs_fraction > 0:
+                h = int(hashlib.sha256(problem.name.encode()).hexdigest()[:8], 16)
+                if (h % 1000) / 1000.0 < args.nodocs_fraction:
+                    tier = "cutile_nodocs"
             prompt = get_custom_prompt(
-                "cutile_docs",
+                tier,
                 ref_arch_src=problem.code,
                 backend="cutile",
                 option="one_shot",
@@ -169,6 +188,7 @@ def main() -> None:
                     "problem": problem.name,
                     "category": category_of(problem.code),
                     "speedup": speedup,
+                    "prompt_tier": tier,
                     "prompt": prompt,
                     # Fenced so the target matches the format the model is asked
                     # for and the eval-time extractor expects.
@@ -202,6 +222,12 @@ def main() -> None:
     if sp:
         print("  speedup of kept solutions: median %.2fx, %d/%d beat torch"
               % (sp[len(sp) // 2], sum(1 for s in sp if s > 1.0), len(sp)))
+
+    tiers = collections.Counter(r["prompt_tier"] for r in kept)
+    chars = sum(len(r["prompt"]) + len(r["completion"]) for r in kept)
+    print("  prompt tiers: %s" % dict(tiers))
+    print("  total %0.1fM characters, ~%0.1fM tokens per epoch"
+          % (chars / 1e6, chars / 4 / 1e6))
     print("wrote", args.out)
 
 

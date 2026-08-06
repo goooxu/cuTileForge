@@ -26,7 +26,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lora_config import DEFAULT_TARGETS, DELTANET_TARGETS, resolve_targets  # noqa: E402
+from lora_config import (ATTENTION_ONLY_TARGETS, DEFAULT_TARGETS,  # noqa: E402
+                         DELTANET_TARGETS, resolve_targets)
 
 
 class CompletionOnlyDataset(Dataset):
@@ -163,6 +164,13 @@ def main() -> None:
     ap.add_argument("--max-skip-frac", type=float, default=0.05,
                     help="Abort if more than this fraction of micro-batches have a "
                          "non-finite loss.")
+    ap.add_argument("--targets", default="default",
+                    choices=["default", "attention_only"],
+                    help="default reaches the routed experts through peft's "
+                         "ParamWrapper, which trains 6.88B including a full "
+                         "fine-tune of their base weights. attention_only keeps "
+                         "to the attention and DeltaNet projections, where a much "
+                         "higher rank is affordable. See train/lora_config.py.")
     ap.add_argument("--resume-adapter", default=None,
                     help="Continue training an existing adapter instead of a fresh "
                          "one. Note this stacks rounds: the result inherits whatever "
@@ -187,7 +195,9 @@ def main() -> None:
         args.model, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
     print("loaded in %.1fs" % (time.time() - t0))
 
-    counts, _, _ = resolve_targets(model, DEFAULT_TARGETS)
+    targets = (ATTENTION_ONLY_TARGETS if args.targets == "attention_only"
+               else DEFAULT_TARGETS)
+    counts, _, _ = resolve_targets(model, targets)
     missing = [t for t, c in counts.items() if c == 0]
     if missing:
         raise SystemExit("target modules match nothing: %s" % ", ".join(missing))
@@ -207,7 +217,7 @@ def main() -> None:
         # rejects any nonzero dropout.
         model = get_peft_model(model, LoraConfig(
             r=args.lora_r, lora_alpha=args.lora_r * 2, lora_dropout=0.0,
-            bias="none", task_type="CAUSAL_LM", target_modules=DEFAULT_TARGETS))
+            bias="none", task_type="CAUSAL_LM", target_modules=targets))
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("trainable %s (%.3f%%)"
           % (f"{trainable:,}",

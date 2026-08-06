@@ -1,0 +1,31 @@
+=== dev 200, concepts tier (the training tier) ===
+level 1,2: 200 of 200 problems evaluated in every run, k=4 (800 samples)
+criterion: numerically correct AND entirely cuTile
+
+                       pass@1   pass@4     solved  fast_1.0  median x
+  baseline              12.9%    23.5%     47/200       5/200      0.12x
+  E (phase 6)           14.2%    25.5%     51/200      11/200      0.55x    +1.4pp pass@1, +6 fast
+  F concepts            22.0%    42.0%     84/200      17/200      0.55x    +9.1pp pass@1, +12 fast
+  F nodocs              20.2%    38.5%     77/200      19/200      0.55x    +7.4pp pass@1, +14 fast
+
+  by category -- problems solved, and of those how many beat torch
+
+  category      probs       baseline           E (phase 6)            F concepts              F nodocs
+  conv             98       5/98 f0              8/98 f3    +3           33/98 f9    +9           31/98 f10  +10
+  activation       29      19/29 f3             18/29 f3    +0           22/29 f3    +0           18/29 f3    +0
+  norm             24       2/24 f0              6/24 f2    +2           11/24 f3    +3            7/24 f3    +3
+  matmul           15      11/15 f1              9/15 f1    +0           10/15 f1    +0           11/15 f1    +0
+  reduction        11       1/11 f0              3/11 f1    +1            2/11 f0    +0            3/11 f1    +1
+  pool             10       0/10 f0              0/10 f0    +0            0/10 f0    +0            0/10 f0    +0
+  other             7       7/7  f0              6/7  f0    +0            5/7  f0    +0            6/7  f0    +0
+  loss              6       2/6  f1              1/6  f1    +0            1/6  f1    +0            1/6  f1    +0
+
+=== level 2 only ===
+level 2: 100 of 100 problems evaluated in every run, k=4 (400 samples)
+criterion: numerically correct AND entirely cuTile
+
+                       pass@1   pass@4     solved  fast_1.0  median x
+  baseline               5.2%    16.0%     16/100       0/100      0.11x
+  E (phase 6)            5.2%    15.0%     15/100       4/100      0.81x    +0.0pp pass@1, +4 fast
+  F concepts            14.2%    38.0%     38/100       8/100      0.80x    +9.0pp pass@1, +8 fast
+  F nodocs              12.0%    32.0%     32/100       9/100      0.60x    +6.8pp pass@1, +9 fast

@@ -41,6 +41,22 @@ NCHW_BY_TIER = {
     5: [(32, 64, 256, 256), (16, 64, 512, 512), (64, 32, 128, 128)],
 }
 
+# Rank-3 and rank-5 ladders, for the 1D and 3D halves of the API surface. The
+# rank matters as much as the size: grid and tile rank have to match the array's,
+# and rank_mismatch was the single most common failure at baseline.
+NCL_BY_TIER = {
+    1: [(2, 4, 32), (1, 8, 64)],
+    2: [(2, 4, 64), (4, 8, 128), (2, 16, 64)],
+    3: [(8, 32, 512), (16, 64, 256)],
+    5: [(32, 64, 4096), (64, 128, 1024)],
+}
+
+NCDHW_BY_TIER = {
+    2: [(1, 4, 4, 8, 8), (2, 4, 2, 8, 8)],
+    3: [(2, 8, 8, 16, 16), (4, 16, 4, 32, 32)],
+    5: [(8, 32, 16, 64, 64), (4, 64, 8, 128, 128)],
+}
+
 MAT2D_BY_TIER = {
     0: [(256, 512), (128, 1024), (512, 256)],
     1: [(1024, 2048), (2048, 1024), (512, 4096)],
@@ -346,6 +362,252 @@ FUSION_TAILS = [
 
 
 # ---------------------------------------------------------------------------
+# The rest of the torch.nn convolution, pooling and normalisation surface
+# ---------------------------------------------------------------------------
+# Everything above this point covers Conv2d and 1x1 conv and nothing else, which
+# is why 102 of the 200 benchmark problems have never been solved by any version:
+# 64 of them are convolutions in forms no training task ever presented --
+# transposed, dilated, depthwise, grouped, 3D, asymmetric. Enumerating the API
+# surface is mechanical and it is the only way those families get a foothold.
+#
+# Every builder here spans tiers, because that foothold is what made the
+# difference before: rank-3 conv at tier 1 is what took convolution from 5 solved
+# problems to 14, not more tasks at full difficulty.
+
+
+def conv_transpose2d(tier, rng):
+    n, c, h, w = shapes_for(NCHW_BY_TIER, tier)[0] if tier <= 2 else \
+        rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    out_c = rng.choice([4, 8]) if tier <= 2 else rng.choice([16, 32])
+    k = 2 if tier <= 2 else rng.choice([2, 3, 4])
+    s = 2 if tier <= 2 else rng.choice([1, 2])
+    return Spec(
+        name="ConvTranspose2d",
+        category="conv", tier=tier,
+        init_sig="in_channels: int, out_channels: int, kernel_size: int, stride: int",
+        init_body=("        self.conv = nn.ConvTranspose2d(in_channels, out_channels,\n"
+                   "                                       kernel_size, stride=stride,\n"
+                   "                                       bias=False)"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.conv(x)",
+        consts={"batch_size": n, "in_channels": c, "out_channels": out_c,
+                "height": h, "width": w, "kernel_size": k, "stride": s},
+        inputs="    return [torch.rand(batch_size, in_channels, height, width)]",
+        init_inputs="    return [in_channels, out_channels, kernel_size, stride]",
+    )
+
+
+def conv_transpose1d(tier, rng):
+    n, c, length = rng.choice(shapes_for(NCL_BY_TIER, tier))
+    out_c = rng.choice([4, 8]) if tier <= 2 else rng.choice([16, 32])
+    return Spec(
+        name="ConvTranspose1d",
+        category="conv", tier=tier,
+        init_sig="in_channels: int, out_channels: int, kernel_size: int, stride: int",
+        init_body=("        self.conv = nn.ConvTranspose1d(in_channels, out_channels,\n"
+                   "                                       kernel_size, stride=stride,\n"
+                   "                                       bias=False)"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.conv(x)",
+        consts={"batch_size": n, "in_channels": c, "out_channels": out_c,
+                "length": length, "kernel_size": 2, "stride": 2},
+        inputs="    return [torch.rand(batch_size, in_channels, length)]",
+        init_inputs="    return [in_channels, out_channels, kernel_size, stride]",
+    )
+
+
+def conv_dilated2d(tier, rng):
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    out_c = rng.choice([4, 8]) if tier <= 2 else rng.choice([16, 32])
+    d = rng.choice([2, 3])
+    # Padding chosen to keep the output non-degenerate at the smaller tiers.
+    return Spec(
+        name="ConvDilated2d",
+        category="conv", tier=tier,
+        init_sig=("in_channels: int, out_channels: int, kernel_size: int, "
+                  "dilation: int, padding: int"),
+        init_body=("        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size,\n"
+                   "                              dilation=dilation, padding=padding,\n"
+                   "                              bias=False)"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.conv(x)",
+        consts={"batch_size": n, "in_channels": c, "out_channels": out_c,
+                "height": h, "width": w, "kernel_size": 3, "dilation": d,
+                "padding": d},
+        inputs="    return [torch.rand(batch_size, in_channels, height, width)]",
+        init_inputs=("    return [in_channels, out_channels, kernel_size, dilation, "
+                     "padding]"),
+    )
+
+
+def conv_depthwise2d(tier, rng):
+    """groups == in_channels: each channel gets its own filter, no mixing."""
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    k = 3 if tier > 2 else 1
+    return Spec(
+        name="ConvDepthwise2d",
+        category="conv", tier=tier,
+        init_sig="channels: int, kernel_size: int, padding: int",
+        init_body=("        self.conv = nn.Conv2d(channels, channels, kernel_size,\n"
+                   "                              padding=padding, groups=channels,\n"
+                   "                              bias=False)"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.conv(x)",
+        consts={"batch_size": n, "channels": c, "height": h, "width": w,
+                "kernel_size": k, "padding": k // 2},
+        inputs="    return [torch.rand(batch_size, channels, height, width)]",
+        init_inputs="    return [channels, kernel_size, padding]",
+    )
+
+
+def conv_grouped2d(tier, rng):
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    groups = rng.choice([g for g in (2, 4) if c % g == 0] or [1])
+    out_c = c if c % groups == 0 else c
+    k = 3 if tier > 2 else 1
+    return Spec(
+        name="ConvGrouped2d",
+        category="conv", tier=tier,
+        init_sig=("in_channels: int, out_channels: int, kernel_size: int, "
+                  "groups: int, padding: int"),
+        init_body=("        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size,\n"
+                   "                              groups=groups, padding=padding,\n"
+                   "                              bias=False)"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.conv(x)",
+        consts={"batch_size": n, "in_channels": c, "out_channels": out_c,
+                "height": h, "width": w, "kernel_size": k, "groups": groups,
+                "padding": k // 2},
+        inputs="    return [torch.rand(batch_size, in_channels, height, width)]",
+        init_inputs=("    return [in_channels, out_channels, kernel_size, groups, "
+                     "padding]"),
+    )
+
+
+def conv_asymmetric2d(tier, rng):
+    """Rectangular kernel and stride: the indexing the model most often gets wrong."""
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    out_c = rng.choice([4, 8]) if tier <= 2 else rng.choice([16, 32])
+    kh, kw = rng.choice([(1, 3), (3, 1), (1, 5), (5, 1)])
+    return Spec(
+        name="ConvAsymmetric2d",
+        category="conv", tier=tier,
+        init_sig="in_channels: int, out_channels: int, kh: int, kw: int",
+        init_body=("        self.conv = nn.Conv2d(in_channels, out_channels, (kh, kw),\n"
+                   "                              padding=(kh // 2, kw // 2),\n"
+                   "                              bias=False)"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.conv(x)",
+        consts={"batch_size": n, "in_channels": c, "out_channels": out_c,
+                "height": h, "width": w, "kh": kh, "kw": kw},
+        inputs="    return [torch.rand(batch_size, in_channels, height, width)]",
+        init_inputs="    return [in_channels, out_channels, kh, kw]",
+    )
+
+
+def conv3d_small(tier, rng):
+    n, c, d, h, w = rng.choice(shapes_for(NCDHW_BY_TIER, tier))
+    out_c = rng.choice([4, 8]) if tier <= 2 else rng.choice([16, 32])
+    return Spec(
+        name="Conv3d",
+        category="conv", tier=tier,
+        init_sig="in_channels: int, out_channels: int, kernel_size: int",
+        init_body=("        self.conv = nn.Conv3d(in_channels, out_channels,\n"
+                   "                              kernel_size, bias=False)"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.conv(x)",
+        consts={"batch_size": n, "in_channels": c, "out_channels": out_c,
+                "depth": d, "height": h, "width": w,
+                "kernel_size": 1 if tier <= 2 else 3},
+        inputs="    return [torch.rand(batch_size, in_channels, depth, height, width)]",
+        init_inputs="    return [in_channels, out_channels, kernel_size]",
+    )
+
+
+def batchnorm2d(tier, rng):
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    return Spec(
+        name="BatchNorm2d",
+        category="norm", tier=tier,
+        # eval() so the running statistics are fixed and the forward is
+        # deterministic; in train mode the reference would update state between
+        # the two models' calls and never match.
+        init_sig="num_features: int",
+        init_body=("        self.bn = nn.BatchNorm2d(num_features)\n"
+                   "        self.bn.eval()"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.bn(x)",
+        consts={"batch_size": n, "num_features": c, "height": h, "width": w},
+        inputs="    return [torch.rand(batch_size, num_features, height, width)]",
+        init_inputs="    return [num_features]",
+    )
+
+
+def instancenorm2d(tier, rng):
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    return Spec(
+        name="InstanceNorm2d",
+        category="norm", tier=tier,
+        init_sig="num_features: int",
+        init_body="        self.inorm = nn.InstanceNorm2d(num_features)",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.inorm(x)",
+        consts={"batch_size": n, "num_features": c, "height": h, "width": w},
+        inputs="    return [torch.rand(batch_size, num_features, height, width)]",
+        init_inputs="    return [num_features]",
+    )
+
+
+def maxpool3d(tier, rng):
+    n, c, d, h, w = rng.choice(shapes_for(NCDHW_BY_TIER, tier))
+    return Spec(
+        name="MaxPool3d",
+        category="pool", tier=tier,
+        init_sig="kernel_size: int",
+        init_body="        self.pool = nn.MaxPool3d(kernel_size)",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.pool(x)",
+        consts={"batch_size": n, "channels": c, "depth": d, "height": h,
+                "width": w, "kernel_size": 2},
+        inputs="    return [torch.rand(batch_size, channels, depth, height, width)]",
+        init_inputs="    return [kernel_size]",
+    )
+
+
+def adaptive_avgpool2d(tier, rng):
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    out = rng.choice([1, 2]) if tier <= 2 else rng.choice([1, 2, 4])
+    return Spec(
+        name="AdaptiveAvgPool2d",
+        category="pool", tier=tier,
+        init_sig="output_size: int",
+        init_body="        self.pool = nn.AdaptiveAvgPool2d(output_size)",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.pool(x)",
+        consts={"batch_size": n, "channels": c, "height": h, "width": w,
+                "output_size": out},
+        inputs="    return [torch.rand(batch_size, channels, height, width)]",
+        init_inputs="    return [output_size]",
+    )
+
+
+def avgpool1d(tier, rng):
+    n, c, length = rng.choice(shapes_for(NCL_BY_TIER, tier))
+    return Spec(
+        name="AvgPool1d",
+        category="pool", tier=tier,
+        init_sig="kernel_size: int",
+        init_body="        self.pool = nn.AvgPool1d(kernel_size)",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return self.pool(x)",
+        consts={"batch_size": n, "channels": c, "length": length,
+                "kernel_size": 2},
+        inputs="    return [torch.rand(batch_size, channels, length)]",
+        init_inputs="    return [kernel_size]",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fusion tasks, for teaching speed rather than correctness
 # ---------------------------------------------------------------------------
 # Everything above exists to teach the model to write a *correct* kernel, and
@@ -481,6 +743,155 @@ def fused_softmax_chain(tier, rng):
         consts={"batch_size": m, "dim": k, "scale": 0.125},
         inputs="    return [torch.rand(batch_size, dim)]",
         init_inputs="    return [scale]",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Compositional chains
+# ---------------------------------------------------------------------------
+# KernelBench Level 2 is entirely operator chains, and it is the half nothing has
+# moved: 16 of 100 problems at baseline, 15 after six rounds of training. The
+# builders above emit one operator each, so no task has ever had Level 2's shape.
+#
+# Chains are also where the diversity is. Picking 3 heads from a dozen and 2 tails
+# from six gives thousands of distinct combinations from a few dozen lines, which
+# no amount of enumerating single operators reaches.
+
+# Chain heads: produce a tensor from the input. Each entry is
+# (label, init lines, forward expression, const requirements).
+CHAIN_HEADS_2D = [
+    ("Matmul", "", "torch.matmul(A, B)"),
+    ("Softmax", "", "torch.softmax(x, dim=1)"),
+    ("LayerNorm", "        self.ln = nn.LayerNorm(dim)", "self.ln(x)"),
+    ("L2Norm", "", "x / torch.norm(x, p=2, dim=1, keepdim=True)"),
+    ("RowMean", "", "x.mean(dim=1, keepdim=True)"),
+]
+
+# Chain tails: transform a tensor elementwise. Composable in any order and any
+# depth, which is what makes the space combinatorial.
+CHAIN_TAILS = [
+    ("ReLU", "torch.relu({})"),
+    ("Sigmoid", "torch.sigmoid({})"),
+    ("Tanh", "torch.tanh({})"),
+    ("GELU", "torch.nn.functional.gelu({})"),
+    ("Scale", "({} * 1.7)"),
+    ("Bias", "({} + 0.3)"),
+    ("Square", "({} ** 2)"),
+    ("Clamp", "torch.clamp({}, -2.0, 2.0)"),
+]
+
+
+def operator_chain(tier, rng):
+    """A head plus two to four elementwise tails, the shape Level 2 problems take.
+
+    Large shapes at the upper tiers so the fusion payoff is measurable: the win a
+    tile DSL has over a library is not materialising the intermediates, and that
+    is proportional to how big they are.
+    """
+    m, k = rng.choice(shapes_for(MAT2D_BY_TIER, tier))
+    n_tails = rng.choice([2, 3, 4])
+    tails = [rng.choice(CHAIN_TAILS) for _ in range(n_tails)]
+    head_label, head_init, head_expr = rng.choice(CHAIN_HEADS_2D)
+
+    expr = head_expr
+    for _, tmpl in tails:
+        expr = tmpl.format(expr)
+    label = head_label + "".join(t[0] for t in tails)
+
+    if head_label == "Matmul":
+        n = rng.choice([64, 128]) if tier <= 2 else rng.choice([512, 1024])
+        return Spec(
+            name="Chain%s" % label,
+            category="matmul", tier=tier,
+            init_sig="", init_body="        pass",
+            forward_sig="A: torch.Tensor, B: torch.Tensor",
+            forward_body="        return %s" % expr,
+            consts={"M": m, "K": k, "N": n},
+            inputs="    return [torch.rand(M, K), torch.rand(K, N)]",
+            init_inputs="    return []",
+        )
+
+    needs_dim = head_label == "LayerNorm"
+    return Spec(
+        name="Chain%s" % label,
+        category="norm" if head_label in ("Softmax", "LayerNorm", "L2Norm") else "reduction",
+        tier=tier,
+        init_sig="dim: int" if needs_dim else "",
+        init_body=head_init or "        pass",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % expr,
+        consts={"batch_size": m, "dim": k},
+        inputs="    return [torch.rand(batch_size, dim)]",
+        init_inputs="    return [dim]" if needs_dim else "    return []",
+    )
+
+
+def conv_chain(tier, rng):
+    """Convolution followed by elementwise work: Level 2's most common shape.
+
+    Half the benchmark is convolution and half of Level 2's chains are anchored on
+    one, so this is the intersection of the two weakest areas.
+    """
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    out_c = rng.choice([4, 8]) if tier <= 2 else rng.choice([16, 32])
+    k = 1 if tier <= 2 else rng.choice([1, 3])
+    tails = [rng.choice(CHAIN_TAILS) for _ in range(rng.choice([1, 2, 3]))]
+    expr = "self.conv(x)"
+    for _, tmpl in tails:
+        expr = tmpl.format(expr)
+    return Spec(
+        name="ConvChain%s" % "".join(t[0] for t in tails),
+        category="conv", tier=tier,
+        init_sig="in_channels: int, out_channels: int, kernel_size: int, padding: int",
+        init_body=("        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size,\n"
+                   "                              padding=padding, bias=False)"),
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % expr,
+        consts={"batch_size": n, "in_channels": c, "out_channels": out_c,
+                "height": h, "width": w, "kernel_size": k, "padding": k // 2},
+        inputs="    return [torch.rand(batch_size, in_channels, height, width)]",
+        init_inputs="    return [in_channels, out_channels, kernel_size, padding]",
+    )
+
+
+def pool_chain(tier, rng):
+    """Pooling plus elementwise work. Pooling is 10 problems and solved 0-3."""
+    n, c, h, w = rng.choice(shapes_for(NCHW_BY_TIER, tier))
+    tails = [rng.choice(CHAIN_TAILS) for _ in range(rng.choice([1, 2]))]
+    expr = "self.pool(x)"
+    for _, tmpl in tails:
+        expr = tmpl.format(expr)
+    which = rng.choice(["MaxPool2d", "AvgPool2d"])
+    return Spec(
+        name="PoolChain%s" % "".join(t[0] for t in tails),
+        category="pool", tier=tier,
+        init_sig="kernel_size: int",
+        init_body="        self.pool = nn.%s(kernel_size)" % which,
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % expr,
+        consts={"batch_size": n, "channels": c, "height": h, "width": w,
+                "kernel_size": 2},
+        inputs="    return [torch.rand(batch_size, channels, height, width)]",
+        init_inputs="    return [kernel_size]",
+    )
+
+
+def residual_chain(tier, rng):
+    """Two inputs combined then transformed: the transformer block tail."""
+    m, k = rng.choice(shapes_for(MAT2D_BY_TIER, tier))
+    tails = [rng.choice(CHAIN_TAILS) for _ in range(rng.choice([1, 2, 3]))]
+    expr = "(x + r)"
+    for _, tmpl in tails:
+        expr = tmpl.format(expr)
+    return Spec(
+        name="Residual%s" % "".join(t[0] for t in tails),
+        category="elementwise", tier=tier,
+        init_sig="", init_body="        pass",
+        forward_sig="x: torch.Tensor, r: torch.Tensor",
+        forward_body="        return %s" % expr,
+        consts={"batch_size": m, "dim": k},
+        inputs="    return [torch.rand(batch_size, dim), torch.rand(batch_size, dim)]",
+        init_inputs="    return []",
     )
 
 
@@ -694,6 +1105,27 @@ BUILDERS = [
     # Tier 6 is the speed curriculum: large shapes and long chains, the only
     # tier where a measured speedup means anything. Ordered easiest first --
     # the long elementwise chain is where the model already beats torch.
+    # The rest of the torch.nn surface. Weighted heavily because these are the
+    # forms the 64 unsolved convolution problems actually take, and no task has
+    # ever presented them.
+    (conv_transpose2d,       9, [2, 3, 5]),
+    (conv_transpose1d,       8, [1, 2, 3]),
+    (conv_dilated2d,         8, [2, 3, 5]),
+    (conv_depthwise2d,       9, [2, 3, 5]),
+    (conv_grouped2d,         8, [2, 3, 5]),
+    (conv_asymmetric2d,      8, [2, 3, 5]),
+    (conv3d_small,           7, [2, 3]),
+    (batchnorm2d,            6, [2, 3, 5]),
+    (instancenorm2d,         6, [2, 3, 5]),
+    (maxpool3d,              5, [2, 3]),
+    (adaptive_avgpool2d,     6, [2, 3, 5]),
+    (avgpool1d,              5, [1, 2, 3]),
+    # Chains. Level 2 is 100 of the 200 problems, is entirely chains, and has
+    # moved 16 -> 15 across six rounds, so this is where the weight goes.
+    (operator_chain,        12, [2, 3, 5]),
+    (conv_chain,            12, [2, 3, 5]),
+    (pool_chain,             8, [2, 3, 5]),
+    (residual_chain,         6, [2, 3, 5]),
     (long_elementwise_chain, 10, [6]),
     (fused_softmax_chain,     8, [6]),
     (fused_norm_residual,     8, [6]),

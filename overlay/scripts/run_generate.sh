@@ -6,6 +6,12 @@
 # passthroughs we specifically want to count. Every sample is kept and the
 # cuTile usage gate is applied later, in scripts/analyze_cutile_run.py.
 #
+# Set PROMPT_TIER to change how much documentation goes in the prompt:
+# cutile_docs (the full 55k reference, ~14.9k tokens), cutile_concepts (the
+# programming model only, ~2.4k) or cutile_nodocs (~0.9k). Which tier a run used
+# has to be recorded alongside its numbers, since they are not comparable across
+# tiers.
+#
 # Usage: ./run_generate.sh <run_name> <level> <num_samples> [extra pydra args...]
 set -euo pipefail
 
@@ -33,7 +39,7 @@ GPUS=none scripts/in_container.sh python3 scripts/generate_samples.py \
     backend=cutile \
     precision=fp32 \
     prompt_option=one_shot \
-    custom_prompt_key=cutile_docs \
+    custom_prompt_key="${PROMPT_TIER:-cutile_docs}" \
     num_workers="${NUM_WORKERS:-32}" \
     check_kernel=False \
     "$@"

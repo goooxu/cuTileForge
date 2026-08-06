@@ -23,10 +23,14 @@ fine-tune of weights the name "LoRA" implies are frozen.
 
 That is why the adapter is 27.5 GB rather than the ~70 MB an attention-only LoRA
 would produce, why memory has been tight enough to force gradient checkpointing,
-and why every checkpoint write takes minutes. It has produced the results so far,
-so it is left alone for supervised rounds, but anything that checkpoints often --
-reinforcement learning above all -- should freeze the expert parameters and train
-only the attention and DeltaNet adapters.
+and why every checkpoint write takes minutes.
+
+**And it was never necessary.** Trained on identical data, ATTENTION_ONLY_TARGETS
+at r=128 -- 137M trainable, 0.17% -- matches it: 29.2% against 29.8% pass@1 and 45
+against 46 problems solved on Level 1. It also trains in a third of the time, at
+46 GB instead of 84 GB, and saves a 537 MB adapter instead of 26 GB. Prefer it.
+DEFAULT_TARGETS is kept because every result before phase 8 was produced with it
+and removing it would make those numbers unreproducible.
 
 resolve_targets() reports the nn.Linear coverage, which is what it was written
 for; note it counts only nn.Linear and so cannot see the fused expert tensors
