@@ -1,0 +1,26 @@
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    """BatchedMatmul (tier 5, matmul)"""
+
+    def __init__(self):
+        super(Model, self).__init__()
+        pass
+
+    def forward(self, A: torch.Tensor, B: torch.Tensor):
+        return torch.bmm(A, B)
+
+
+batch_size = 16
+M = 4096
+K = 16384
+N = 512
+
+def get_inputs():
+    return [torch.rand(batch_size, M, K), torch.rand(batch_size, K, N)]
+
+
+def get_init_inputs():
+    return []

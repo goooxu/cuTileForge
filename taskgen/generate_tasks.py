@@ -14,6 +14,7 @@ Usage:
 import argparse
 import os
 import random
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -60,6 +61,38 @@ def render(spec: Spec) -> str:
         inputs=spec.inputs,
         init_inputs=spec.init_inputs,
     )
+
+
+def task_hash(source: str) -> str:
+    """Identity of a task, ignoring comments, blank lines and spacing.
+
+    A held-out set generated from the same builders with a different seed is not
+    actually disjoint: the shape ladders are short, so the same operator at the
+    same shape recurs. Comparing hashes against the training levels is what makes
+    the separation real.
+    """
+    import hashlib
+    body = []
+    for line in source.splitlines():
+        line = re.sub(r"#.*$", "", line).rstrip()
+        if line.strip():
+            body.append(re.sub(r"\s+", " ", line.strip()))
+    return hashlib.sha256("\n".join(body).encode()).hexdigest()
+
+
+def hashes_of_levels(out_root: str, levels) -> set:
+    """Task hashes already present in the given levels."""
+    seen = set()
+    for level in levels:
+        d = os.path.join(out_root, "level%d" % level)
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if f.endswith(".py"):
+                seen.add(task_hash(open(os.path.join(d, f),
+                                        encoding="utf-8",
+                                        errors="replace").read()))
+    return seen
 
 
 def validate(source: str) -> str:
@@ -121,6 +154,11 @@ def main() -> None:
                     help="Spread across tiers 0-5.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--clean", action="store_true", help="Empty the level dir first.")
+    ap.add_argument("--exclude-levels", default=None,
+                    help="Comma-separated levels whose tasks must not recur here. "
+                         "For building a held-out set: a fresh seed alone does not "
+                         "make one, since the shape ladders are short enough that "
+                         "the same task comes up again.")
     ap.add_argument("--only-categories", default=None,
                     help="Comma-separated categories to keep, e.g. conv,norm,pool.")
     ap.add_argument("--category-weights", default=None,
@@ -152,7 +190,14 @@ def main() -> None:
     # mixing it in would put unmeasurably small tasks in a set meant for timing.
     tier_weights = {0: 1, 1: 1, 2: 4, 3: 4, 4: 2, 5: 2}
 
-    written, rejected = 0, 0
+    exclude = set()
+    if args.exclude_levels:
+        exclude = hashes_of_levels(
+            args.out_root, [int(x) for x in args.exclude_levels.split(",")])
+        print("excluding %d task hashes already present in levels %s"
+              % (len(exclude), args.exclude_levels))
+
+    written, rejected, collided = 0, 0, 0
     seen_names = set()
     attempts = 0
     while written < args.count and attempts < args.count * 20:
@@ -172,6 +217,12 @@ def main() -> None:
         spec = builder(tier, rng)
         source = render(spec)
 
+        h = task_hash(source)
+        if h in exclude:
+            collided += 1
+            continue
+        exclude.add(h)
+
         err = validate(source)
         if err:
             rejected += 1
@@ -186,8 +237,8 @@ def main() -> None:
             f.write(source)
         written += 1
 
-    print("wrote %d problems to %s (%d candidates rejected by validation)"
-          % (written, out_dir, rejected))
+    print("wrote %d problems to %s (%d rejected by validation, %d already in the "
+          "excluded levels)" % (written, out_dir, rejected, collided))
 
     import collections
     tiers = collections.Counter()

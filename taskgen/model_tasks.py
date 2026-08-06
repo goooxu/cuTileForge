@@ -22,7 +22,6 @@ Usage:
 
 import argparse
 import collections
-import hashlib
 import os
 import re
 import sys
@@ -32,7 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "repair"))
 
-from generate_tasks import validate  # noqa: E402
+from generate_tasks import hashes_of_levels, task_hash, validate  # noqa: E402
 
 # Seeds for the request. Without them the model returns the same handful of
 # modules over and over; naming a family and a flavour spreads the output. The
@@ -145,16 +144,6 @@ def extract_task(text: str) -> str:
     return ""
 
 
-def normalise_source(src: str) -> str:
-    """Canonical form for dedup: ignore comments, blank lines and spacing."""
-    out = []
-    for line in src.splitlines():
-        line = re.sub(r"#.*$", "", line).rstrip()
-        if line.strip():
-            out.append(re.sub(r"\s+", " ", line.strip()))
-    return "\n".join(out)
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--level", type=int, required=True)
@@ -162,6 +151,8 @@ def main() -> None:
     ap.add_argument("--out-root", default=os.path.join(HERE, "..", "kernelbench",
                                                        "KernelBench"))
     ap.add_argument("--clean", action="store_true")
+    ap.add_argument("--exclude-levels", default=None,
+                    help="Comma-separated levels whose tasks must not recur here.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--model", default="Qwen3-Coder-Next")
@@ -207,7 +198,15 @@ def main() -> None:
     chat = Chat(args.base_url, args.model, args.temperature, 0.95, 50, 2048)
     texts = sample_batch(chat, prompts, args.concurrency)
 
-    seen, written = set(), 0
+    # Seeding the dedup set with the training levels' hashes is what makes a
+    # held-out set actually held out.
+    seen = set()
+    if args.exclude_levels:
+        seen = hashes_of_levels(
+            args.out_root, [int(x) for x in args.exclude_levels.split(",")])
+        print("excluding %d task hashes from levels %s"
+              % (len(seen), args.exclude_levels))
+    written = 0
     # API failures and unparseable replies need separate counters: conflating them
     # once hid the fact that most of a run's losses were the server erroring under
     # concurrency rather than the model writing bad tasks.
@@ -235,7 +234,7 @@ def main() -> None:
                          r'|elementwise)\)', src):
             n_badformat += 1
             continue
-        h = hashlib.sha256(normalise_source(src).encode()).hexdigest()
+        h = task_hash(src)
         if h in seen:
             n_dup += 1
             continue

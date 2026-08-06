@@ -88,6 +88,12 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=128)
     ap.add_argument("--verify-workers", type=int, default=8)
     ap.add_argument("--gpus", type=int, default=4)
+    ap.add_argument("--prompt-tier", default="cutile_docs",
+                    help="Prompt composition for the first turn. Must match what "
+                         "the model was trained on: running a model trained on "
+                         "cutile_concepts with the full reference is out of "
+                         "distribution and measures nothing useful. Default keeps "
+                         "the behaviour earlier runs had.")
     ap.add_argument("--limit-tasks", type=int, default=None)
     args = ap.parse_args()
 
@@ -107,7 +113,7 @@ def main() -> None:
     for pid in problem_ids:
         problem = dataset.get_problem_by_id(pid)
         prompt = get_custom_prompt(
-            "cutile_docs", ref_arch_src=problem.code, backend="cutile",
+            args.prompt_tier, ref_arch_src=problem.code, backend="cutile",
             option="one_shot", precision="fp32")
         for sid in range(args.samples):
             convs.append({
@@ -121,8 +127,10 @@ def main() -> None:
                 "final_code": None,
             })
 
-    print("tasks %d x %d samples = %d conversations, up to %d repair rounds"
-          % (len(problem_ids), args.samples, len(convs), args.max_rounds))
+    print("tasks %d x %d samples = %d conversations, up to %d repair rounds "
+          "(prompt tier %s)"
+          % (len(problem_ids), args.samples, len(convs), args.max_rounds,
+             args.prompt_tier))
 
     chat = Chat(args.base_url, args.model, args.temperature, args.top_p,
                 args.top_k, args.max_tokens)
