@@ -1,0 +1,26 @@
+===== Level 1 =====
+/ws/runs/F_k16_l1: 100 problems, 1600 samples
+
+  k     solved      pass@k
+  1      32/100      32.0%
+  2      39/100      39.0%
+  4      43/100      43.0%
+  8      53/100      53.0%
+  12     62/100      62.0%
+  16     68/100      68.0%
+
+  per-sample pass rate   28.4%
+  fast_1.0 at full k     20/100
+===== Level 2 =====
+/ws/runs/F_k16_l2: 100 problems, 1600 samples
+
+  k     solved      pass@k
+  1      11/100      11.0%
+  2      25/100      25.0%
+  4      36/100      36.0%
+  8      51/100      51.0%
+  12     58/100      58.0%
+  16     61/100      61.0%
+
+  per-sample pass rate   11.5%
+  fast_1.0 at full k     33/100
