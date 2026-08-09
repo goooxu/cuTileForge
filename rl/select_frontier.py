@@ -47,6 +47,14 @@ def main() -> None:
     ap.add_argument("--verify-workers", type=int, default=8)
     ap.add_argument("--gpus", type=int, default=4)
     ap.add_argument("--limit-per-level", type=int, default=None)
+    ap.add_argument("--prompt-tier", default="cutile_docs",
+                    help="Must match the tier training will sample at, or the "
+                         "pass rates screened here describe a different policy.")
+    ap.add_argument("--from-run", default=None,
+                    help="Skip sampling and derive the frontier from an existing "
+                         "verified run (JSONL from verify/fast_verify.py). A "
+                         "k=16 harvest already measures each task's pass rate "
+                         "far better than a k=6 screen would.")
     args = ap.parse_args()
 
     from kernelbench.dataset import construct_kernelbench_dataset
@@ -64,45 +72,65 @@ def main() -> None:
                 "level": level, "problem_id": pid, "problem": problem.name,
                 "ref_src": problem.code,
                 "prompt": get_custom_prompt(
-                    "cutile_docs", ref_arch_src=problem.code, backend="cutile",
-                    option="one_shot", precision="fp32"),
+                    args.prompt_tier, ref_arch_src=problem.code,
+                    backend="cutile", option="one_shot", precision="fp32"),
             })
 
-    print("screening %d tasks x %d rollouts" % (len(tasks), args.samples))
-
-    chat = Chat(args.base_url, args.model, args.temperature, args.top_p,
-                args.top_k, args.max_tokens)
-    messages, index = [], []
-    for i, t in enumerate(tasks):
-        for _ in range(args.samples):
-            messages.append([{"role": "user", "content": t["prompt"]}])
-            index.append(i)
-
-    texts = sample_batch(chat, messages, args.concurrency)
-
-    items = []
-    for j, (i, text) in enumerate(zip(index, texts)):
-        code = extract_code(text) if not text.startswith("__ERROR__") else None
-        if code:
-            items.append(("%d" % j, code, tasks[i]["ref_src"]))
-
-    with VerifierPool(workers=args.verify_workers, gpus=args.gpus) as pool:
-        results = pool.verify_batch(items)
-
     per_task = collections.defaultdict(lambda: {"n": 0, "passed": 0, "rewards": []})
-    for j, i in enumerate(index):
-        rec = results.get("%d" % j)
-        acc = per_task[i]
-        acc["n"] += 1
-        if rec is None:
-            acc["rewards"].append(0.0)      # no code extracted
-            continue
-        r = reward_for(rec)
-        if r is None:
-            acc["n"] -= 1                   # inconclusive; do not count it
-            continue
-        acc["rewards"].append(r)
-        acc["passed"] += 1 if rec["passed"] else 0
+
+    if args.from_run:
+        by_pid = {t["problem_id"]: i for i, t in enumerate(tasks)}
+        n_recs = 0
+        for line in open(args.from_run):
+            rec = json.loads(line)
+            pid = int(rec["key"].split(":")[0])
+            i = by_pid.get(pid)
+            if i is None:
+                continue
+            r = reward_for(rec)
+            if r is None:
+                continue
+            n_recs += 1
+            acc = per_task[i]
+            acc["n"] += 1
+            acc["rewards"].append(r)
+            acc["passed"] += 1 if rec["passed"] else 0
+        print("derived from %d verified records in %s" % (n_recs, args.from_run))
+    else:
+        print("screening %d tasks x %d rollouts" % (len(tasks), args.samples))
+
+        chat = Chat(args.base_url, args.model, args.temperature, args.top_p,
+                    args.top_k, args.max_tokens)
+        messages, index = [], []
+        for i, t in enumerate(tasks):
+            for _ in range(args.samples):
+                messages.append([{"role": "user", "content": t["prompt"]}])
+                index.append(i)
+
+        texts = sample_batch(chat, messages, args.concurrency)
+
+        items = []
+        for j, (i, text) in enumerate(zip(index, texts)):
+            code = extract_code(text) if not text.startswith("__ERROR__") else None
+            if code:
+                items.append(("%d" % j, code, tasks[i]["ref_src"]))
+
+        with VerifierPool(workers=args.verify_workers, gpus=args.gpus) as pool:
+            results = pool.verify_batch(items)
+
+        for j, i in enumerate(index):
+            rec = results.get("%d" % j)
+            acc = per_task[i]
+            acc["n"] += 1
+            if rec is None:
+                acc["rewards"].append(0.0)  # no code extracted
+                continue
+            r = reward_for(rec)
+            if r is None:
+                acc["n"] -= 1               # inconclusive; do not count it
+                continue
+            acc["rewards"].append(r)
+            acc["passed"] += 1 if rec["passed"] else 0
 
     frontier, always_fail, always_pass = [], 0, 0
     for i, t in enumerate(tasks):

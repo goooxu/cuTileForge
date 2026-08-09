@@ -43,6 +43,11 @@ IMAGE="${IMAGE:-cutile-eval:latest}"
 read -r -a extra_mounts <<< "${MOUNTS:-}"
 
 args=(--user "$(id -u):$(id -g)" --ipc=host --network host
+      # 32 generation workers each hold an HTTP connection and write a kernel
+      # file; at the default 1024 this runs out mid-run and the failures are
+      # reported per sample rather than as one clear error. A 16k-sample harvest
+      # lost 13,015 of them to [Errno 24] before this was raised.
+      --ulimit nofile=65536:65536
       -e HOME=/tmp
       # The container has no /etc/passwd entry for the mounted-in uid, so
       # getpass.getuser() raises when torch resolves its cache directory.

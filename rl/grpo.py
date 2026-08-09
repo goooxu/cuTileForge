@@ -15,21 +15,34 @@ makes the loop off-policy between refreshes; PPO-style ratio clipping is what
 makes that sound, and the clip fraction is reported every iteration so the
 staleness is visible rather than assumed.
 
-No explicit KL penalty. The only free reference policy is the base model with the
-adapter switched off, and pulling toward that would undo the supervised rounds
-this run starts from; holding a frozen copy of the current adapter instead would
-cost another 27.5 GB. Clipping plus a small number of inner epochs keeps the
-policy close enough, and purity rate and output length are logged as the
-degeneration alarms.
+A KL penalty against the starting policy is not optional here, and it is free.
+Running without one collapsed the policy outright: the share of rollouts with no
+extractable code went from 1.6% at iteration 22 to 99.2% by iteration 28, and the
+model simply stopped writing code. The mechanism is not exotic. Most rollouts
+fail, so most group-relative advantages are negative, and the cheapest way to
+lower the probability of every failing completion at once is to stop emitting
+code at all. Nothing in a clipped objective bounds that when --inner-epochs is 1,
+because the ratio is then identically 1 and the clip never binds.
 
-Only the attention and DeltaNet adapters are trained. The expert parameters are
-frozen, which drops the trainable count from 6.88B to about 34M and the
-checkpoint from 27.5 GB to under 100 MB -- the difference between checkpointing
-every iteration and not being able to afford it. See train/lora_config.py.
+It is free because of --fresh-lora. An earlier version of this note argued a
+reference policy would either undo the supervised rounds or cost another 27.5 GB
+of weights. Both are wrong once the adapter sits on top of already-merged
+supervised weights: switching the adapter off *is* the supervised policy, so
+peft's disable_adapter() yields exact reference log-probabilities at no extra
+memory, and anchoring to it pulls toward the SFT model rather than away from it.
+
+Only the attention and DeltaNet adapters are trained. The first run of this
+script did that by loading an adapter trained with the full target set and
+freezing the experts, which left 34M trainable -- 0.04% of the model -- and
+moved nothing in 20 iterations. Prefer --fresh-lora against an already-merged
+policy instead: a new rank-128 adapter over merged weights starts at exactly the
+same policy (B is zero-initialised) but has 137M trainable, and still checkpoints
+in 537 MB. See train/lora_config.py.
 
 Usage:
-    python3 rl/grpo.py --model /raid/... --adapter models/lora-C-speed \\
-        --frontier runs/rl_frontier.json --out runs/grpo --iterations 4
+    python3 rl/grpo.py --model /raid/tmp/.../model-F --fresh-lora \\
+        --prompt-tier cutile_concepts --frontier runs/rl_frontier.json \\
+        --out runs/grpo --iterations 20
 """
 
 import argparse
@@ -47,7 +60,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "train"))
 sys.path.insert(0, os.path.join(HERE, "..", "repair"))
 sys.path.insert(0, HERE)
 
-from lora_config import freeze_experts  # noqa: E402
+from lora_config import ATTENTION_ONLY_TARGETS, freeze_experts  # noqa: E402
 from repair_loop import Chat, extract_code, sample_batch  # noqa: E402
 from reward import score_rollouts, summarise  # noqa: E402
 from train_lora import unwrap  # noqa: E402
@@ -117,7 +130,18 @@ def group_advantages(rewards):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, help="Base weights.")
-    ap.add_argument("--adapter", required=True, help="Starting policy adapter.")
+    ap.add_argument("--adapter", default=None,
+                    help="Starting policy adapter. Omit with --fresh-lora.")
+    ap.add_argument("--fresh-lora", action="store_true",
+                    help="Attach a new attention-only rank-128 adapter instead "
+                         "of loading one. Use when --model is already merged: "
+                         "the policy starts unchanged and every trainable "
+                         "parameter is one RL can actually move.")
+    ap.add_argument("--lora-r", type=int, default=128)
+    ap.add_argument("--prompt-tier", default="cutile_docs",
+                    help="Prompt composition for rollouts. Must match what the "
+                         "policy was trained on, and must match the tier the "
+                         "frontier was screened at.")
     ap.add_argument("--frontier", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--iterations", type=int, default=4)
@@ -129,9 +153,25 @@ def main() -> None:
                          "REINFORCE with a group baseline -- correct, but the "
                          "old-logprob pass is then wasted work. Above 1 the "
                          "clipping starts doing its job.")
-    ap.add_argument("--lr", type=float, default=1e-6)
+    ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--clip-eps", type=float, default=0.2)
-    ap.add_argument("--max-len", type=int, default=17408)
+    ap.add_argument("--max-len", type=int, default=8192,
+                    help="Sized for the concepts tier. The full reference tier "
+                         "needs ~17k and costs four times as much per step.")
+    ap.add_argument("--gradient-checkpointing", action="store_true",
+                    help="Off by default: at 8k it is not needed, and it makes "
+                         "each step markedly slower.")
+    ap.add_argument("--kl-coef", type=float, default=0.05,
+                    help="Weight on KL to the adapter-off reference policy. Set "
+                         "to 0 only if you want to reproduce the collapse.")
+    ap.add_argument("--max-no-code", type=float, default=0.35,
+                    help="Abort if this share of rollouts yields no code block. "
+                         "The failure mode this catches is degeneration to empty "
+                         "output, which is silent in the reward until it is total.")
+    ap.add_argument("--snapshot-every", type=int, default=5,
+                    help="Keep a numbered copy of the adapter this often. The "
+                         "rolling checkpoint alone is not enough: a collapse "
+                         "overwrites the good weights with the broken ones.")
     ap.add_argument("--grad-accum", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
@@ -172,7 +212,7 @@ def main() -> None:
         key = (lvl, t["problem_id"])
         refs[key] = problem.code
         prompts[key] = get_custom_prompt(
-            "cutile_docs", ref_arch_src=problem.code, backend="cutile",
+            args.prompt_tier, ref_arch_src=problem.code, backend="cutile",
             option="one_shot", precision="fp32")
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -181,17 +221,30 @@ def main() -> None:
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(
         args.model, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
-    model = PeftModel.from_pretrained(model, args.adapter, is_trainable=True)
+    if args.fresh_lora:
+        from peft import LoraConfig, get_peft_model
+        model = get_peft_model(model, LoraConfig(
+            r=args.lora_r, lora_alpha=args.lora_r * 2, lora_dropout=0.0,
+            bias="none", task_type="CAUSAL_LM",
+            target_modules=list(ATTENTION_ONLY_TARGETS)))
+    else:
+        if not args.adapter:
+            raise SystemExit("pass --adapter or --fresh-lora")
+        model = PeftModel.from_pretrained(model, args.adapter, is_trainable=True)
     print("loaded in %.0fs" % (time.time() - t0))
 
+    # A fresh attention-only adapter has no expert tensors to begin with, so this
+    # is a no-op there and only bites when resuming one of the old full-target
+    # adapters.
     trainable, frozen = freeze_experts(model)
-    print("training %s of %s parameters (%.3f%%); experts frozen"
+    print("training %s of %s parameters (%.3f%%)"
           % ("{:,}".format(trainable), "{:,}".format(trainable + frozen),
              trainable / (trainable + frozen) * 100))
     if trainable == 0:
         raise SystemExit("nothing left trainable after freezing experts")
 
-    model.gradient_checkpointing_enable()
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
     model.train()
     model.config.use_cache = False
@@ -270,7 +323,29 @@ def main() -> None:
         # Only sequences with a nonzero advantage and extractable code can teach.
         train_idx = [j for j in range(len(owner))
                      if abs(adv[j]) > 1e-9 and items[j][1]]
-        if not train_idx:
+
+        # Degeneration to empty output shows up here first, and the previous
+        # version returned before writing any history -- so the five iterations
+        # over which a collapse actually happened left no trace at all, and the
+        # log jumped straight from healthy to dead. Record the skip, then decide.
+        if stats["no_code_rate"] > args.max_no_code or not train_idx:
+            rec = {"iteration": it, "prompts": len(keys),
+                   "rollouts": len(owner), "live_groups": n_live_groups,
+                   "trained_on": 0, "skipped": True,
+                   "mean_reward": round(stats["mean_reward"], 4),
+                   "pass_rate": round(stats["pass_rate"], 4),
+                   "purity_rate": round(stats["purity_rate"], 4),
+                   "fast_rate": round(stats["fast_rate"], 4),
+                   "no_code_rate": round(stats["no_code_rate"], 4)}
+            history.append(rec)
+            with open(hist_path, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+            if stats["no_code_rate"] > args.max_no_code:
+                raise SystemExit(
+                    "iter %d: %.1f%% of rollouts produced no code (limit %.0f%%). "
+                    "The policy is degenerating; stopping so the snapshots stay "
+                    "usable. Lower --lr or raise --kl-coef."
+                    % (it, stats["no_code_rate"] * 100, args.max_no_code * 100))
             print("iter %d: no group had any spread; skipping the update" % it)
             continue
 
@@ -285,33 +360,60 @@ def main() -> None:
             seqs.append((j, ids, mask))
 
         n_clipped = n_tok = 0
-        losses = []
+        losses, kls = [], []
         opt.zero_grad(set_to_none=True)
         done_micro = 0
         for i, (j, ids, mask) in enumerate(seqs):
             t_ids = torch.tensor([ids], device=dev)
             t_mask = torch.tensor([mask], device=dev)
-            old = completion_logprobs(model, t_ids, t_mask, grad=False)
-            if old is None:
-                continue
-            old = old.detach()
+            # At one inner epoch the ratio is exactly 1 on the only pass that
+            # happens, so the reference forward produces a constant and the
+            # objective reduces to REINFORCE with a group baseline. Computing it
+            # anyway doubled the cost of every step in the first run.
+            old = None
+            if args.inner_epochs > 1:
+                old = completion_logprobs(model, t_ids, t_mask, grad=False)
+                if old is None:
+                    continue
+                old = old.detach()
+
+            # The starting policy, obtained by switching the adapter off. Exact,
+            # and costs one forward pass rather than a second copy of the weights.
+            ref = None
+            if args.kl_coef > 0:
+                with model.disable_adapter():
+                    ref = completion_logprobs(model, t_ids, t_mask, grad=False)
+                if ref is None:
+                    continue
+                ref = ref.detach()
 
             for _ in range(args.inner_epochs):
                 new = completion_logprobs(model, t_ids, t_mask, grad=True)
                 if new is None:
                     break
-                ratio = torch.exp(new - old)
                 a = adv[j]
-                unclipped = ratio * a
-                clipped = torch.clamp(ratio, 1 - args.clip_eps,
-                                      1 + args.clip_eps) * a
-                loss = -torch.min(unclipped, clipped).mean()
+                if old is None:
+                    loss = -(a * new).mean()
+                    n_tok += new.numel()
+                else:
+                    ratio = torch.exp(new - old)
+                    unclipped = ratio * a
+                    clipped = torch.clamp(ratio, 1 - args.clip_eps,
+                                          1 + args.clip_eps) * a
+                    loss = -torch.min(unclipped, clipped).mean()
+                    n_clipped += int((unclipped > clipped).sum())
+                    n_tok += ratio.numel()
+                if ref is not None:
+                    # k3 estimator: non-negative and lower variance than the
+                    # plain log-ratio difference.
+                    d = ref - new
+                    kl = (torch.exp(d) - d - 1).mean()
+                    loss = loss + args.kl_coef * kl
+                    kls.append(kl.item())
                 if not torch.isfinite(loss):
                     break
                 (loss / args.grad_accum).backward()
                 losses.append(loss.item())
-                n_clipped += int((unclipped > clipped).sum())
-                n_tok += ratio.numel()
                 done_micro += 1
                 if done_micro % args.grad_accum == 0:
                     torch.nn.utils.clip_grad_norm_(params, 1.0)
@@ -333,6 +435,7 @@ def main() -> None:
             "fast_rate": round(stats["fast_rate"], 4),
             "no_code_rate": round(stats["no_code_rate"], 4),
             "clip_frac": round(n_clipped / max(n_tok, 1), 4),
+            "kl": round(sum(kls) / max(len(kls), 1), 5),
             "loss": round(sum(losses) / max(len(losses), 1), 5),
             "seconds": {"rollout": round(t_roll), "reward": round(t_reward),
                         "train": round(t_train), "total": round(time.time() - t_iter)},
@@ -345,10 +448,11 @@ def main() -> None:
         window = [h["mean_reward"] for h in history[-5:]]
         rec["reward_w5"] = round(sum(window) / len(window), 4)
         print("iter %2d  reward %.3f (w5 %.3f)  pass %.3f  pure %.3f  fast %.3f  "
-              "groups %d/%d  clip %.3f  (%.0fs roll, %.0fs reward, %.0fs train)"
+              "nocode %.3f  groups %d/%d  kl %.4f  (%.0fs roll, %.0fs reward, "
+              "%.0fs train)"
               % (it, rec["mean_reward"], rec["reward_w5"], rec["pass_rate"],
-                 rec["purity_rate"], rec["fast_rate"], n_live_groups, len(keys),
-                 rec["clip_frac"], t_roll, t_reward, t_train))
+                 rec["purity_rate"], rec["fast_rate"], rec["no_code_rate"],
+                 n_live_groups, len(keys), rec["kl"], t_roll, t_reward, t_train))
 
         # --- checkpoint -----------------------------------------------------
         # Only the trainable tensors: everything else is unchanged from the
@@ -362,6 +466,17 @@ def main() -> None:
                    os.path.join(ck, "trainable.pt"))
         torch.save({"optimizer": opt.state_dict(), "iteration": it,
                     "args": vars(args)}, os.path.join(ck, "opt.pt"))
+        # Also write a loadable adapter. Without it the deltas have to be
+        # replayed onto the starting adapter by hand before anything can serve
+        # or evaluate the policy, and the refresh loop needs to do that every
+        # few iterations.
+        model.save_pretrained(os.path.join(ck, "adapter"))
+        # A rolling checkpoint is not a safety net: the collapse in the first run
+        # overwrote the healthy weights with degenerate ones on every iteration,
+        # so there was nothing to fall back to. Numbered snapshots are cheap at
+        # 526 MB.
+        if args.snapshot_every and (it + 1) % args.snapshot_every == 0:
+            model.save_pretrained(os.path.join(args.out, "snap-%03d" % it))
         with open(os.path.join(args.out, "history.jsonl"), "a") as f:
             f.write(json.dumps(rec) + "\n")
 
