@@ -1,0 +1,25 @@
+=== phase 10: stacking the two arms ===
+all concepts tier, single-shot, k aligned to 4
+  F -> H: self-distillation.  F -> I: GRPO.  H -> J: GRPO on top of self-distillation.
+
+level 1,2: 200 of 200 problems evaluated in every run, k=4 (800 samples)
+criterion: numerically correct AND entirely cuTile
+
+                       pass@1   pass@4     solved  fast_1.0  median x
+  baseline              12.9%    23.5%     47/200       5/200      0.12x
+  F (start)             21.4%    39.5%     79/200      21/200      0.55x    +8.5pp pass@1, +16 fast
+  I (F+GRPO)            24.6%    49.0%     98/200      31/200      0.90x   +11.8pp pass@1, +26 fast
+  H (F+distil)          28.5%    54.0%    108/200      38/200      0.95x   +15.6pp pass@1, +33 fast
+  J (H+GRPO)            39.5%    63.5%    127/200      48/200      1.00x   +26.6pp pass@1, +43 fast
+
+  by category -- problems solved, and of those how many beat torch
+
+  category      probs       baseline             F (start)            I (F+GRPO)          H (F+distil)            J (H+GRPO)
+  conv             98       5/98 f0             31/98 f13  +13           38/98 f16  +16           50/98 f24  +24           69/98 f35  +35
+  activation       29      19/29 f3             20/29 f4    +1           23/29 f6    +3           23/29 f5    +2           21/29 f4    +1
+  norm             24       2/24 f0              8/24 f2    +2            9/24 f2    +2           10/24 f7    +7           14/24 f5    +5
+  matmul           15      11/15 f1              9/15 f1    +0           12/15 f2    +1           13/15 f1    +0           10/15 f0    -1
+  reduction        11       1/11 f0              3/11 f0    +0            5/11 f2    +2            3/11 f0    +0            5/11 f3    +3
+  pool             10       0/10 f0              1/10 f0    +0            3/10 f1    +1            1/10 f0    +0            1/10 f0    +0
+  other             7       7/7  f0              6/7  f0    +0            6/7  f0    +0            6/7  f0    +0            6/7  f0    +0
+  loss              6       2/6  f1              1/6  f1    +0            2/6  f2    +1            2/6  f1    +0            1/6  f1    +0
