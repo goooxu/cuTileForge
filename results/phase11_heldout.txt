@@ -1,0 +1,15 @@
+=== sealed synthetic held-out, opened once (phase 11) ===
+level 97: 300 programmatic tasks.  level 98: 200 model-authored tasks.
+All concepts tier, k=4, single-shot, verified with the same purity gate as the benchmark.
+
+sealed held-out, k=4, criterion: numerically correct AND entirely cuTile
+
+  model   level97 solved  level98 solved     total       pass@1
+  base      53/300  17.7%    24/200  12.0%    77/500  15.4%     6.4%
+  F        196/300  65.3%   104/200  52.0%   300/500  60.0%    35.8%
+  K        269/300  89.7%   159/200  79.5%   428/500  85.6%    64.3%
+
+  gain over base, held-out vs dev (pass@4 solved share)
+  model   held-out                dev 200               
+  F        60.0% (x3.90)          39.5% (x1.68)
+  K        85.6% (x5.56)          67.0% (x2.85)
