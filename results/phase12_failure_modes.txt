@@ -1,0 +1,63 @@
+=== failure modes, using failure_stage (not the misleading 'compiled' flag) ===
+'compiled' only means the module imported; cuTile JIT-compiles at first launch.
+
+##### Level 1: where K is stuck
+level 1, H vs K, k aligned to 4
+  K leaves 24 problems unsolved at k=4
+    runs, wrong numbers     13  54.2%   wrong_numerics 8, rank_mismatch 2, tile_shape_invalid 1
+    cuTile API misuse        7  29.2%   other 2, wrong_arg_type 2, type_depends_on_path 1
+    correct but not pure     2   8.3%   python_syntax 1, wrong_numerics 1
+    runtime error            1   4.2%   other 1
+    import error             1   4.2%   dtype_mismatch 1
+
+  by family
+    pool           6 unsolved  (cuTile API misuse 4, runs, wrong numbers 1, runtime error 1)
+    norm           5 unsolved  (runs, wrong numbers 5)
+    loss           5 unsolved  (runs, wrong numbers 3, import error 1, correct but not pure 1)
+    reduction      4 unsolved  (cuTile API misuse 3, runs, wrong numbers 1)
+    matmul         3 unsolved  (runs, wrong numbers 3)
+    activation     1 unsolved  (correct but not pure 1)
+
+##### Level 1: where L is stuck
+level 1, H vs L, k aligned to 4
+  L leaves 20 problems unsolved at k=4
+    runs, wrong numbers      9  45.0%   wrong_numerics 7, kernel_call_convention 1, other 1
+    cuTile API misuse        7  35.0%   rank_mismatch 4, other 1, type_depends_on_path 1
+    import error             2  10.0%   timeout 1, dtype_mismatch 1
+    correct but not pure     2  10.0%   wrong_numerics 1, timeout 1
+
+  by family
+    reduction      6 unsolved  (cuTile API misuse 4, runs, wrong numbers 2)
+    pool           5 unsolved  (cuTile API misuse 3, import error 1, runs, wrong numbers 1)
+    loss           5 unsolved  (runs, wrong numbers 4, import error 1)
+    norm           2 unsolved  (runs, wrong numbers 2)
+    activation     1 unsolved  (correct but not pure 1)
+    matmul         1 unsolved  (correct but not pure 1)
+
+##### Level 2: where K is stuck
+level 2, H vs K, k aligned to 4
+  K leaves 42 problems unsolved at k=4
+    correct but not pure    32  76.2%   wrong_numerics 20, wrong_arg_type 2, array_used_as_tensor 1
+    runs, wrong numbers      9  21.4%   wrong_numerics 9
+    cuTile API misuse        1   2.4%   other 1
+
+  by family
+    conv          24 unsolved  (correct but not pure 19, runs, wrong numbers 5)
+    norm           8 unsolved  (correct but not pure 5, runs, wrong numbers 3)
+    activation     7 unsolved  (correct but not pure 6, cuTile API misuse 1)
+    pool           2 unsolved  (correct but not pure 2)
+    matmul         1 unsolved  (runs, wrong numbers 1)
+
+##### Level 2: where L is stuck
+level 2, H vs L, k aligned to 4
+  L leaves 36 problems unsolved at k=4
+    correct but not pure    27  75.0%   wrong_numerics 15, rank_mismatch 3, other 2
+    runs, wrong numbers      9  25.0%   wrong_numerics 9
+
+  by family
+    conv          21 unsolved  (correct but not pure 15, runs, wrong numbers 6)
+    activation     6 unsolved  (correct but not pure 5, runs, wrong numbers 1)
+    pool           4 unsolved  (correct but not pure 3, runs, wrong numbers 1)
+    norm           4 unsolved  (correct but not pure 3, runs, wrong numbers 1)
+    matmul         1 unsolved  (correct but not pure 1)
+

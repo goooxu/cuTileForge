@@ -1596,3 +1596,68 @@ level 98 分布与 builder 不同，F 的 97-98 差距 13.3pp、K 是 10.2pp，�
 **工程**：新增 `kernelbench/scripts/heldout_sweep.sh`。三次 vLLM 启动里有两次被 ssh 断连带走，
 所以整个 sweep 做成脚本、detached 跑、日志轮询；脚本按 run 目录存在与否跳过已完成的部分，
 重跑很便宜。
+
+---
+
+# 第十二阶段：给"数值错"分级，以及一个把我带偏的诊断 bug
+
+## 先记这个 bug
+
+诊断 K 的失败时用了 `compiled and not numerically_correct` 判"能跑但数值错"，
+报出 92.4%，并据此定了整轮的方向。**错的。** `analyze_cutile_run.py` 自己的注释早写了：
+`compiled` 只表示模块导入成功，cuTile 是首次 launch 才 JIT 编译，所以编译失败的 kernel
+照样 `compiled=True`。那个判据把全部 cuTile 编译错误算进了数值错。
+
+用 `failure_stage` 重算：**数值正确但没过纯度门 51.5%**、能跑但数值错 33.3%、
+cuTile API 误用 12.1%。最大的一块不是数值，是纯度。
+
+教训：一个判据用错，把最大的靶子藏起来，还顺手造出一个假的。`diagnose_regression.py`
+现在用 `failure_stage`，注释里写明为什么不能用 `compiled` 重建。
+
+## 分级 reward 本身没白做
+
+`reward.py` 判数值错走的是验证器错误文本（`output mismatch` / `non-finite`），不看
+`compiled`，所以改动不受 bug 影响。原问题是真的：恒定 0.6，从"最后一位不同"到"差六个
+数量级"同分；GRPO 上更糟，组内八个全落这档时 advantage 精确为零。
+
+验证器早就算出 max diff 但只写在错误文本里，现在记成结构化字段（按参考量级归一化），
+带内按对数刻度插值 0.6 → 0.3（下限仍高于"编译不过"的 0.2）。
+
+## 结果
+
+K 和 L 起点、frontier、超参全同，只差 reward 形状：**134 → 144 道，快过 torch 49 → 60**，
+pass@4 67.0% → 72.0%。
+
+**最值钱的观察是 KL**：K 末段 0.5522，L 末段 0.0102，差 54 倍，而两者训练 reward 和 pass
+几乎一样。也就是说 **K 是靠大幅离开起点换来的收益**。这给第十一阶段那个"KL 漂 70 倍"
+一个解释：组内没有真实接近度排序时，策略只能靠大偏移撞运气。K 的矩阵乘退步（13 → 11）
+应该就是漂移的代价，L 拿回到 13。
+
+按类别：conv 74 → 77（f35 → f40），norm 11 → 18，matmul 11 → 13；退的是 reduction
+7 → 5、pool 2 → 1。
+
+## 下一个靶子：链尾的 torch 激活
+
+L 剩 56 道，其中 29 道（52%）是纯度失败，Level 2 占 75%。K 上 73 个被挡样本的原因：
+`torch.relu` 17、`torch.softmax` 12、`torch.sigmoid` 11、`torch.logsumexp` 9、
+`F.gelu` 8、`torch.tanh` 6——**全是逐点激活**。
+
+模型把卷积/GEMM/归一化都搬进了 cuTile，链尾顺手写个 `torch.relu(...)` 交卷。这解释了
+激活族为什么一直"退步"：**它在链条语境里从来没会过**，而第十一阶段补的是独立单算子任务。
+
+`reward.py` 给纯度失败 0.0，和空白卷同分——只差一个激活没搬的正确解，信号和白卷一样多。
+当初设 0.0 防 reward hacking（甩回 PyTorch 是刷正确率最省力的路），顾虑对，但一刀切
+掐掉了唯一指向正确方向的梯度。
+
+## 一个操作教训
+
+改 `reward.py` 必须等当前 RL 跑完。`supervise_grpo.sh` 每 10 轮重启 grpo 容器、
+重新 import 一次，中途改文件会让同一次实验前后用两个目标函数。
+
+## 下一步
+
+1. **按"还剩多少 torch"给纯度失败分级**，硬门槛是必须真有被 launch 的 `ct.kernel`——
+   纯 torch 直通仍 0.0，不会让甩回 torch 变划算。目标是那 29 道。
+2. **造"链尾激活"任务**：缺的不是单算子激活，是"前面已是 cuTile、尾巴也必须是 cuTile"。
+3. **池化和损失各剩 5 道**，且在 L 上主要卡 cuTile API 误用而非数值，瓶颈与别族不同。
+4. pass@1 44.6% 对 pass@4 72.0%，还有 27pp。

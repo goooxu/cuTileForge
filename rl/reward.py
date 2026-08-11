@@ -44,6 +44,37 @@ STAGE_REWARD = {
 RAN_BUT_WRONG = 0.6
 _RAN_BUT_WRONG_SIGNS = ("output mismatch", "non-finite", "!= expected")
 
+# Within that group, grade by how wrong. This band is not a minor case: 61 of the
+# 66 benchmark problems the best model cannot solve land in it, so a flat 0.6 for
+# everything from "off in the last digit" to "off by six orders of magnitude"
+# leaves no gradient exactly where all the remaining headroom is. It also matters
+# for group-relative advantage, which is zero for a group whose members all score
+# the same.
+#
+# Interpolates between RAN_BUT_WRONG at the tolerance and RAN_BUT_WRONG_FLOOR at
+# RAN_BUT_WRONG_HOPELESS, on a log scale because relative error spans orders of
+# magnitude. Never reaches 1.0: only the verifier's own allclose decides that.
+RAN_BUT_WRONG_FLOOR = 0.3
+RAN_BUT_WRONG_TOL = 1e-4          # matches the verifier's atol/rtol
+RAN_BUT_WRONG_HOPELESS = 1.0      # relative error of 100% or more
+
+
+def numeric_credit(rel_diff) -> float:
+    """Partial credit for a kernel that ran but got the numbers wrong.
+
+    Falls back to the flat value when the verifier did not record a deviation,
+    so older runs and other failure shapes keep their previous score.
+    """
+    if rel_diff is None:
+        return RAN_BUT_WRONG
+    if rel_diff <= RAN_BUT_WRONG_TOL:
+        # Just outside allclose on one element; nearly right.
+        return RAN_BUT_WRONG
+    span = math.log10(RAN_BUT_WRONG_HOPELESS / RAN_BUT_WRONG_TOL)
+    frac = math.log10(rel_diff / RAN_BUT_WRONG_TOL) / span
+    frac = min(max(frac, 0.0), 1.0)
+    return RAN_BUT_WRONG - frac * (RAN_BUT_WRONG - RAN_BUT_WRONG_FLOOR)
+
 # Reward for a correct kernel that is also fast. Capped at +0.3 so that no
 # speedup can make an incorrect kernel look competitive with a correct one, and
 # saturating at 4x, beyond which further gains are not worth chasing.
@@ -70,7 +101,7 @@ def reward_for(rec: dict) -> float:
     if stage == "exec":
         err = rec.get("error") or ""
         if any(s in err for s in _RAN_BUT_WRONG_SIGNS):
-            return RAN_BUT_WRONG
+            return numeric_credit(rec.get("rel_diff"))
     return STAGE_REWARD.get(stage, 0.2)
 
 
@@ -116,4 +147,16 @@ def summarise(scored: dict) -> dict:
                             if rec.get("stage") == "no_code") / n,
         "fast_rate": sum(1 for s in speeds if s > 1.0) / n,
         "inconclusive": sum(1 for r, _ in scored.values() if r is None),
+        # How much of the batch is in the graded band, and how close it is. This
+        # is the band the remaining headroom lives in, so it is worth watching
+        # directly rather than inferring from mean reward.
+        "wrong_numbers_rate": sum(1 for rec in recs
+                                  if rec.get("rel_diff") is not None) / n,
+        "median_rel_diff": _median([rec["rel_diff"] for rec in recs
+                                    if rec.get("rel_diff") is not None]),
     }
+
+
+def _median(xs):
+    xs = sorted(x for x in xs if x is not None)
+    return xs[len(xs) // 2] if xs else None

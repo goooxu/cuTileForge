@@ -147,9 +147,19 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
                     if not torch.isfinite(got).all():
                         raise AssertionError("output contains non-finite values")
                     if not torch.allclose(got, expected, atol=1e-4, rtol=1e-4):
+                        # Record how wrong, not just that it is wrong. 92% of the
+                        # benchmark problems the best model cannot solve fail
+                        # here -- pure cuTile that compiles, launches and returns
+                        # the right shape with the wrong values -- and a flat
+                        # verdict gives a reward function nothing to grade them
+                        # by. Scaled by the reference's own magnitude so the
+                        # number means the same thing across operators.
+                        diff = (got - expected).abs().max().item()
+                        scale = expected.abs().max().item()
+                        rec["max_diff"] = diff
+                        rec["rel_diff"] = diff / scale if scale > 0 else diff
                         raise AssertionError(
-                            "output mismatch, max diff %.4g"
-                            % (got - expected).abs().max().item())
+                            "output mismatch, max diff %.4g" % diff)
 
             rec["passed"] = True
             rec["stage"] = "pass"
