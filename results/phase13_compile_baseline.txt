@@ -1,0 +1,22 @@
+=== speed measured against torch.compile (inductor), not eager ===
+Correctness is identical either way; only the speed columns change.
+
+--- against torch eager (the number reported through phase 12) ---
+level 1,2: 200 of 200 problems evaluated in every run, k=4 (800 samples)
+criterion: numerically correct AND entirely cuTile
+
+                       pass@1   pass@4     solved  fast_1.0  median x
+  baseline              12.9%    23.5%     47/200       5/200      0.12x
+  H                     28.5%    54.0%    108/200      38/200      0.95x   +15.6pp pass@1, +33 fast
+  K                     42.8%    67.0%    134/200      49/200      1.00x   +29.9pp pass@1, +44 fast
+  L                     44.6%    72.0%    144/200      60/200      1.00x   +31.8pp pass@1, +55 fast
+
+--- against torch.compile ---
+level 1,2: 200 of 200 problems evaluated in every run, k=4 (800 samples)
+criterion: numerically correct AND entirely cuTile
+
+                       pass@1   pass@4     solved  fast_1.0  median x
+  baseline              12.9%    23.5%     47/200       3/200      0.12x
+  H                     28.5%    54.0%    108/200      24/200      0.84x   +15.6pp pass@1, +21 fast
+  K                     42.8%    67.0%    134/200      45/200      0.93x   +29.9pp pass@1, +42 fast
+  L                     44.6%    72.0%    144/200      41/200      0.92x   +31.8pp pass@1, +38 fast

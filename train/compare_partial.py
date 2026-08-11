@@ -52,6 +52,13 @@ CATEGORY_RULES = [
 ]
 
 
+# Which per-sample file to read from each run directory. Speedups depend on which
+# reference they were divided by, so the torch.compile baseline lives in a
+# separate file rather than overwriting the eager one -- both are worth keeping,
+# and mixing them in one table would be meaningless.
+ANALYSIS_NAME = ["analysis.json"]
+
+
 def categorise(name: str) -> str:
     low = name.lower()
     for cat, keys in CATEGORY_RULES:
@@ -87,7 +94,13 @@ def main() -> None:
                     help="Break the comparison down by operator family.")
     ap.add_argument("--repo-root", default=os.path.join(
         os.path.dirname(os.path.abspath(__file__)), ".."))
+    ap.add_argument("--analysis-name", default="analysis.json",
+                    help="Per-sample file to read from each run directory. Use "
+                         "analysis_compile.json for speedups measured against "
+                         "torch.compile rather than eager.")
     args = ap.parse_args()
+
+    ANALYSIS_NAME[0] = args.analysis_name
 
     checker = load_checker(args.repo_root)
 
@@ -112,7 +125,7 @@ def main() -> None:
         verdict from eval_results.json for runs that were never fully evaluated,
         accepting that those have no speed data.
         """
-        analysis = os.path.join(run_dir, "analysis.json")
+        analysis = os.path.join(run_dir, ANALYSIS_NAME[0])
         if os.path.exists(analysis):
             return {(lvl, r["problem_id"], r["sample_id"]):
                     (bool(r["passed"]), r.get("speedup"))

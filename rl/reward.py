@@ -78,6 +78,12 @@ def numeric_credit(rel_diff) -> float:
 # Reward for a correct kernel that is also fast. Capped at +0.3 so that no
 # speedup can make an incorrect kernel look competitive with a correct one, and
 # saturating at 4x, beyond which further gains are not worth chasing.
+#
+# The speedup this reads is measured against torch.compile, not eager -- see
+# verify/worker.py. Trained against eager the bonus rewards beating intermediate
+# materialisation, which inductor removes for free, so it was paying for wins a
+# user would never see: the run that looked best on eager (60 problems faster)
+# was worse than its predecessor once re-measured against inductor (41 vs 45).
 SPEED_BONUS_MAX = 0.3
 SPEED_SATURATES_AT = 4.0
 

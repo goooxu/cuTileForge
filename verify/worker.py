@@ -32,13 +32,21 @@ def _median(xs):
 
 def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
             timeout_s: float, measure_time: bool = False,
-            num_perf_trials: int = 20) -> None:
+            num_perf_trials: int = 20, ref_mode: str = "compile") -> None:
     """Import torch once, then verify candidates until told to stop.
 
     With measure_time, a candidate that passes is also timed against the
     reference. That must only be used by a pool with one worker per GPU: several
     workers sharing a device contaminate each other's measurements, and a
     speedup measured under contention is not a speedup.
+
+    ref_mode decides what the reference is. "compile" runs it under
+    torch.compile, which is the honest comparison and the default: half the
+    benchmark is fusion chains, and beating eager there mostly means beating
+    intermediate materialisation, which inductor already removes. Measured
+    against eager the best model looked like it matched PyTorch at the median
+    (1.00x); against compile it is 0.92x. "eager" is kept for reproducing the
+    older numbers.
     """
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
 
@@ -65,6 +73,34 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
 
     def _on_alarm(signum, frame):
         raise Timeout("exceeded %.0fs" % timeout_s)
+
+    # Compiling the reference costs a couple of seconds, and every candidate for
+    # a given task shares the same reference -- so compile once per task and
+    # reuse it for the rest of this worker's life. Keyed on the reference source,
+    # since that is what defines the model.
+    _ref_cache = {}
+
+    def _compiled_ref(ref_src: str, eager_model, make_inputs):
+        key = hash(ref_src)
+        if key not in _ref_cache:
+            try:
+                m = torch.compile(eager_model)
+                # Force the compile now, inside this task's alarm, so a model
+                # inductor cannot handle fails here rather than polluting the
+                # timing loop.
+                with torch.no_grad():
+                    set_seed(1)
+                    warm = [x.cuda() if hasattr(x, "cuda") else x
+                            for x in make_inputs()]
+                    m(*warm)
+                torch.cuda.synchronize()
+                _ref_cache[key] = (m, "compile")
+            except Exception:
+                # Some references do not compile. Falling back to eager is right,
+                # but the record has to say so: a speedup against eager and one
+                # against inductor are different numbers.
+                _ref_cache[key] = (eager_model, "eager_compile_failed")
+        return _ref_cache[key]
 
     # A generated kernel can loop forever, which would otherwise wedge this
     # worker for the rest of the run.
@@ -169,12 +205,16 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
                 # file: it costs one extra measurement but keeps both sides on
                 # the same device in the same thermal and clock state, and means
                 # synthetic task sets need no baseline artefact of their own.
+                timed_ref, mode = ref_model, "eager"
+                if ref_mode == "compile":
+                    timed_ref, mode = _compiled_ref(ref_src, ref_model, get_inputs)
+                rec["ref_mode"] = mode
                 with torch.no_grad():
                     set_seed(1)
                     inputs = [x.cuda() if hasattr(x, "cuda") else x
                               for x in get_inputs()]
                     ref_ms = _median(time_execution_with_cuda_event(
-                        ref_model, inputs, num_warmup=5, num_trials=num_perf_trials,
+                        timed_ref, inputs, num_warmup=5, num_trials=num_perf_trials,
                         verbose=False, device=device))
                     new_ms = _median(time_execution_with_cuda_event(
                         new_model, inputs, num_warmup=5, num_trials=num_perf_trials,
@@ -218,7 +258,8 @@ class VerifierPool:
 
     def __init__(self, workers: int = 16, gpus: int = 4,
                  num_correct_trials: int = 2, timeout_s: float = 120.0,
-                 measure_time: bool = False, num_perf_trials: int = 20):
+                 measure_time: bool = False, num_perf_trials: int = 20,
+                 ref_mode: str = "compile"):
         if measure_time and workers > gpus:
             raise ValueError(
                 "timing needs exclusive GPUs: %d workers over %d gpus would have "
@@ -230,6 +271,7 @@ class VerifierPool:
         self.timeout_s = timeout_s
         self.measure_time = measure_time
         self.num_perf_trials = num_perf_trials
+        self.ref_mode = ref_mode
         self.ctx = mp.get_context("spawn")
         self.task_q = self.ctx.Queue()
         self.result_q = self.ctx.Queue()
@@ -241,7 +283,8 @@ class VerifierPool:
         p = self.ctx.Process(target=_worker,
                              args=(self.task_q, self.result_q, i % self.gpus,
                                    self.num_correct_trials, self.timeout_s,
-                                   self.measure_time, self.num_perf_trials),
+                                   self.measure_time, self.num_perf_trials,
+                                   self.ref_mode),
                              daemon=True)
         p.start()
         self.procs[i] = p
@@ -333,7 +376,8 @@ class VerifierPool:
 
 def verify_and_time(items, workers: int = 16, gpus: int = 4,
                     num_correct_trials: int = 2, timeout_s: float = 120.0,
-                    num_perf_trials: int = 20, progress=None) -> dict:
+                    num_perf_trials: int = 20, progress=None,
+                    ref_mode: str = "compile") -> dict:
     """Screen for correctness in parallel, then time the survivors exclusively.
 
     Timing and throughput pull in opposite directions. Correctness screening
@@ -362,7 +406,8 @@ def verify_and_time(items, workers: int = 16, gpus: int = 4,
     with VerifierPool(workers=gpus, gpus=gpus,
                       num_correct_trials=num_correct_trials,
                       timeout_s=timeout_s, measure_time=True,
-                      num_perf_trials=num_perf_trials) as pool:
+                      num_perf_trials=num_perf_trials,
+                      ref_mode=ref_mode) as pool:
         timed = pool.verify_batch(survivors)
 
     for key, rec in timed.items():

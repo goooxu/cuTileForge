@@ -55,6 +55,11 @@ def main() -> None:
                     help="Also time correct candidates against the reference. "
                          "Adds a second, GPU-exclusive phase.")
     ap.add_argument("--num-perf-trials", type=int, default=20)
+    ap.add_argument("--ref-mode", default="compile", choices=["compile", "eager"],
+                    help="What the reference is timed as. compile is the honest "
+                         "comparison: beating eager on a fusion chain mostly "
+                         "means beating intermediate materialisation, which "
+                         "inductor already removes.")
     args = ap.parse_args()
 
     from kernelbench.dataset import construct_kernelbench_dataset
@@ -71,7 +76,8 @@ def main() -> None:
         results = verify_and_time(
             tasks, workers=args.workers, gpus=args.gpus,
             num_correct_trials=args.num_correct_trials, timeout_s=args.timeout,
-            num_perf_trials=args.num_perf_trials, progress=print)
+            num_perf_trials=args.num_perf_trials, progress=print,
+            ref_mode=args.ref_mode)
     else:
         with VerifierPool(workers=args.workers, gpus=args.gpus,
                           num_correct_trials=args.num_correct_trials,
