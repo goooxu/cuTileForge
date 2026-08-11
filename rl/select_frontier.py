@@ -24,11 +24,45 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "repair"))
 sys.path.insert(0, os.path.join(HERE, "..", "verify"))
+sys.path.insert(0, os.path.join(HERE, "..", "train"))
 sys.path.insert(0, HERE)
 
+from build_sft_dataset import category_of  # noqa: E402
 from repair_loop import Chat, extract_code, sample_batch  # noqa: E402
 from reward import reward_for  # noqa: E402
 from worker import VerifierPool  # noqa: E402
+
+
+def apply_category_quota(frontier, spec: str):
+    """Cap each operator family's share of the frontier.
+
+    Sorting by reward spread alone lets the most numerous family take the
+    rollouts. On the run that stacked GRPO onto the distilled model, convolution
+    and pooling were 65% of the frontier while activation had no builder at all,
+    and the result gained 19 problems overall but lost 3 on matmul and 2 on
+    activation -- families the policy had been good at and then drifted away
+    from. Entries stay in spread order within each family, so the cap trims the
+    least informative tasks first.
+
+    spec is "cat=N" pairs, with "*=N" as the default for unlisted families.
+    """
+    caps = {}
+    for pair in spec.split(","):
+        cat, _, n = pair.partition("=")
+        caps[cat.strip()] = int(n)
+    default = caps.pop("*", None)
+
+    kept, seen = [], collections.Counter()
+    for e in frontier:
+        c = e.get("category", "?")
+        cap = caps.get(c, default)
+        if cap is not None and seen[c] >= cap:
+            continue
+        seen[c] += 1
+        kept.append(e)
+    print("  category quota: %d -> %d tasks, %s"
+          % (len(frontier), len(kept), dict(seen.most_common())))
+    return kept
 
 
 def main() -> None:
@@ -50,6 +84,10 @@ def main() -> None:
     ap.add_argument("--prompt-tier", default="cutile_docs",
                     help="Must match the tier training will sample at, or the "
                          "pass rates screened here describe a different policy.")
+    ap.add_argument("--category-quota", default=None,
+                    help="Comma-separated cat=N caps, '*=N' for the rest. "
+                         "Without this the frontier's composition is whatever "
+                         "the task pool happened to contain.")
     ap.add_argument("--from-run", default=None,
                     help="Skip sampling and derive the frontier from an existing "
                          "verified run (JSONL from verify/fast_verify.py). A "
@@ -143,7 +181,7 @@ def main() -> None:
         entry = dict(t)
         entry.pop("prompt")                 # regenerated on use; keeps the file small
         entry.update(pass_rate=round(rate, 3), reward_spread=round(spread, 3),
-                     n=acc["n"])
+                     n=acc["n"], category=category_of(t["ref_src"]))
         if 0 < rate < 1:
             frontier.append(entry)
         elif rate == 0:
@@ -157,6 +195,9 @@ def main() -> None:
             always_pass += 1
 
     frontier.sort(key=lambda e: (-e["reward_spread"], -e["pass_rate"]))
+
+    if args.category_quota:
+        frontier = apply_category_quota(frontier, args.category_quota)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:

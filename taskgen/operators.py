@@ -326,6 +326,112 @@ def elementwise(tier, rng):
     )
 
 
+# The pointwise activation surface, enumerated rather than sampled. This family
+# is 29 of the benchmark's 200 problems and had almost no training material: the
+# elementwise builder above covers eight ops and only in two dimensions, so the
+# frontier carried 3.4% elementwise against a 14.5% dev share, and stacking RL on
+# top of the distilled model lost two activation problems rather than gaining any.
+ACTIVATION_OPS = [
+    ("ReLU", "torch.relu(x)"),
+    ("LeakyReLU", "torch.nn.functional.leaky_relu(x, negative_slope=0.01)"),
+    ("Sigmoid", "torch.sigmoid(x)"),
+    ("Tanh", "torch.tanh(x)"),
+    ("GELU", "torch.nn.functional.gelu(x)"),
+    ("GELUTanh", "torch.nn.functional.gelu(x, approximate='tanh')"),
+    ("SELU", "torch.selu(x)"),
+    ("ELU", "torch.nn.functional.elu(x, alpha=1.0)"),
+    ("CELU", "torch.nn.functional.celu(x, alpha=1.0)"),
+    ("Softplus", "torch.nn.functional.softplus(x)"),
+    ("Softsign", "torch.nn.functional.softsign(x)"),
+    ("HardSigmoid", "torch.nn.functional.hardsigmoid(x)"),
+    ("HardSwish", "torch.nn.functional.hardswish(x)"),
+    ("HardTanh", "torch.nn.functional.hardtanh(x, min_val=-1.0, max_val=1.0)"),
+    ("HardShrink", "torch.nn.functional.hardshrink(x, lambd=0.5)"),
+    ("SoftShrink", "torch.nn.functional.softshrink(x, lambd=0.5)"),
+    ("TanhShrink", "torch.nn.functional.tanhshrink(x)"),
+    ("LogSigmoid", "torch.nn.functional.logsigmoid(x)"),
+    ("SiLU", "torch.nn.functional.silu(x)"),
+    ("Mish", "torch.nn.functional.mish(x)"),
+    ("ReLU6", "torch.nn.functional.relu6(x)"),
+    ("Softmax", "torch.softmax(x, dim=-1)"),
+    ("LogSoftmax", "torch.log_softmax(x, dim=-1)"),
+    ("Softmin", "torch.nn.functional.softmin(x, dim=-1)"),
+]
+
+
+def activation(tier, rng):
+    """One pointwise activation, at 2D, 3D or 4D.
+
+    Rank is varied because the benchmark's activation problems are not all
+    matrices, and a kernel written only for 2D does not carry over: the tile
+    indexing changes with rank.
+    """
+    label, expr = rng.choice(ACTIVATION_OPS)
+    m, k = rng.choice(shapes_for(MAT2D_BY_TIER, tier))
+    rank = rng.choice([2, 2, 3, 4]) if tier >= 2 else 2
+    if rank == 2:
+        consts = {"batch_size": m, "dim": k}
+        inputs = "    return [torch.randn(batch_size, dim)]"
+    elif rank == 3:
+        c = max(2, k // 64)
+        consts = {"batch_size": max(1, m // 4), "channels": c,
+                  "length": max(8, k // max(c, 1))}
+        inputs = "    return [torch.randn(batch_size, channels, length)]"
+    else:
+        c = max(2, min(32, k // 32))
+        side = max(4, int((k // max(c, 1)) ** 0.5))
+        consts = {"batch_size": max(1, m // 8), "channels": c,
+                  "height": side, "width": side}
+        inputs = "    return [torch.randn(batch_size, channels, height, width)]"
+    return Spec(
+        name=label,
+        category="activation", tier=tier,
+        init_sig="",
+        init_body="        pass",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % expr,
+        consts=consts,
+        inputs=inputs,
+        init_inputs="    return []",
+    )
+
+
+# Losses that take float tensors on both sides. Integer class targets are left
+# out on purpose: the evaluation protocol forces fp32 on every input, which is
+# what made the benchmark's Level 4 unusable here, and a cast index tensor is
+# silently wrong rather than loudly broken.
+LOSS_OPS = [
+    ("MSELoss", "torch.mean((predictions - targets) ** 2)"),
+    ("L1Loss", "torch.mean(torch.abs(predictions - targets))"),
+    ("HuberLoss", "torch.nn.functional.huber_loss(predictions, targets)"),
+    ("SmoothL1Loss", "torch.nn.functional.smooth_l1_loss(predictions, targets)"),
+    ("HingeLoss", "torch.mean(torch.clamp(1 - predictions * targets, min=0))"),
+    ("KLDivLoss",
+     "torch.nn.functional.kl_div(torch.log_softmax(predictions, dim=-1), "
+     "torch.softmax(targets, dim=-1), reduction='batchmean')"),
+    ("CosineSimilarityLoss",
+     "torch.mean(1 - torch.nn.functional.cosine_similarity("
+     "predictions, targets, dim=-1))"),
+]
+
+
+def loss_fn(tier, rng):
+    label, expr = rng.choice(LOSS_OPS)
+    m, k = rng.choice(shapes_for(MAT2D_BY_TIER, tier))
+    return Spec(
+        name=label,
+        category="loss", tier=tier,
+        init_sig="",
+        init_body="        pass",
+        forward_sig="predictions: torch.Tensor, targets: torch.Tensor",
+        forward_body="        return %s" % expr,
+        consts={"batch_size": m, "dim": k},
+        inputs="    return [torch.randn(batch_size, dim), "
+               "torch.randn(batch_size, dim)]",
+        init_inputs="    return []",
+    )
+
+
 REDUCTION_OPS = [
     ("RowSum", "torch.sum(x, dim=1)"),
     ("RowMax", "torch.max(x, dim=1)[0]"),
@@ -1120,6 +1226,12 @@ BUILDERS = [
     (maxpool3d,              5, [2, 3]),
     (adaptive_avgpool2d,     6, [2, 3, 5]),
     (avgpool1d,              5, [1, 2, 3]),
+    # Activation and loss. Together these are 35 of the 200 benchmark problems
+    # and had no dedicated builder at all until now -- the closest thing was the
+    # eight-op elementwise family at 2D. Weighted like the conv surface because
+    # the gap is the same kind: a whole torch API face with no task behind it.
+    (activation,             9, [0, 1, 2, 3, 5]),
+    (loss_fn,                7, [0, 2, 3, 5]),
     # Chains. Level 2 is 100 of the 200 problems, is entirely chains, and has
     # moved 16 -> 15 across six rounds, so this is where the weight goes.
     (operator_chain,        12, [2, 3, 5]),
