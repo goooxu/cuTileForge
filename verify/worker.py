@@ -15,6 +15,7 @@ Typical use:
 
 import multiprocessing as mp
 import os
+import re
 import signal
 import time
 
@@ -57,6 +58,7 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
     from kernelbench.eval import load_original_model_and_inputs, set_seed
     from kernelbench.utils import enforce_reference_precision
     from kernelbench.kernel_static_checker import (
+        TORCH_COMPUTATION_OPS, TORCH_FUNCTIONAL_PATTERNS, _strip_comments,
         check_cutile_impl, check_pytorch_wrap, check_torch_computation_ops,
     )
     # The benchmark's own timing function, deliberately: warmup, L2 flush and
@@ -115,6 +117,33 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
                 return False, msg
         return True, ""
 
+    def purity_detail(code: str):
+        """Why the gate failed, in enough detail to grade the failure.
+
+        The largest group of benchmark problems the best model cannot solve is
+        this one: a numerically correct kernel rejected because one pointwise
+        activation was left in torch. Of 73 such samples the leftovers were
+        torch.relu 17 times, torch.softmax 12, torch.sigmoid 11, F.gelu 8 -- the
+        model ports the convolution and the norm and then finishes the chain with
+        torch.relu(...). A single flat verdict cannot tell that from a wholesale
+        passthrough, so the reward cannot either.
+
+        Returns (has_real_kernel, delegates_to_nn, torch_ops_left). The op list
+        is imported from the checker rather than restated, so the gate and this
+        stay in step; the checker itself is untouched, since it defines the
+        benchmark's verdict and must not drift.
+        """
+        stripped = _strip_comments(code)
+        has_kernel = not check_cutile_impl(code)[0]
+        delegates = bool(check_pytorch_wrap(code)[0])
+
+        n = len(re.findall(
+            r"\b(" + "|".join(re.escape(f) for f in TORCH_COMPUTATION_OPS)
+            + r")(?=\s*\(|\s|$)", stripped))
+        for pattern in TORCH_FUNCTIONAL_PATTERNS:
+            n += len(re.findall(pattern, stripped))
+        return has_kernel, delegates, n
+
     def load_model_new(code: str):
         """cuTile's @ct.kernel does not survive exec(), so go via a real module."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -145,6 +174,10 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
             if not ok:
                 rec["stage"] = "purity"
                 rec["error"] = msg
+                has_kernel, delegates, n_torch = purity_detail(code)
+                rec["has_real_kernel"] = has_kernel
+                rec["delegates_to_nn"] = delegates
+                rec["torch_ops_left"] = n_torch
                 continue
 
             ctx = {}

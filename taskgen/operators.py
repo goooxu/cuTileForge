@@ -458,12 +458,40 @@ def reduction(tier, rng):
 
 # --- fusion chains (tier 4) ---------------------------------------------------
 
+# Tails for the fusion-chain builders. Widened well past the original five
+# (ReLU, Sigmoid, Tanh, Scale, AddBias) to match the ops that actually defeat the
+# model. The single largest group of unsolved benchmark problems is a chain whose
+# heavy part is correctly in cuTile and whose tail was left as torch: across 73
+# such samples the leftovers were torch.relu 17 times, torch.softmax 12,
+# torch.sigmoid 11, torch.logsumexp 9, F.gelu 8, torch.tanh 6. Softmax, logsumexp
+# and gelu were not in this list at all, so no task ever asked for them in a tail
+# position -- which is the position they fail in.
 FUSION_TAILS = [
     ("ReLU", "torch.relu({})"),
     ("Sigmoid", "torch.sigmoid({})"),
     ("Tanh", "torch.tanh({})"),
     ("Scale", "{} * 2.0"),
     ("AddBias", "{} + 1.5"),
+    ("GELU", "torch.nn.functional.gelu({})"),
+    ("SiLU", "torch.nn.functional.silu({})"),
+    ("Mish", "torch.nn.functional.mish({})"),
+    ("HardSwish", "torch.nn.functional.hardswish({})"),
+    ("Softplus", "torch.nn.functional.softplus({})"),
+    ("Clamp", "torch.clamp({}, min=-1.0, max=1.0)"),
+    ("LeakyReLU", "torch.nn.functional.leaky_relu({}, negative_slope=0.01)"),
+    ("ELU", "torch.nn.functional.elu({})"),
+]
+
+# Tails that reduce or normalise along the last dimension. Kept apart from the
+# pointwise ones because they need a dim argument and cannot be composed as
+# freely, but they matter: softmax and logsumexp together account for 21 of the
+# 73 leftover-torch samples.
+REDUCING_TAILS = [
+    ("Softmax", "torch.softmax({}, dim=-1)"),
+    ("LogSoftmax", "torch.log_softmax({}, dim=-1)"),
+    ("LogSumExp", "torch.logsumexp({}, dim=-1)"),
+    ("MeanLast", "torch.mean({}, dim=-1)"),
+    ("MaxLast", "torch.max({}, dim=-1)[0]"),
 ]
 
 
@@ -810,6 +838,92 @@ def fused_conv_bias_act(tier, rng):
                 "height": h, "width": w},
         inputs="    return [torch.rand(batch_size, in_channels, height, width)]",
         init_inputs="    return [in_channels, out_channels]",
+    )
+
+
+ANCHORS = [
+    # (label, init_sig, init_body, expr, consts, inputs, init_inputs)
+    ("Gemm",
+     "in_features: int, out_features: int",
+     "        self.w = nn.Parameter(torch.randn(out_features, in_features) * 0.05)\n"
+     "        self.b = nn.Parameter(torch.randn(out_features) * 0.05)",
+     "torch.addmm(self.b, x, self.w.t())",
+     lambda rng: {"batch_size": rng.choice([64, 128]),
+                  "in_features": rng.choice([128, 256]),
+                  "out_features": rng.choice([128, 256])},
+     "    return [torch.randn(batch_size, in_features)]",
+     "    return [in_features, out_features]"),
+    ("Conv",
+     "in_channels: int, out_channels: int",
+     "        self.conv = nn.Conv2d(in_channels, out_channels, 3, padding=1,\n"
+     "                              bias=False)",
+     "self.conv(x)",
+     lambda rng: {"batch_size": rng.choice([4, 8]),
+                  "in_channels": rng.choice([8, 16]),
+                  "out_channels": rng.choice([16, 32]),
+                  "height": rng.choice([16, 32]), "width": rng.choice([16, 32])},
+     "    return [torch.randn(batch_size, in_channels, height, width)]",
+     "    return [in_channels, out_channels]"),
+    ("LayerNorm",
+     "dim: int, eps: float = 1e-5",
+     "        self.eps = eps",
+     "((x - x.mean(dim=-1, keepdim=True)) / "
+     "torch.sqrt(x.var(dim=-1, keepdim=True, unbiased=False) + self.eps))",
+     lambda rng: {"batch_size": rng.choice([64, 128]),
+                  "dim": rng.choice([256, 512])},
+     "    return [torch.randn(batch_size, dim)]",
+     "    return [dim]"),
+]
+
+
+def anchor_with_tail(tier, rng):
+    """A heavy anchor followed by one or two activation tails.
+
+    This is the exact shape the model fails on, and it had no builder. It gets
+    the anchor -- the convolution, the GEMM, the normalisation -- correctly into
+    cuTile, then finishes with torch.relu(...) and is rejected by the purity gate
+    with the right answer in hand. 34 of the 66 problems the best model cannot
+    solve fail this way, and Level 2 is 75% of them.
+
+    The activation builder added earlier does not reach this: it emits standalone
+    single-operator tasks, and a standalone activation is not the position the
+    model gets wrong. What is missing is the context -- everything before the tail
+    is already a tile computation, and the tail has to stay in the same kernel.
+    """
+    label, init_sig, init_body, expr, consts_fn, inputs, init_inputs = \
+        rng.choice(ANCHORS)
+    consts = consts_fn(rng)
+
+    tails = [rng.choice(FUSION_TAILS)]
+    # A second tail sometimes, because the benchmark's chains are rarely one deep
+    # and each extra tail is another op that has to be ported rather than left.
+    # Distinct from the first: applying the same clamp twice is a longer chain
+    # without being a more varied one.
+    if tier >= 3 and rng.random() < 0.5:
+        others = [t for t in FUSION_TAILS if t[0] != tails[0][0]]
+        tails.append(rng.choice(others))
+    # Reducing tails only last, since they change the shape.
+    if rng.random() < 0.3:
+        tails.append(rng.choice(REDUCING_TAILS))
+
+    body = expr
+    names = []
+    for tl, tmpl in tails:
+        body = tmpl.format(body)
+        names.append(tl)
+
+    return Spec(
+        name="%s%s" % (label, "".join(names)),
+        category="conv" if label == "Conv" else (
+            "norm" if label == "LayerNorm" else "matmul"),
+        tier=tier,
+        init_sig=init_sig,
+        init_body=init_body,
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % body,
+        consts=consts,
+        inputs=inputs,
+        init_inputs=init_inputs,
     )
 
 
@@ -1232,6 +1346,9 @@ BUILDERS = [
     # the gap is the same kind: a whole torch API face with no task behind it.
     (activation,             9, [0, 1, 2, 3, 5]),
     (loss_fn,                7, [0, 2, 3, 5]),
+    # Weighted highest of anything here. It is the single largest failure mode
+    # left: a correct kernel rejected because the chain's tail stayed in torch.
+    (anchor_with_tail,      12, [2, 3, 4, 5]),
     # Chains. Level 2 is 100 of the 200 problems, is entirely chains, and has
     # moved 16 -> 15 across six rounds, so this is where the weight goes.
     (operator_chain,        12, [2, 3, 5]),

@@ -36,6 +36,34 @@ STAGE_REWARD = {
     "pass": 1.0,
 }
 
+# Partial credit for a purity failure that is nearly a port. This is the largest
+# group of unsolved benchmark problems -- a real cuTile kernel doing the hard work
+# with one pointwise activation left as torch.relu(...) -- and a flat 0.0 scores it
+# the same as an empty response, so nothing tells the model it was one edit away.
+#
+# The anti-hacking guarantee is kept by construction: this band tops out strictly
+# below STAGE_REWARD["exec"], so *any* genuinely pure attempt scores at least as
+# much as *any* impure one, and handing work back to PyTorch can never pay. Two
+# hard zeros remain -- no real launched kernel at all, and delegating to a
+# torch.nn compute layer -- since both are wholesale delegation rather than an
+# unfinished port.
+PURITY_NEARLY_MAX = 0.18
+PURITY_NEARLY_MIN = 0.04
+PURITY_HOPELESS_OPS = 8          # this many leftovers is not an unfinished port
+
+
+def purity_credit(rec: dict) -> float:
+    """Grade a purity failure by how much torch is left."""
+    if not rec.get("has_real_kernel") or rec.get("delegates_to_nn"):
+        return 0.0
+    n = rec.get("torch_ops_left")
+    if not n:
+        # The gate failed for some other reason (a missing launch, no tile ops);
+        # not an unfinished port, so no credit.
+        return 0.0
+    frac = min(max((n - 1) / float(PURITY_HOPELESS_OPS - 1), 0.0), 1.0)
+    return PURITY_NEARLY_MAX - frac * (PURITY_NEARLY_MAX - PURITY_NEARLY_MIN)
+
 # The verifier files both "will not compile" and "ran and produced wrong numbers"
 # under stage "exec", but they are not equally close to working: the second one
 # built, launched and returned an array of the right shape. Convolution failures
@@ -104,6 +132,8 @@ def reward_for(rec: dict) -> float:
         return None
     if rec.get("passed"):
         return STAGE_REWARD["pass"] + speed_bonus(rec.get("speedup"))
+    if stage == "purity":
+        return purity_credit(rec)
     if stage == "exec":
         err = rec.get("error") or ""
         if any(s in err for s in _RAN_BUT_WRONG_SIGNS):
