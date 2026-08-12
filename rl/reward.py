@@ -51,9 +51,31 @@ PURITY_NEARLY_MAX = 0.18
 PURITY_NEARLY_MIN = 0.04
 PURITY_HOPELESS_OPS = 8          # this many leftovers is not an unfinished port
 
+# A near-port that also computes the right answer is closer to passing than one
+# that does not, so it gets its own band -- but that band stays under
+# STAGE_REWARD["exec"], and the reason is measured rather than assumed.
+#
+# It was tried at 0.20-0.30, which puts an impure-but-correct kernel above pure
+# cuTile that fails to compile. That broke the invariant the lower band exists to
+# preserve, and it backfired on its own target: pass@1 rose 51.6% to 55.8% while
+# problems solved fell 150 to 147, and Level 2's purity failures -- the whole
+# point of the change -- grew from 25 of 35 unsolved to 31 of 38. Of the 11
+# Level 2 problems that run lost, 9 went from a fully pure passing kernel to a
+# correct one with torch left in. The policy took the near-port instead of
+# finishing it, exactly the local optimum this comment used to warn about.
+#
+# Training metrics could not see it: purity_rate held at 0.971 and pass_rate kept
+# climbing, because the synthetic chains are short enough that purity is already
+# at its ceiling there and the local optimum is no temptation. Only the benchmark
+# showed it. The lesson is that the invariant was doing real work, not costing
+# resolution -- the earlier round's shortfall on Level 2 was not a reward-scale
+# problem.
+PURITY_CORRECT_MAX = 0.19
+PURITY_CORRECT_MIN = 0.10
+
 
 def purity_credit(rec: dict) -> float:
-    """Grade a purity failure by how much torch is left."""
+    """Grade a purity failure by how much torch is left, and whether it works."""
     if not rec.get("has_real_kernel") or rec.get("delegates_to_nn"):
         return 0.0
     n = rec.get("torch_ops_left")
@@ -62,7 +84,11 @@ def purity_credit(rec: dict) -> float:
         # not an unfinished port, so no credit.
         return 0.0
     frac = min(max((n - 1) / float(PURITY_HOPELESS_OPS - 1), 0.0), 1.0)
-    return PURITY_NEARLY_MAX - frac * (PURITY_NEARLY_MAX - PURITY_NEARLY_MIN)
+    if rec.get("impure_correct"):
+        hi, lo = PURITY_CORRECT_MAX, PURITY_CORRECT_MIN
+    else:
+        hi, lo = PURITY_NEARLY_MAX, PURITY_NEARLY_MIN
+    return hi - frac * (hi - lo)
 
 # The verifier files both "will not compile" and "ran and produced wrong numbers"
 # under stage "exec", but they are not equally close to working: the second one
@@ -188,6 +214,11 @@ def summarise(scored: dict) -> dict:
         # directly rather than inferring from mean reward.
         "wrong_numbers_rate": sum(1 for rec in recs
                                   if rec.get("rel_diff") is not None) / n,
+        # Impure but correct: the band that now pays 0.3. If this climbs while
+        # pass_rate does not, the policy has settled for the near-port instead of
+        # finishing it, which is the failure mode that band risks.
+        "impure_correct_rate": sum(1 for rec in recs
+                                   if rec.get("impure_correct")) / n,
         "median_rel_diff": _median([rec["rel_diff"] for rec in recs
                                     if rec.get("rel_diff") is not None]),
     }

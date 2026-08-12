@@ -1,0 +1,92 @@
+=== phase 15: raising the purity band for numerically-correct near-ports ===
+N continues from M. Only the reward changed: a purity failure that computes the
+right answer now scores 0.20-0.30 instead of 0.04-0.18, which required the
+verifier to run impure candidates instead of stopping at the gate.
+
+--- speed against torch.compile ---
+level 1,2: 200 of 200 problems evaluated in every run, k=4 (800 samples)
+criterion: numerically correct AND entirely cuTile
+
+                       pass@1   pass@4     solved  fast_1.0  median x
+  baseline              12.9%    23.5%     47/200       3/200      0.12x
+  L                     44.6%    72.0%    144/200      41/200      0.92x   +31.8pp pass@1, +38 fast
+  M                     51.6%    75.0%    150/200      43/200      0.92x   +38.8pp pass@1, +40 fast
+  N                     55.8%    73.5%    147/200      41/200      0.92x   +42.9pp pass@1, +38 fast
+
+  by category -- problems solved, and of those how many beat torch
+
+  category      probs       baseline                     L                     M                     N
+  conv             98       5/98 f1             77/98 f34  +33           75/98 f36  +35           74/98 f34  +33
+  activation       29      19/29 f0             22/29 f2    +2           25/29 f1    +1           23/29 f2    +2
+  norm             24       2/24 f0             18/24 f2    +2           19/24 f2    +2           19/24 f1    +1
+  matmul           15      11/15 f1             13/15 f2    +1           13/15 f2    +1           13/15 f1    +0
+  reduction        11       1/11 f1              5/11 f0    -1            7/11 f1    +0            8/11 f2    +1
+  pool             10       0/10 f0              1/10 f1    +1            2/10 f1    +1            1/10 f1    +1
+  other             7       7/7  f0              7/7  f0    +0            7/7  f0    +0            7/7  f0    +0
+  loss              6       2/6  f0              1/6  f0    +0            2/6  f0    +0            2/6  f0    +0
+
+=== did the target bucket shrink? ===
+--- Level 1: M then N ---
+  M leaves 15 problems unsolved at k=4
+    runs, wrong numbers      6  40.0%   wrong_numerics 3, tile_shape_invalid 1, type_depends_on_path 1
+    cuTile API misuse        4  26.7%   wrong_arg_type 2, rank_mismatch 1, tile_indexing 1
+    import error             2  13.3%   timeout 1, dtype_mismatch 1
+    runtime error            2  13.3%   other 1, timeout 1
+    correct but not pure     1   6.7%   undefined_name 1
+  N leaves 15 problems unsolved at k=4
+    cuTile API misuse        6  40.0%   other 3, tile_shape_invalid 2, timeout 1
+    runs, wrong numbers      5  33.3%   wrong_numerics 3, type_depends_on_path 1, rank_mismatch 1
+    correct but not pure     2  13.3%   host_shape_error 1, rank_mismatch 1
+    runtime error            1   6.7%   other 1
+    import error             1   6.7%   dtype_mismatch 1
+--- Level 2: M then N ---
+  M leaves 35 problems unsolved at k=4
+    correct but not pure    25  71.4%   wrong_numerics 15, attribute_error 2, rank_mismatch 2
+    runs, wrong numbers     10  28.6%   wrong_numerics 9, rank_mismatch 1
+
+  by family
+    conv          23 unsolved  (correct but not pure 15, runs, wrong numbers 8)
+  N leaves 38 problems unsolved at k=4
+    correct but not pure    31  81.6%   wrong_numerics 18, host_shape_error 1, timeout 1
+    runs, wrong numbers      5  13.2%   wrong_numerics 5
+    cuTile API misuse        1   2.6%   wrong_arg_type 1
+    import error             1   2.6%   other 1
+
+
+=== what N lost relative to M ===
+--- Level 1 ---
+  all categories: N kept 81, N lost 4, N gained 4, neither solved 11
+
+  lost by N -- and how it fails now:
+    24  24_LogSoftmax.py                               cuTile API misuse
+    42  42_Max_Pooling_2D.py                           correct but not pure
+    47  47_Sum_reduction_over_a_dimension.py           runs, wrong numbers
+    51  51_Argmax_over_a_dimension.py                  cuTile API misuse
+
+  failure modes: {'cuTile API misuse': 2, 'correct but not pure': 1, 'runs, wrong numbers': 1}
+
+  gained by N:
+    40  40_LayerNorm.py                                (M failed: runs, wrong numbers)
+    52  52_Argmin_over_a_dimension.py                  (M failed: cuTile API misuse)
+    53  53_Min_reduction_over_a_dimension.py           (M failed: runs, wrong numbers)
+    93  93_masked_cumsum.py                            (M failed: cuTile API misuse)
+--- Level 2 ---
+  all categories: N kept 54, N lost 11, N gained 8, neither solved 27
+
+  lost by N -- and how it fails now:
+    5   5_ConvTranspose2d_Subtract_Tanh.py             correct but not pure
+    7   7_Conv3d_ReLU_LeakyReLU_GELU_Sigmoid_BiasAdd.p correct but not pure
+    26  26_ConvTranspose3d_Add_HardSwish.py            correct but not pure
+    27  27_Conv3d_HardSwish_GroupNorm_Mean.py          correct but not pure
+    57  57_Conv2d_ReLU_HardSwish.py                    correct but not pure
+    74  74_ConvTranspose3d_LeakyReLU_Multiply_LeakyReL runs, wrong numbers
+    76  76_Gemm_Add_ReLU.py                            correct but not pure
+    81  81_Gemm_Swish_Divide_Clamp_Tanh_Clamp.py       correct but not pure
+    88  88_Gemm_GroupNorm_Swish_Multiply_Swish.py      correct but not pure
+    95  95_Matmul_Add_Swish_Tanh_GELU_Hardtanh.py      import error
+    97  97_Matmul_BatchNorm_BiasAdd_Divide_Swish.py    correct but not pure
+
+  failure modes: {'correct but not pure': 9, 'runs, wrong numbers': 1, 'import error': 1}
+
+  gained by N:
+    15  15_ConvTranspose3d_BatchNorm_Subtract.py       (M failed: correct but not pure)

@@ -144,6 +144,47 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
             n += len(re.findall(pattern, stripped))
         return has_kernel, delegates, n
 
+    def impure_numerics(code: str, ref_src: str):
+        """Does a kernel that failed the purity gate at least compute the answer?
+
+        Deliberately separate from the main verification path rather than
+        threading a flag through it: everything downstream depends on that path,
+        and this is a side question. It costs one extra run on about 4% of
+        candidates -- the ones that failed the gate while still containing a real
+        launched kernel.
+
+        Worth the duplication because the distinction it draws is the largest
+        remaining one. A chain whose heavy part is correctly in cuTile and whose
+        tail stayed as torch.relu is one edit from passing; a chain that is impure
+        *and* wrong is not, and the reward should not pay them the same.
+        """
+        path = None
+        try:
+            ctx = {}
+            Model, get_init, get_in = load_original_model_and_inputs(ref_src, ctx)
+            ModelNew, path = load_model_new(code)
+            with torch.no_grad():
+                set_seed(0)
+                init_inputs = [x.cuda() if hasattr(x, "cuda") else x
+                               for x in get_init()]
+                set_seed(0)
+                ref_m = Model(*init_inputs).cuda()
+                set_seed(0)
+                new_m = ModelNew(*init_inputs).cuda()
+                set_seed(1)
+                inputs = [x.cuda() if hasattr(x, "cuda") else x for x in get_in()]
+                expected, got = ref_m(*inputs), new_m(*inputs)
+                torch.cuda.synchronize()
+                return (got.shape == expected.shape
+                        and bool(torch.isfinite(got).all())
+                        and bool(torch.allclose(got, expected,
+                                                atol=1e-4, rtol=1e-4)))
+        except Exception:
+            return False
+        finally:
+            if path and os.path.exists(path):
+                os.unlink(path)
+
     def load_model_new(code: str):
         """cuTile's @ct.kernel does not survive exec(), so go via a real module."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -178,6 +219,10 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
                 rec["has_real_kernel"] = has_kernel
                 rec["delegates_to_nn"] = delegates
                 rec["torch_ops_left"] = n_torch
+                # Only for plausibly-unfinished ports. Wholesale delegation is
+                # already scored zero, so its numerics are not worth a GPU run.
+                if has_kernel and not delegates:
+                    rec["impure_correct"] = impure_numerics(code, ref_src)
                 continue
 
             ctx = {}
