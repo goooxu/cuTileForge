@@ -90,6 +90,11 @@ def main() -> None:
                          "solves, for improving speed: correctness is then "
                          "constant within a group and contributes no advantage, "
                          "so the speed term carries the whole gradient.")
+    ap.add_argument("--max-speedup", type=float, default=None,
+                    help="With --mode solid, keep only tasks whose best sample "
+                         "is slower than this multiple of the reference. Use 1.0 "
+                         "to train on the regime the benchmark occupies. Requires "
+                         "the harvest to have been verified with --measure-time.")
     ap.add_argument("--category-quota", default=None,
                     help="Comma-separated cat=N caps, '*=N' for the rest. "
                          "Without this the frontier's composition is whatever "
@@ -139,7 +144,19 @@ def main() -> None:
             acc["n"] += 1
             acc["rewards"].append(r)
             acc["passed"] += 1 if rec["passed"] else 0
+            if rec.get("speedup"):
+                acc["best_speedup"] = max(acc.get("best_speedup") or 0.0,
+                                          rec["speedup"])
         print("derived from %d verified records in %s" % (n_recs, args.from_run))
+        timed = sum(1 for a in per_task.values() if a.get("best_speedup"))
+        print("  %d of %d tasks carry a timing" % (timed, len(per_task)))
+        if args.max_speedup is not None and timed == 0:
+            raise SystemExit(
+                "--max-speedup was given but no record carries a speedup. The "
+                "harvest was verified without --measure-time, so selecting on "
+                "speed here would silently select on nothing -- which is exactly "
+                "how the last speed run ended up training on tasks it already "
+                "won by 6x.")
     else:
         print("screening %d tasks x %d rollouts" % (len(tasks), args.samples))
 
@@ -188,6 +205,18 @@ def main() -> None:
         entry.pop("prompt")                 # regenerated on use; keeps the file small
         entry.update(pass_rate=round(rate, 3), reward_spread=round(spread, 3),
                      n=acc["n"], category=category_of(t["ref_src"]))
+        if args.mode == "solid" and args.max_speedup is not None:
+            # Keep only what the policy solves reliably *and* runs slower than
+            # the reference. Without this the last speed run trained on tasks
+            # where it already won by 6x to 11x -- fast_rate 0.70 in training
+            # against 23% on the benchmark -- and taught it nothing about the
+            # 0.92x regime the benchmark actually sits in. Per-problem speed on
+            # the benchmark did not move at all: median ratio 1.000x.
+            best = acc.get("best_speedup")
+            if best is None or best >= args.max_speedup:
+                continue
+            entry["best_speedup"] = round(best, 4)
+
         if args.mode == "solid":
             # The opposite selection: keep only what the policy already solves
             # every time. Correctness contributes no advantage on these -- it is
