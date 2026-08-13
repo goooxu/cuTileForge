@@ -25,8 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from compare_partial import categorise  # noqa: E402
 
 
-def load(run_dir):
-    recs = json.load(open(os.path.join(run_dir, "analysis.json")))
+def load(run_dir, name="analysis.json"):
+    recs = json.load(open(os.path.join(run_dir, name)))
     if isinstance(recs, dict) and "records" in recs:
         recs = recs["records"]
     by = collections.defaultdict(list)
@@ -96,11 +96,21 @@ def main() -> None:
                          "choosing the next intervention: a set dominated by "
                          "wrong numbers needs something different from one "
                          "dominated by code that will not compile.")
+    ap.add_argument("--analysis-name", default="analysis.json",
+                    help="Per-sample file in each run directory. Failure stages "
+                         "and pass/fail do not depend on which timing baseline "
+                         "was used, so either file works; this exists so runs "
+                         "that only have analysis_compile.json can be read.")
     args = ap.parse_args()
 
     old_tag, _, old_dir = args.old.partition(":")
     new_tag, _, new_dir = args.new.partition(":")
-    old, new = load(old_dir), load(new_dir)
+    old = load(old_dir, args.analysis_name if
+               os.path.exists(os.path.join(old_dir, args.analysis_name))
+               else "analysis.json")
+    new = load(new_dir, args.analysis_name if
+               os.path.exists(os.path.join(new_dir, args.analysis_name))
+               else "analysis.json")
 
     k = min(min(len(v) for v in old.values()), min(len(v) for v in new.values()))
     print("level %d, %s vs %s, k aligned to %d" % (args.level, old_tag, new_tag, k))

@@ -15,8 +15,8 @@ import json
 import os
 
 
-def load(run_dir):
-    recs = json.load(open(os.path.join(run_dir, "analysis.json")))
+def load(run_dir, name="analysis.json"):
+    recs = json.load(open(os.path.join(run_dir, name)))
     if isinstance(recs, dict) and "records" in recs:
         recs = recs["records"]
     return recs
@@ -32,9 +32,13 @@ def main():
     ap.add_argument("--run", required=True)
     ap.add_argument("--level", type=int, default=None)
     ap.add_argument("--ks", default="1,2,4,8,16")
+    ap.add_argument("--analysis-name", default="analysis.json",
+                    help="Use analysis_compile.json for speedups measured "
+                         "against torch.compile rather than eager. pass@k itself "
+                         "is identical either way; only fast_1.0 changes.")
     args = ap.parse_args()
 
-    recs = load(args.run)
+    recs = load(args.run, args.analysis_name)
     by = collections.defaultdict(list)
     for r in recs:
         by[r["problem_id"]].append(r)
