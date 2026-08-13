@@ -129,9 +129,19 @@ def numeric_credit(rel_diff) -> float:
     frac = min(max(frac, 0.0), 1.0)
     return RAN_BUT_WRONG - frac * (RAN_BUT_WRONG - RAN_BUT_WRONG_FLOOR)
 
-# Reward for a correct kernel that is also fast. Capped at +0.3 so that no
-# speedup can make an incorrect kernel look competitive with a correct one, and
-# saturating at 4x, beyond which further gains are not worth chasing.
+# Speed adjustment for a correct kernel, symmetric about parity in log space.
+#
+# This used to return 0 for any speedup at or below 1.0x, which left the reward
+# unable to tell a kernel running at a tenth of the reference from one running at
+# 0.99x. That is not an edge case: the best model's median is 0.92x against
+# torch.compile, so the dead zone covered nearly every kernel the benchmark
+# produces, and fifteen rounds of RL never had a speed gradient where it mattered.
+# Grading below parity too is what makes "slightly less slow" a direction the
+# policy can move in.
+#
+# The swing is bounded so correctness still dominates absolutely: a passing kernel
+# scores 1.0 +/- 0.3, i.e. never below 0.7, while the best a failure can score is
+# 0.6. Being fast can never substitute for being right.
 #
 # The speedup this reads is measured against torch.compile, not eager -- see
 # verify/worker.py. Trained against eager the bonus rewards beating intermediate
@@ -143,10 +153,11 @@ SPEED_SATURATES_AT = 4.0
 
 
 def speed_bonus(speedup) -> float:
-    if not speedup or speedup <= 1.0:
+    """Graded across the whole range, negative when slower than the reference."""
+    if not speedup or speedup <= 0:
         return 0.0
     frac = math.log2(speedup) / math.log2(SPEED_SATURATES_AT)
-    return SPEED_BONUS_MAX * min(frac, 1.0)
+    return SPEED_BONUS_MAX * min(max(frac, -1.0), 1.0)
 
 
 def reward_for(rec: dict) -> float:

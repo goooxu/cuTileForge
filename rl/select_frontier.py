@@ -84,6 +84,12 @@ def main() -> None:
     ap.add_argument("--prompt-tier", default="cutile_docs",
                     help="Must match the tier training will sample at, or the "
                          "pass rates screened here describe a different policy.")
+    ap.add_argument("--mode", default="learnable", choices=["learnable", "solid"],
+                    help="learnable keeps tasks the policy sometimes solves, for "
+                         "improving correctness. solid keeps the ones it always "
+                         "solves, for improving speed: correctness is then "
+                         "constant within a group and contributes no advantage, "
+                         "so the speed term carries the whole gradient.")
     ap.add_argument("--category-quota", default=None,
                     help="Comma-separated cat=N caps, '*=N' for the rest. "
                          "Without this the frontier's composition is whatever "
@@ -182,6 +188,20 @@ def main() -> None:
         entry.pop("prompt")                 # regenerated on use; keeps the file small
         entry.update(pass_rate=round(rate, 3), reward_spread=round(spread, 3),
                      n=acc["n"], category=category_of(t["ref_src"]))
+        if args.mode == "solid":
+            # The opposite selection: keep only what the policy already solves
+            # every time. Correctness contributes no advantage on these -- it is
+            # constant across the group -- which is exactly what makes them the
+            # right material for learning speed, since the speed term then
+            # supplies the entire gradient. They are what the default mode
+            # discards, 326 of them in the last screen.
+            if rate == 1:
+                always_pass += 1
+                frontier.append(entry)
+            elif rate == 0:
+                always_fail += 1
+            continue
+
         if 0 < rate < 1:
             frontier.append(entry)
         elif rate == 0:
@@ -204,10 +224,15 @@ def main() -> None:
         json.dump(frontier, f, indent=2)
 
     graded = sum(1 for e in frontier if e.get("graded_only"))
-    print("\n%d tasks screened" % len(tasks))
-    print("  always fails      %d (%d of them still usable via graded reward)"
-          % (always_fail, graded))
-    print("  always passes     %d  (no gradient; dropped)" % always_pass)
+    solid = args.mode == "solid"
+    print("\n%d tasks screened (mode: %s)" % (len(tasks), args.mode))
+    print("  always fails      %d%s"
+          % (always_fail, "  (dropped)" if solid else
+             " (%d of them still usable via graded reward)" % graded))
+    print("  always passes     %d  %s"
+          % (always_pass, "(kept: correctness is constant, so the speed term "
+                          "carries the gradient)" if solid
+                          else "(no correctness gradient; dropped)"))
     print("  usable frontier   %d" % len(frontier))
     bycat = collections.Counter(e["level"] for e in frontier)
     print("  by level: %s" % dict(sorted(bycat.items())))

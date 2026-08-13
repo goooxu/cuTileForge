@@ -97,7 +97,9 @@ while [ "$done_iters" -lt "$TOTAL" ]; do
         DETACH=1 NAME=grpo "$KB/scripts/in_container.sh" \
         "cd /ws/cuTileForge && python3 -u rl/grpo.py --model $BASE --fresh-lora \
             --prompt-tier $TIER --frontier $FRONTIER --out $OUT \
-            --iterations $n --lr ${RL_LR:-3e-6} --kl-coef ${RL_KL:-0.05} ${resume[*]}" >/dev/null || exit 1
+            --iterations $n --lr ${RL_LR:-3e-6} --kl-coef ${RL_KL:-0.05} \
+            --temperature ${RL_TEMP:-1.0} --top-p ${RL_TOP_P:-0.95} \
+            ${resume[*]}" >/dev/null || exit 1
     while docker ps --filter name=grpo --format '{{.Names}}' | grep -q grpo; do
         sleep 60
     done
