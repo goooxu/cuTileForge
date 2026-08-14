@@ -2131,3 +2131,26 @@ concepts 档例子和导读改成 TILE=1024。M、温度 1.0、k=4，Level 1 激
 没有训练，200 题未重测。prompt 留在 1024。
 
 详见 [results/REPORT_PHASE21.md](../results/REPORT_PHASE21.md)。
+
+---
+
+# 第二十二阶段：独立于 KernelBench 的评测集
+
+把 HELDOUT2（770）和 level 83（250）整理成常设尺子，题目不是 KernelBench 1–4。
+不重新抽题：拷出冻结副本，再按固定规则改维、超参、近邻逐点算子、链顺序，以及
+逐点部分的层数（±1）。骨干不动，词表不扩大。
+
+- 正确性轨 **level 60**，770 道，不计时。
+- 速度轨 **level 61**，250 道，形状换成 `EVAL_BW_2D`（仍是 0.8e9–1.4e9，不含测试
+  形状），每道多包一层逐点尾巴，对 `torch.compile` 计时。
+- 哈希与 level 1、2、83–99、97/98 无交集。
+- 冻结协议：concepts + TILE=1024，k=4，温度 1.0。头条是两轨的 pass@1 / pass@4，
+  速度做成对比较。不要和 200 题历史头条混报。
+
+HELDOUT2 原文未按原样跑过，但图已被正确性轨消耗，不再当「只开一次的过拟合检查」。
+level 83 仍是 harvest 出处，评测不要装原文。
+
+跑法：`overlay/scripts/install_eval_suite.sh`，然后
+`MODEL=... ./rl/run_eval_suite.sh <tag>`。卡片在 [tasks/eval/EVAL.md](../tasks/eval/EVAL.md)。
+
+这次只立题集和协议，没有在这套题上跑模型，也没有训练。

@@ -1,0 +1,23 @@
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    """HardSwish (tier 5, activation)"""
+
+    def __init__(self):
+        super(Model, self).__init__()
+        pass
+
+    def forward(self, x: torch.Tensor):
+        return torch.nn.functional.hardswish(x)
+
+
+batch_size = 4472
+dim = 4472
+def get_inputs():
+    return [torch.randn(batch_size, dim)]
+
+
+def get_init_inputs():
+    return []

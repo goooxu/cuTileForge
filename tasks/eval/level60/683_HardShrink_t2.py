@@ -1,0 +1,25 @@
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    """HardShrink (tier 2, activation)"""
+
+    def __init__(self):
+        super(Model, self).__init__()
+        pass
+
+    def forward(self, x: torch.Tensor):
+        return torch.nn.functional.hardshrink(x, lambd=0.3)
+
+
+batch_size = 6
+channels = 8
+height = 8
+width = 8
+def get_inputs():
+    return [torch.randn(batch_size, channels, height, width)]
+
+
+def get_init_inputs():
+    return []

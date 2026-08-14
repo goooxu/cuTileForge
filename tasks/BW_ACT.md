@@ -19,3 +19,7 @@
 第二十阶段用 model M 在这批题上采了 k=8（温度 1.2、concepts 档、对 `torch.compile`
 计时）。速度区间对上了（中位 0.614x），组内变异不够（12% < 33%），**没有用于训练**。
 见 [results/REPORT_PHASE20.md](../results/REPORT_PHASE20.md)。
+
+独立评测集的速度轨（level 61）是这 250 道的变异副本：换了 `EVAL_BW_2D`、改了默认
+超参、做了逐点算子置换，并多包一层 `FUSION_TAILS`。评测不要装本目录的原文，见
+[eval/EVAL.md](eval/EVAL.md)。
