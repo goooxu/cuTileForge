@@ -20,7 +20,7 @@ KB="$FORGE/kernelbench"
 RUN_DIR="$WS/runs/$RUN_NAME"
 
 export CUTILE_WS="$WS"
-export VLLM_IMAGE="${VLLM_IMAGE:-vllm-gb200:latest}"
+export VLLM_IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:nightly-aarch64}"
 
 expected() {
     python3 - "$LEVEL" "$NUM_SAMPLES" "$KB" <<'PY'
@@ -32,7 +32,11 @@ PY
 }
 
 have() {
-    ls "$RUN_DIR"/*_kernel.py 2>/dev/null | wc -l
+    python3 - "$RUN_DIR" <<'PY'
+import os, sys
+d = sys.argv[1]
+print(sum(1 for f in os.listdir(d) if f.endswith("_kernel.py")) if os.path.isdir(d) else 0)
+PY
 }
 
 GEN_CONTAINER="gen-$RUN_NAME"

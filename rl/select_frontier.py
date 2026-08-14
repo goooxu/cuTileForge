@@ -33,6 +33,22 @@ from reward import reward_for  # noqa: E402
 from worker import VerifierPool  # noqa: E402
 
 
+def in_speed_band(best, min_speedup, max_speedup) -> bool:
+    """Keep tasks whose best passing sample sits strictly inside (min, max).
+
+    None on either bound means unbounded. A missing timing is never in the band:
+    selecting on speed without measurements is how the last speed run trained on
+    tasks it already won by 6x.
+    """
+    if best is None:
+        return False
+    if max_speedup is not None and best >= max_speedup:
+        return False
+    if min_speedup is not None and best <= min_speedup:
+        return False
+    return True
+
+
 def apply_category_quota(frontier, spec: str):
     """Cap each operator family's share of the frontier.
 
@@ -95,6 +111,11 @@ def main() -> None:
                          "is slower than this multiple of the reference. Use 1.0 "
                          "to train on the regime the benchmark occupies. Requires "
                          "the harvest to have been verified with --measure-time.")
+    ap.add_argument("--min-speedup", type=float, default=None,
+                    help="With --mode solid, drop tasks whose best sample is at "
+                         "or below this multiple. The speed bonus clamps at "
+                         "0.25x, so training below that rebuilds the dead zone "
+                         "on the other side. Requires --measure-time harvest.")
     ap.add_argument("--category-quota", default=None,
                     help="Comma-separated cat=N caps, '*=N' for the rest. "
                          "Without this the frontier's composition is whatever "
@@ -105,6 +126,12 @@ def main() -> None:
                          "k=16 harvest already measures each task's pass rate "
                          "far better than a k=6 screen would.")
     args = ap.parse_args()
+
+    if ((args.max_speedup is not None or args.min_speedup is not None)
+            and not args.from_run):
+        raise SystemExit(
+            "--min-speedup/--max-speedup need --from-run of a harvest verified "
+            "with --measure-time. Live screening does not time candidates.")
 
     from kernelbench.dataset import construct_kernelbench_dataset
     from kernelbench.prompt_constructor_toml import get_custom_prompt
@@ -150,13 +177,14 @@ def main() -> None:
         print("derived from %d verified records in %s" % (n_recs, args.from_run))
         timed = sum(1 for a in per_task.values() if a.get("best_speedup"))
         print("  %d of %d tasks carry a timing" % (timed, len(per_task)))
-        if args.max_speedup is not None and timed == 0:
+        if ((args.max_speedup is not None or args.min_speedup is not None)
+                and timed == 0):
             raise SystemExit(
-                "--max-speedup was given but no record carries a speedup. The "
-                "harvest was verified without --measure-time, so selecting on "
-                "speed here would silently select on nothing -- which is exactly "
-                "how the last speed run ended up training on tasks it already "
-                "won by 6x.")
+                "--min-speedup/--max-speedup was given but no record carries a "
+                "speedup. The harvest was verified without --measure-time, so "
+                "selecting on speed here would silently select on nothing -- "
+                "which is exactly how the last speed run ended up training on "
+                "tasks it already won by 6x.")
     else:
         print("screening %d tasks x %d rollouts" % (len(tasks), args.samples))
 
@@ -205,15 +233,16 @@ def main() -> None:
         entry.pop("prompt")                 # regenerated on use; keeps the file small
         entry.update(pass_rate=round(rate, 3), reward_spread=round(spread, 3),
                      n=acc["n"], category=category_of(t["ref_src"]))
-        if args.mode == "solid" and args.max_speedup is not None:
-            # Keep only what the policy solves reliably *and* runs slower than
-            # the reference. Without this the last speed run trained on tasks
-            # where it already won by 6x to 11x -- fast_rate 0.70 in training
-            # against 23% on the benchmark -- and taught it nothing about the
-            # 0.92x regime the benchmark actually sits in. Per-problem speed on
-            # the benchmark did not move at all: median ratio 1.000x.
+        if args.mode == "solid" and (args.max_speedup is not None
+                                     or args.min_speedup is not None):
+            # Keep only what the policy solves reliably *and* sits in the
+            # speed band the benchmark occupies. Without the upper bound the
+            # last speed run trained on tasks it already won by 6x to 11x.
+            # Without the lower bound it would train inside the 0.25x clamp,
+            # where the bonus is flat again. Per-problem speed on the
+            # benchmark did not move at all: median ratio 1.000x.
             best = acc.get("best_speedup")
-            if best is None or best >= args.max_speedup:
+            if not in_speed_band(best, args.min_speedup, args.max_speedup):
                 continue
             entry["best_speedup"] = round(best, 4)
 
@@ -263,6 +292,11 @@ def main() -> None:
                           "carries the gradient)" if solid
                           else "(no correctness gradient; dropped)"))
     print("  usable frontier   %d" % len(frontier))
+    speeds = [e["best_speedup"] for e in frontier if "best_speedup" in e]
+    if speeds:
+        speeds.sort()
+        print("  best_speedup      min %.3f  median %.3f  max %.3f  (n=%d)"
+              % (speeds[0], speeds[len(speeds) // 2], speeds[-1], len(speeds)))
     bycat = collections.Counter(e["level"] for e in frontier)
     print("  by level: %s" % dict(sorted(bycat.items())))
     print("wrote", args.out)

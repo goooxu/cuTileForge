@@ -358,6 +358,13 @@ ACTIVATION_OPS = [
     ("Softmin", "torch.nn.functional.softmin(x, dim=-1)"),
 ]
 
+# Softmax-family ops are reductions, not bandwidth-bound pointwise work. The
+# speed target this round is a single write-coalesced kernel, which they are not.
+_SOFTMAX_LIKE = {"Softmax", "LogSoftmax", "Softmin"}
+POINTWISE_ACTIVATION_OPS = [
+    op for op in ACTIVATION_OPS if op[0] not in _SOFTMAX_LIKE
+]
+
 
 def activation(tier, rng):
     """One pointwise activation, at 2D, 3D or 4D.
@@ -757,6 +764,54 @@ def avgpool1d(tier, rng):
 # intermediates are and how many of them a chain has.
 PERF_2D = [(4096, 4096), (8192, 2048), (2048, 8192), (8192, 8192)]
 PERF_NCHW = [(16, 64, 128, 128), (8, 128, 128, 128), (32, 32, 256, 256)]
+
+# KernelBench's Level-1 activations are (4096, 393216) -- about 1.61e9 elements,
+# 6.4 GB, 1.82 ms on GB200. PERF_2D tops out at 8192x8192, ~24x too small, which
+# is why sixteen rounds of speed training never saw this regime. These shapes
+# sit in 0.8e9-1.4e9 elements so the kernel is bandwidth-bound, and they are
+# deliberately not the test shape.
+_KB_ACT_SHAPE = (4096, 393216)
+BW_2D = [
+    (4096, 327680),   # 1.34e9
+    (2048, 524288),   # 1.07e9
+    (8192, 163840),   # 1.34e9
+    (1024, 1048576),  # 1.07e9
+    (4096, 262144),   # 1.07e9
+    (16384, 65536),   # 1.07e9
+    (8192, 131072),   # 1.07e9
+    (2048, 655360),   # 1.34e9
+    (512, 2097152),   # 1.07e9
+    (32768, 32768),   # 1.07e9
+    (4096, 245760),   # 1.01e9
+    (6144, 163840),   # 1.01e9
+]
+assert _KB_ACT_SHAPE not in BW_2D
+assert all(0.8e9 <= m * k <= 1.4e9 for m, k in BW_2D)
+
+
+def large_pointwise_activation(tier, rng):
+    """One pointwise activation on a bandwidth-bound 2D tensor.
+
+    Rank stays 2 because the KernelBench activations that inductor cannot help
+    with -- SELU / ELU / HardTanh at 0.556x -- are all (batch, dim). Softmax is
+    excluded: it is a reduction, and the tile-size knob this is meant to teach
+    is about coalesced loads of a unary kernel.
+    """
+    label, expr = rng.choice(POINTWISE_ACTIVATION_OPS)
+    m, k = rng.choice(BW_2D)
+    return Spec(
+        name=label,
+        category="activation", tier=tier,
+        init_sig="",
+        init_body="        pass",
+        forward_sig="x: torch.Tensor",
+        forward_body="        return %s" % expr,
+        consts={"batch_size": m, "dim": k},
+        inputs=("    device = torch.device('cuda' if torch.cuda.is_available() "
+                "else 'cpu')\n"
+                "    return [torch.rand(batch_size, dim, device=device)]"),
+        init_inputs="    return []",
+    )
 
 
 def long_elementwise_chain(tier, rng):
@@ -1355,6 +1410,7 @@ BUILDERS = [
     (conv_chain,            12, [2, 3, 5]),
     (pool_chain,             8, [2, 3, 5]),
     (residual_chain,         6, [2, 3, 5]),
+    (large_pointwise_activation, 12, [6]),
     (long_elementwise_chain, 10, [6]),
     (fused_softmax_chain,     8, [6]),
     (fused_norm_residual,     8, [6]),

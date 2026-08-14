@@ -193,6 +193,12 @@ def main() -> None:
     torch.manual_seed(args.seed)
     os.makedirs(args.out, exist_ok=True)
 
+    workers = args.verify_workers
+    if not args.no_speed and workers > args.gpus:
+        print("timing needs exclusive GPUs; clamping verify-workers %d -> %d"
+              % (workers, args.gpus))
+        workers = args.gpus
+
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from peft import PeftModel
     from kernelbench.dataset import construct_kernelbench_dataset
@@ -301,7 +307,7 @@ def main() -> None:
             code = extract_code(text) if not text.startswith("__ERROR__") else None
             items.append(("%d" % j, code, refs[key]))
         t0 = time.time()
-        scored = score_rollouts(items, gpus=args.gpus, workers=args.verify_workers,
+        scored = score_rollouts(items, gpus=args.gpus, workers=workers,
                                 measure_speed=not args.no_speed)
         t_reward = time.time() - t0
         stats = summarise(scored)

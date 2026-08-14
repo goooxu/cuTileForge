@@ -95,17 +95,55 @@ def hashes_of_levels(out_root: str, levels) -> set:
     return seen
 
 
-def validate(source: str) -> str:
+# Product of batch_size x dim above this is a multi-GB tensor. PERF_2D tops
+# out at 8192x8192 (67e6), so those still get a real forward; BW_2D starts at
+# 0.8e9 and would OOM a CPU host.
+_HUGE_2D = 200_000_000
+
+
+def _is_huge_pointwise(consts) -> bool:
+    """True only for the (batch, dim) activations that do not fit in RAM.
+
+    Multiplying every integer in consts would also skip ordinary convolutions
+    (kernel_size * out_channels * NCHW still fits, and should keep running).
+    """
+    if not consts:
+        return False
+    b, d = consts.get("batch_size"), consts.get("dim")
+    try:
+        return int(b) * int(d) > _HUGE_2D
+    except (TypeError, ValueError):
+        return False
+
+
+def validate(source: str, consts=None) -> str:
     """Run the problem the way the eval harness will, and return '' if it works.
 
     A malformed task would show up later as a model failure, so tasks are
     rejected here rather than polluting the pass-rate signal.
+
+    Bandwidth-bound tasks allocate gigabytes; compiling the module is enough to
+    catch a broken definition, and the harness will run them on GPU later.
+    Generation also has to work on a host without torch, so a missing import
+    falls back to a syntax check.
     """
     try:
+        import ast
+        ast.parse(source)
+    except SyntaxError as e:
+        return "SyntaxError: %s" % e
+
+    try:
         import torch
+    except ImportError:
+        return ""
+
+    try:
         ns = {}
         exec(compile(source, "<task>", "exec"), ns)
         model = ns["Model"](*ns["get_init_inputs"]())
+        if _is_huge_pointwise(consts):
+            return ""
         inputs = ns["get_inputs"]()
         with torch.no_grad():
             out = model(*inputs)
@@ -223,7 +261,7 @@ def main() -> None:
             continue
         exclude.add(h)
 
-        err = validate(source)
+        err = validate(source, spec.consts)
         if err:
             rejected += 1
             continue
