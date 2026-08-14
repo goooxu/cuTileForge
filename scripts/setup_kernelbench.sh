@@ -3,7 +3,7 @@
 #
 # This repo deliberately does not vendor KernelBench. Instead it carries:
 #   overlay/  - the files the cuTile backend adds (93% of the change)
-#   patches/  - the ~280 lines that modify KernelBench's own files
+#   patches/  - the ~590 lines that modify KernelBench's own files
 #
 # Running this clones upstream at the pinned commit, copies the overlay in, and
 # applies the patch, producing ./kernelbench/ ready to use.
