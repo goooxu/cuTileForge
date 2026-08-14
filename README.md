@@ -914,7 +914,8 @@ Level 2 丢的 11 道里 10 道又是"数值正确但没过纯度门"。
 | | 用途 | 状态 |
 | --- | --- | --- |
 | KernelBench Level 1+2（200 题） | **dev set** | 已用于十一轮迭代决策，侵蚀了；第十一阶段用封存的合成 held-out 验过，**未见选择性过拟合** |
-| 合成 held-out（level 97/98，500 题） | 干净的内部参照 | 已开封（第十一阶段）：K 解出 **428/500**，相对增益比 dev 上更大。此后不再用于调优决策，见 [tasks/HELDOUT.md](tasks/HELDOUT.md) |
+| 合成 held-out 第一套（level 97/98，500 题） | 已用完 | 第十一阶段开封：K 解出 **428/500**，相对增益比 dev 上更大。此后不再用于调优决策，见 [tasks/HELDOUT.md](tasks/HELDOUT.md) |
+| **合成 held-out 第二套（level 99/88/84，770 题）** | **封存待用** | 第十八阶段生成，含 **150 道激活题**（第一套一道没有，恰好覆盖不到十一至十七阶段的改动）。按哈希排除了全部 13 个已用 level。见 [tasks/HELDOUT2.md](tasks/HELDOUT2.md) |
 | KernelBench Level 3（50 题） | **final test** | 已开封（第八阶段）：pass@1 5.0% → **20.0%**，fast_1.0 2/50 → 4/50。此后不应再用于任何调优决策 |
 | KernelBench Level 4（20 题） | 不可用 | transformer 的 embedding 需要整型 token id，与本项目强制 fp32 的评测协议冲突 |
 
