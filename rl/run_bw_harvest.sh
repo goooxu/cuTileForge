@@ -35,7 +35,7 @@ CUTILE_WS="$WS" DETACH=1 NAME=fv_bw "$KB/scripts/in_container.sh" \
     "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
         --kernel-dir /ws/runs/$RUN_NAME --level $LEVEL \
         --measure-time --ref-mode compile --workers 16 --gpus 4 \
-        --timeout 180 --out $OUT"
+        --timeout 180 --out /ws/runs/${RUN_NAME}_verified.jsonl"
 
 while docker ps --filter name=fv_bw --format '{{.Names}}' | grep -q fv_bw; do
     sleep 60

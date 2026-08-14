@@ -19,7 +19,7 @@ and cannot be called directly from host code; queue them with `ct.launch`:
 import torch
 import cuda.tile as ct
 
-TILE = 256
+TILE = 1024
 
 @ct.kernel
 def scale_kernel(x, out, factor):
@@ -36,6 +36,11 @@ def scale(x: torch.Tensor, factor: float) -> torch.Tensor:
               (x.view(-1), out.view(-1), factor))
     return out
 ```
+
+A pointwise kernel over a large array should use a large power-of-two tile
+(1024 or more). A 256-element tile on a billion-element input launches millions
+of blocks; that launch overhead is pure loss on a bandwidth-bound kernel. Tile
+dimensions must still be compile-time powers of two.
 
 `ct.launch(stream, grid, kernel, args)` takes exactly four positional arguments: a CUDA
 stream, a grid tuple of up to 3 dimensions, the kernel object, and a **tuple** of kernel

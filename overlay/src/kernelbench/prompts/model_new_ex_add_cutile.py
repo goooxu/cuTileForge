@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import cuda.tile as ct
 
-TILE_SIZE = 256
+TILE_SIZE = 1024
 
 
 @ct.kernel
