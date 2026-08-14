@@ -194,8 +194,9 @@ def main() -> None:
                     c["messages"] = c["messages"] + [
                         {"role": "assistant", "content": "```python\n%s\n```" % code},
                         {"role": "user",
-                         "content": build_repair_message(rec["stage"],
-                                                         rec.get("error") or "")},
+                         "content": build_repair_message(
+                             rec["stage"], rec.get("error") or "",
+                             bool(rec.get("impure_correct")))},
                     ]
                     still_failing.append(c)
                 # A response with no code block gives nothing to repair.

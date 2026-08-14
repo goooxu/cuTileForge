@@ -35,7 +35,29 @@ FAILURE_KIND = {
     "oom": "It ran out of GPU memory:",
 }
 
+# A purity failure whose numbers were verified correct is a different situation
+# from every other failure, and worth saying so. It is also the largest one left:
+# on the benchmark's Level 2, roughly three quarters of what the best model cannot
+# solve is a kernel that computes the right answer and gets rejected for leaving a
+# pointwise activation in torch.
+#
+# The generic purity wording does not mention that the numerics passed, so the
+# model has no reason to believe its kernel is otherwise sound and tends to
+# rewrite the whole thing -- which risks losing the part that already worked. This
+# says what is actually needed: keep everything, port the named ops.
+PURITY_CORRECT = """Your kernel produced the correct numbers, so the computation
+itself is right. It was rejected only because part of the work is still done by
+PyTorch rather than cuTile:
 
-def build_repair_message(stage: str, error: str) -> str:
+{error_text}
+
+Port the remaining operation into the cuTile kernel and change nothing else.
+Output the complete ModelNew in a single Python code block. Do not explain."""
+
+
+def build_repair_message(stage: str, error: str,
+                         numerically_correct: bool = False) -> str:
+    if stage == "purity" and numerically_correct:
+        return PURITY_CORRECT.format(error_text=error.strip())
     kind = FAILURE_KIND.get(stage, "It failed:")
     return REPAIR_TURN.format(failure_kind=kind, error_text=error.strip())

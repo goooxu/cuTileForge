@@ -1,0 +1,27 @@
+=== where inductor is weak, and whether we can exploit it ===
+
+199 problems with both baselines timed
+  inductor helped (>=1.05x over eager)  74
+  inductor flat                          125
+
+  our speed on each group, against the compiled reference
+  inductor flat          solved  98/125  median 0.994x  we beat compile on 40
+  inductor helped        solved  52/74   median 0.761x  we beat compile on 3
+
+  opportunity set (inductor flat AND we are slower): 51 problems
+    by family: {'activation': 19, 'matmul': 10, 'conv': 10, 'other': 7, 'reduction': 3, 'norm': 2}
+    L1 6_Matmul_with_large_K_dimension_.py                  ours 0.009x
+    L2 12_Gemm_Multiply_LeakyReLU.py                        ours 0.036x
+    L1 3_Batched_matrix_multiplication.py                   ours 0.059x
+    L1 4_Matrix_vector_multiplication_.py                   ours 0.064x
+    L1 8_Matmul_with_irregular_shapes_.py                   ours 0.069x
+    L1 18_Matmul_with_transposed_both.py                    ours 0.071x
+    L1 16_Matmul_with_transposed_A.py                       ours 0.072x
+    L1 2_Standard_matrix_multiplication_.py                 ours 0.072x
+    L1 1_Square_matrix_multiplication_.py                   ours 0.073x
+    L1 13_Matmul_for_symmetric_matrices.py                  ours 0.073x
+    L1 14_Matmul_for_upper_triangular_matrices.py           ours 0.073x
+    L1 15_Matmul_for_lower_triangular_matrices.py           ours 0.073x
+
+  where inductor is flat and we already win: 40 problems
+    by family: {'conv': 35, 'reduction': 1, 'norm': 1, 'pool': 1, 'activation': 1, 'matmul': 1}
