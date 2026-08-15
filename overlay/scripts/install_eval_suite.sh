@@ -19,14 +19,28 @@ if [[ ! -d "$SRC/level60" || ! -d "$SRC/level61" ]]; then
     exit 1
 fi
 
-for lvl in 60 61; do
-    dest="$KB/KernelBench/level$lvl"
-    rm -rf "$dest"
-    mkdir -p "$dest"
-    cp "$SRC/level$lvl"/*.py "$dest/"
-    n="$(python3 -c "import os; print(sum(1 for f in os.listdir('$dest') if f.endswith('.py')))")"
-    echo "installed $n problems -> $dest"
-done
+python3 - "$SRC" "$KB/KernelBench" <<'PY'
+import os, shutil, sys
+src_root, kb = sys.argv[1], sys.argv[2]
+expect = {60: 770, 61: 250}
+for lvl, want in expect.items():
+    src = os.path.join(src_root, "level%d" % lvl)
+    dest = os.path.join(kb, "level%d" % lvl)
+    os.makedirs(dest, exist_ok=True)
+    for name in os.listdir(dest):
+        path = os.path.join(dest, name)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+    for name in os.listdir(src):
+        if name.endswith(".py"):
+            shutil.copy2(os.path.join(src, name), os.path.join(dest, name))
+    got = sum(1 for n in os.listdir(dest) if n.endswith(".py"))
+    print("installed %d problems -> %s" % (got, dest))
+    if got != want:
+        sys.exit("level %d: expected %d files, got %d" % (lvl, want, got))
+PY
 
 PROMPT_SRC="$FORGE/overlay/src/kernelbench/prompts"
 PROMPT_DST="$KB/src/kernelbench/prompts"

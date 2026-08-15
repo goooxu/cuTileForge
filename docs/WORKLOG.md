@@ -2151,6 +2151,32 @@ HELDOUT2 原文未按原样跑过，但图已被正确性轨消耗，不再当�
 level 83 仍是 harvest 出处，评测不要装原文。
 
 跑法：`overlay/scripts/install_eval_suite.sh`，然后
-`MODEL=... ./rl/run_eval_suite.sh <tag>`。卡片在 [tasks/eval/EVAL.md](../tasks/eval/EVAL.md)。
+`MODEL=... ./rl/run_eval_suite.sh <tag>`。三模型排队用
+`rl/compare_eval_suite.sh`。卡片在 [tasks/eval/EVAL.md](../tasks/eval/EVAL.md)。
 
-这次只立题集和协议，没有在这套题上跑模型，也没有训练。
+---
+
+# 独立评测集第一次读数：base / M / Q
+
+冻结协议，全量 1020 道 × k=4 × 三模型。没有训练，没有重测 200 题。
+
+正确性（770）：
+
+| | 解出 | pass@1 | pass@4 |
+| --- | ---: | ---: | ---: |
+| base | 103 | 4.9% | 13.4% |
+| M | 425 | 44.1% | 55.2% |
+| Q | **649** | **72.1%** | **84.3%** |
+
+200 题上的 base ≪ M 还在。200 题上「Q 的 pass@1 高、k=4 略窄」在这里不成立。
+缺口主要在 source 84（激活 / 损失 / 归约，120 道）：M 0/120，Q 107/120。
+
+速度只做成对：M vs base 1.004x（100 题），Q vs base 1.002x（100 题），
+Q vs M 0.997x（240 题）。打平。TILE 1024/256：base 964/30，M 978/1，Q 930/0。
+基座在新 prompt 下不再默认写 256。
+
+NFS 上 `rm -rf` + `cp *.py` 装题会装不全；`install_eval_suite.sh` 改成逐文件拷并
+断言 770 / 250，`run_eval_suite.sh` 在生成前再数一遍。
+
+详见 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+200 题头条不动。

@@ -60,6 +60,12 @@ CUTILE_WS=... MODEL=/path/to/checkpoint ./rl/run_eval_suite.sh <tag>
 
 # 只通脚本，不能当发表数
 CUTILE_WS=... MODEL=... ./rl/run_eval_suite.sh <tag> --smoke
+
+# 多个模型串行；已有两份 verified jsonl 的 tag 会跳过
+CUTILE_WS=... rl/compare_eval_suite.sh \
+    base:/path/to/Qwen3-Coder-Next \
+    M:/path/to/model-M \
+    Q:/path/to/model-Q
 ```
 
 已经有 jsonl 时只打分：
@@ -69,6 +75,9 @@ python3 verify/eval_scorecard.py --run M:runs/M --run Q:runs/Q
 ```
 
 scorecard 会找 `runs/<tag>_l60_verified.jsonl` 和 `runs/<tag>_l61_verified.jsonl`。
+
+第一次读数（base / M / Q）在 [results/REPORT_EVAL_SUITE.md](../../results/REPORT_EVAL_SUITE.md)。
+不要把那三行和 200 题头条、TILE=256 时期的 M 写进同一张表。
 
 ## 已知缺口
 

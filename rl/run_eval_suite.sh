@@ -81,6 +81,14 @@ generate_level() {
     local run_dir="$WS/runs/$run_name"
     local n expected
     n="$(n_problems "$level")"
+    if [[ "$SMOKE" -eq 0 ]]; then
+        local want=770
+        [[ "$level" == "61" ]] && want=250
+        if [[ "$n" -ne "$want" ]]; then
+            echo "level $level has $n problems, expected $want; install failed" >&2
+            return 1
+        fi
+    fi
     expected=$((n * K))
     echo "=== generate $run_name k=$K expected=$expected ==="
     for round in $(seq 1 12); do
