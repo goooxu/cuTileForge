@@ -14,7 +14,7 @@ class Model(nn.Module):
         return torch.nn.functional.hardsigmoid((torch.addmm(self.b, x, self.w.t())))
 
 
-batch_size = 192
+batch_size = 193
 in_features = 128
 out_features = 128
 

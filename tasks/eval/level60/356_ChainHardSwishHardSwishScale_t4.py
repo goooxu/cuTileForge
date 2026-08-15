@@ -13,7 +13,7 @@ class Model(nn.Module):
         return (torch.nn.functional.hardswish((torch.nn.functional.hardswish(x))) * 2.0)
 
 
-batch_size = 3072
+batch_size = 3073
 dim = 6144
 def get_inputs():
     return [torch.rand(batch_size, dim)]

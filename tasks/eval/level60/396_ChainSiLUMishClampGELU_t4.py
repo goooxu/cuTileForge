@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.gelu(torch.clamp(torch.nn.functional.mish((torch.nn.functional.silu(x))), min=-1.0, max=1.0))
 
 
-batch_size = 3072
-dim = 6144
+batch_size = 65535
+dim = 3
 def get_inputs():
     return [torch.rand(batch_size, dim)]
 

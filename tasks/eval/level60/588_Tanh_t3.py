@@ -26,7 +26,7 @@ KERNEL_SIZE = 3
 STRIDE = 1
 PADDING = 1
 DILATION = 1
-BATCH_SIZE = 3
+BATCH_SIZE = 5
 SEQ_LENGTH = 8
 
 def get_inputs():

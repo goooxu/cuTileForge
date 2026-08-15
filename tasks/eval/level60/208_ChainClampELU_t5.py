@@ -13,10 +13,10 @@ class Model(nn.Module):
         return torch.nn.functional.elu(torch.clamp(self.pool(x), -2.0, 2.0))
 
 
-batch_size = 96
+batch_size = 97
 channels = 32
-height = 192
-width = 192
+height = 193
+width = 193
 kernel_size = 2
 
 def get_inputs():

@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.tanh(torch.nn.functional.relu6((torch.nn.functional.gelu(torch.clamp((x + r), -2.0, 2.0)))))
 
 
-batch_size = 3072
-dim = 6144
+batch_size = 3073
+dim = 6145
 def get_inputs():
     return [torch.rand(batch_size, dim), torch.rand(batch_size, dim)]
 

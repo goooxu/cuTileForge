@@ -2,10 +2,9 @@ import torch
 import torch.nn as nn
 
 # Module-level constants for tensor shapes
-INPUT_DIM = 256
-HIDDEN_DIM = 512
-NUM_TOKENS = 64
-
+INPUT_DIM = 257
+HIDDEN_DIM = 513
+NUM_TOKENS = 65
 class Model(nn.Module):
     """SomeName (tier 5, conv)"""
     
@@ -63,4 +62,3 @@ def get_inputs():
 def get_init_inputs():
     # Return arguments for model initialization
     return [INPUT_DIM, HIDDEN_DIM, NUM_TOKENS]
-_EVAL_MARK = 1

@@ -14,11 +14,11 @@ class Model(nn.Module):
         return torch.nn.functional.hardsigmoid(((self.conv(x) * 1.7)))
 
 
-batch_size = 6
+batch_size = 7
 in_channels = 4
 out_channels = 8
-height = 48
-width = 24
+height = 49
+width = 25
 kernel_size = 1
 padding = 0
 

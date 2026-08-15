@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.relu6((torch.nn.functional.hardswish(x)))
 
 
-batch_size = 3072
-dim = 6144
+batch_size = 65535
+dim = 15
 def get_inputs():
     return [torch.rand(batch_size, dim)]
 

@@ -12,11 +12,10 @@ class Model(nn.Module):
         return self.pool(x)
 
 # Module-level constants for shapes
-BATCH_SIZE = 6
+BATCH_SIZE = 7
 INPUT_CHANNELS = 32
-INPUT_LENGTH = 64
-OUTPUT_SIZE = 16
-
+INPUT_LENGTH = 65
+OUTPUT_SIZE = 17
 def get_inputs():
     return [torch.randn(BATCH_SIZE, INPUT_CHANNELS, INPUT_LENGTH)]
 

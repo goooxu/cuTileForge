@@ -13,10 +13,9 @@ class Model(nn.Module):
         return torch.nn.functional.celu(x, alpha=1.25)
 
 
-batch_size = 12
+batch_size = 13
 channels = 4
-length = 64
-
+length = 65
 def get_inputs():
     return [torch.randn(batch_size, channels, length)]
 

@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.nn.functional.mish(x)
 
 
-batch_size = 768
+batch_size = 769
 dim = 6144
 def get_inputs():
     return [torch.randn(batch_size, dim)]

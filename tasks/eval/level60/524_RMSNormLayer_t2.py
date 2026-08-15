@@ -26,8 +26,7 @@ class Model(nn.Module):
 # Module-level constants for tensor shapes
 BATCH_SIZE = 6
 SEQ_LEN = 64
-HIDDEN_DIM = 128
-
+HIDDEN_DIM = 129
 def get_inputs():
     """Returns a list of input tensors for the forward pass."""
     # Create input tensor with shape (batch_size, seq_len, hidden_dim)

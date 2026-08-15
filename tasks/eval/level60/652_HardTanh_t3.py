@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.hardtanh(x, min_val=-2.0, max_val=2.0)
 
 
-batch_size = 3072
-dim = 6144
+batch_size = 3073
+dim = 6145
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

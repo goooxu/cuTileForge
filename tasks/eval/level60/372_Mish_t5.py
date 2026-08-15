@@ -13,10 +13,10 @@ class Model(nn.Module):
         return torch.nn.functional.mish((self.pool(x) ** 2))
 
 
-batch_size = 24
+batch_size = 25
 channels = 64
-height = 768
-width = 768
+height = 769
+width = 769
 kernel_size = 2
 
 def get_inputs():

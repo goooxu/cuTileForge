@@ -13,10 +13,10 @@ class Model(nn.Module):
         return torch.nn.functional.softshrink(x, lambd=0.3)
 
 
-batch_size = 6
+batch_size = 7
 channels = 8
-height = 8
-width = 8
+height = 9
+width = 9
 def get_inputs():
     return [torch.randn(batch_size, channels, height, width)]
 

@@ -51,7 +51,7 @@ class Model(nn.Module):
 # Module-level constants for shapes
 HIDDEN_SIZE = 64
 INTERMEDIATE_SIZE = 128
-BATCH_SIZE = 3
+BATCH_SIZE = 5
 SEQ_LENGTH = 4
 
 def get_inputs():

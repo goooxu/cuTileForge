@@ -14,7 +14,7 @@ class Model(nn.Module):
         return (torch.nn.functional.gelu((torch.addmm(self.b, x, self.w.t())), approximate='tanh')) * 2.0
 
 
-batch_size = 96
+batch_size = 97
 in_features = 128
 out_features = 128
 

@@ -13,8 +13,8 @@ class Model(nn.Module):
         return ((x + r) ** 2)
 
 
-batch_size = 2236
-dim = 8944
+batch_size = 7
+dim = 65535
 def get_inputs():
     return [torch.rand(batch_size, dim), torch.rand(batch_size, dim)]
 

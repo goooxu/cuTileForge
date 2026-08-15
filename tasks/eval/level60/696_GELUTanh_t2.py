@@ -13,10 +13,10 @@ class Model(nn.Module):
         return torch.nn.functional.gelu(x, approximate='tanh')
 
 
-batch_size = 12
+batch_size = 13
 channels = 4
-height = 8
-width = 8
+height = 9
+width = 9
 def get_inputs():
     return [torch.randn(batch_size, channels, height, width)]
 

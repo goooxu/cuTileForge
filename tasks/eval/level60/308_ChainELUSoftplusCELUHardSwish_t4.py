@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.nn.functional.hardswish(torch.nn.functional.celu((torch.nn.functional.softplus((torch.nn.functional.elu(x, alpha=1.25)))), alpha=1.25))
 
 
-batch_size = 6144
+batch_size = 6145
 dim = 3072
 def get_inputs():
     return [torch.rand(batch_size, dim)]

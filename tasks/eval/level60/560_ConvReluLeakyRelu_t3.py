@@ -23,7 +23,7 @@ KERNEL_SIZE = 3
 LEAKY_NEGATIVE_SLOPE = 0.2
 BATCH_SIZE = 12
 HEIGHT = 48
-WIDTH = 48
+WIDTH = 49
 def get_inputs():
     return [torch.randn(BATCH_SIZE, IN_CHANNELS, HEIGHT, WIDTH)]
 

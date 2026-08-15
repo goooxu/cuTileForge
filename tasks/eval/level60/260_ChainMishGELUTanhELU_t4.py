@@ -14,7 +14,7 @@ class Model(nn.Module):
         return torch.nn.functional.elu(torch.nn.functional.gelu((torch.nn.functional.mish(torch.addmm(self.b, x, self.w.t()))), approximate='tanh'))
 
 
-batch_size = 96
+batch_size = 97
 in_features = 256
 out_features = 128
 

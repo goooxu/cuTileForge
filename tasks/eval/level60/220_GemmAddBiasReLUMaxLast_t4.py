@@ -14,7 +14,7 @@ class Model(nn.Module):
         return torch.max(torch.relu(torch.addmm(self.b, x, self.w.t()) + 1.5), dim=-1)[0]
 
 
-batch_size = 96
+batch_size = 97
 in_features = 128
 out_features = 128
 

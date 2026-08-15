@@ -4,7 +4,7 @@ import torch.nn as nn
 # Shape constants for attention computation
 BATCH_SIZE = 3
 SEQ_LEN = 8
-HEAD_DIM = 16
+HEAD_DIM = 17
 NUM_HEADS = 4
 
 class Model(nn.Module):

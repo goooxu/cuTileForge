@@ -30,7 +30,7 @@ class Model(nn.Module):
 IN_CHANNELS = 4
 KERNEL_SIZE = 3
 DILATION = 2
-BATCH_SIZE = 3
+BATCH_SIZE = 5
 SEQ_LENGTH = 10
 
 def get_inputs():

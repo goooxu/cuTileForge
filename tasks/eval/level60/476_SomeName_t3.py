@@ -9,7 +9,7 @@ IN_CHANNELS = 4
 OUT_CHANNELS = 6
 KERNEL_SIZE = 3
 INPUT_HEIGHT = 12
-INPUT_WIDTH = 12
+INPUT_WIDTH = 13
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()

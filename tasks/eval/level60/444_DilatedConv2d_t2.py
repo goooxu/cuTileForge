@@ -28,9 +28,9 @@ STRIDE = 1
 PADDING = 2
 DILATION = 2
 GROUPS = 1
-BATCH_SIZE = 6
-HEIGHT = 48
-WIDTH = 48
+BATCH_SIZE = 7
+HEIGHT = 49
+WIDTH = 49
 def get_inputs():
     # Create input tensor with shape (batch_size, in_channels, height, width)
     return [torch.randn(BATCH_SIZE, IN_CHANNELS, HEIGHT, WIDTH)]

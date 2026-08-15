@@ -30,8 +30,8 @@ class Model(nn.Module):
         return normalized.view(original_shape)
 
 # Module-level constants for shape configuration
-BATCH_SIZE = 48
-SEQ_LEN = 512
+BATCH_SIZE = 49
+SEQ_LEN = 513
 NUM_FEATURES = 1024
 
 def get_inputs():

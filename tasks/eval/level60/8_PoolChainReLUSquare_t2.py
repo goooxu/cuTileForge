@@ -16,7 +16,7 @@ class Model(nn.Module):
 batch_size = 3
 channels = 8
 height = 24
-width = 48
+width = 49
 kernel_size = 2
 
 def get_inputs():

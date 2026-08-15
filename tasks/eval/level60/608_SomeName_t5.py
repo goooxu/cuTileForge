@@ -4,7 +4,7 @@ import torch.nn as nn
 """SomeName (tier 5, reduction)"""
 
 # Module-level constants for tensor shapes
-INPUT_SIZE = 4096
+INPUT_SIZE = 4097
 REDUCTION_DIM = 1
 
 class Model(nn.Module):
@@ -31,4 +31,3 @@ def get_inputs():
 
 def get_init_inputs():
     return []
-_EVAL_MARK = 1

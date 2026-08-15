@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 
 # Module-level constants for tensor shapes
-BATCH_SIZE = 3
-SEQ_LEN = 64
+BATCH_SIZE = 5
+SEQ_LEN = 65
 NUM_HEADS = 8
-HEAD_DIM = 16
+HEAD_DIM = 17
 QUERY_DIM = NUM_HEADS * HEAD_DIM
 
 class Model(nn.Module):

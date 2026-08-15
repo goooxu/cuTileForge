@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Sample a model on the standalone eval suite (level 60 + 61) and score it.
+# Sample a model on the standalone eval suite (level 60) and score it.
 #
 # Frozen protocol: cutile_concepts, TILE=1024, temperature 1.0, k=4.
-# Correctness is not timed. Speed is timed against torch.compile.
+# Every problem is timed against torch.compile. The scorecard splits
+# latency (770) from throughput twins.
 #
 # Usage:
 #   MODEL=/path/to/model-M ./rl/run_eval_suite.sh M
@@ -32,7 +33,7 @@ fi
 
 K="${EVAL_K:-4}"
 if [[ "$SMOKE" -eq 1 ]]; then
-    echo "SMOKE: first 16 problems per track; not a published score"
+    echo "SMOKE: first 16 problems; not a published score"
     SUBSET_START=1
     SUBSET_END=16
 else
@@ -59,6 +60,13 @@ print(n if end <= 0 else min(n, end))
 PY
 }
 
+expected_n() {
+    python3 - "$FORGE/tasks/eval/manifest.json" <<'PY'
+import json, sys
+print(len(json.load(open(sys.argv[1]))["problems"]))
+PY
+}
+
 server_up() { curl -s --max-time 5 http://localhost:8000/v1/models >/dev/null 2>&1; }
 
 start_server() {
@@ -79,17 +87,16 @@ generate_level() {
     local level="$1"
     local run_name="${TAG}_l${level}"
     local run_dir="$WS/runs/$run_name"
-    local n expected
+    local n want
     n="$(n_problems "$level")"
     if [[ "$SMOKE" -eq 0 ]]; then
-        local want=770
-        [[ "$level" == "61" ]] && want=250
+        want="$(expected_n)"
         if [[ "$n" -ne "$want" ]]; then
             echo "level $level has $n problems, expected $want; install failed" >&2
             return 1
         fi
     fi
-    expected=$((n * K))
+    local expected=$((n * K))
     echo "=== generate $run_name k=$K expected=$expected ==="
     for round in $(seq 1 12); do
         got="$(have "$run_dir")"
@@ -110,22 +117,15 @@ generate_level() {
 
 verify_level() {
     local level="$1"
-    local timed="$2"
     local run_name="${TAG}_l${level}"
     local out="$WS/runs/${run_name}_verified.jsonl"
-    local extra=""
-    if [[ "$timed" == "1" ]]; then
-        extra="--measure-time --ref-mode compile --timeout 180"
-    else
-        extra="--timeout 120"
-    fi
-    echo "=== verify $run_name timed=$timed ==="
+    echo "=== verify $run_name timed=1 ==="
     docker rm -f "fv_$run_name" >/dev/null 2>&1 || true
     CUTILE_WS="$WS" DETACH=1 NAME="fv_$run_name" "$KB/scripts/in_container.sh" \
         "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
             --kernel-dir /ws/runs/$run_name --level $level \
             --workers 16 --gpus 4 --out /ws/runs/${run_name}_verified.jsonl \
-            $extra"
+            --measure-time --ref-mode compile --timeout 180"
     while docker ps --filter name="fv_$run_name" --format '{{.Names}}' \
             | grep -q "fv_$run_name"; do
         sleep 30
@@ -134,12 +134,10 @@ verify_level() {
 }
 
 generate_level 60 || { echo "generation failed on level 60"; exit 1; }
-generate_level 61 || { echo "generation failed on level 61"; exit 1; }
 
 echo "=== stop vLLM ==="
 docker rm -f qwen-vllm >/dev/null 2>&1 || true
 
-verify_level 60 0
-verify_level 61 1
+verify_level 60
 
 python3 "$FORGE/verify/eval_scorecard.py" --run "$TAG:$WS/runs/${TAG}" --k "$K"

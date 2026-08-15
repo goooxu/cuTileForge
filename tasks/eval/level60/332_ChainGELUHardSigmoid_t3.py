@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.nn.functional.hardsigmoid((torch.nn.functional.gelu(torch.softmax(x, dim=1))))
 
 
-batch_size = 6144
+batch_size = 6145
 dim = 3072
 def get_inputs():
     return [torch.rand(batch_size, dim)]

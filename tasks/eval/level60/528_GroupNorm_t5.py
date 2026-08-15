@@ -25,9 +25,9 @@ class Model(nn.Module):
 # Module-level constants for shapes
 NUM_GROUPS = 32
 NUM_CHANNELS = 256
-HEIGHT = 192
-WIDTH = 192
-DEPTH = 96
+HEIGHT = 193
+WIDTH = 193
+DEPTH = 97
 def get_inputs():
     # Return a list containing one tensor with the specified shape
     # Using contiguous memory layout for optimal performance

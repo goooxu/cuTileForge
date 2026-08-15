@@ -2,11 +2,10 @@ import torch
 import torch.nn as nn
 
 # Shape constants
-BATCH_SIZE = 24
+BATCH_SIZE = 25
 SEQ_LENGTH = 1024
 NUM_HEADS = 16
-HEAD_DIM = 64
-
+HEAD_DIM = 65
 class Model(nn.Module):
     """AttnScore (tier 2, matmul)"""
     

@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.clamp(torch.relu((torch.nn.functional.elu(x, alpha=1.25))), min=-1.0, max=1.0)
 
 
-batch_size = 3072
-dim = 6144
+batch_size = 65535
+dim = 3
 def get_inputs():
     return [torch.rand(batch_size, dim)]
 

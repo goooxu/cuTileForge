@@ -13,7 +13,7 @@ class Model(nn.Module):
         return (torch.nn.functional.tanhshrink(x)) + 1.5
 
 
-batch_size = 12
+batch_size = 13
 channels = 4
 length = 64
 

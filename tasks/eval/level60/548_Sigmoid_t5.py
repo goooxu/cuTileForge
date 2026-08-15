@@ -7,7 +7,7 @@ import torch.nn as nn
 BATCH_SIZE = 3
 IN_CHANNELS = 3
 HEIGHT = 6
-WIDTH = 6
+WIDTH = 7
 class Model(nn.Module):
     """SomeName (tier 5, conv)"""
     def __init__(self):

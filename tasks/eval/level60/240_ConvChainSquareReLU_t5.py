@@ -14,11 +14,11 @@ class Model(nn.Module):
         return (self.conv(x) ** 2)
 
 
-batch_size = 96
+batch_size = 97
 in_channels = 32
 out_channels = 16
-height = 192
-width = 192
+height = 193
+width = 193
 kernel_size = 3
 padding = 1
 

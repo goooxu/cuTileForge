@@ -13,10 +13,10 @@ class Model(nn.Module):
         return torch.sigmoid(x)
 
 
-batch_size = 768
+batch_size = 769
 channels = 32
-height = 12
-width = 12
+height = 13
+width = 13
 def get_inputs():
     return [torch.randn(batch_size, channels, height, width)]
 

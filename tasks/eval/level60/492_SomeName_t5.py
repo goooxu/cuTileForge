@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 # Module-level constants for shapes
-BATCH_SIZE = 12
+BATCH_SIZE = 13
 IN_FEATURES = 64
 OUT_FEATURES = 128
 

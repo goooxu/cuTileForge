@@ -36,9 +36,9 @@ OUT_CHANNELS = 128
 KERNEL_SIZE = 3
 STRIDE = 1
 PADDING = 1
-BATCH_SIZE = 6
-HEIGHT = 96
-WIDTH = 96
+BATCH_SIZE = 7
+HEIGHT = 97
+WIDTH = 97
 def get_inputs():
     """Returns a list of tensors to pass to forward"""
     # Create input tensor with shape (batch_size, in_channels, height, width)

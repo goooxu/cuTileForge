@@ -13,7 +13,7 @@ class Model(nn.Module):
         return (torch.clamp(((x - x.mean(dim=-1, keepdim=True)) / torch.sqrt((x.var(dim=-1, keepdim=True, unbiased=False) + self.eps))), min=-1.0, max=1.0)) + 1.5
 
 
-batch_size = 192
+batch_size = 193
 dim = 256
 
 def get_inputs():

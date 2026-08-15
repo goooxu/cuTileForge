@@ -16,7 +16,7 @@ class Model(nn.Module):
 batch_size = 768
 channels = 32
 height = 12
-width = 12
+width = 13
 def get_inputs():
     return [torch.randn(batch_size, channels, height, width)]
 

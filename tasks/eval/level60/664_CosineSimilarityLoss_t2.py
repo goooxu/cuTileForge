@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.mean(1 - torch.nn.functional.cosine_similarity(predictions, targets, dim=-1))
 
 
-batch_size = 48
-dim = 384
+batch_size = 49
+dim = 385
 def get_inputs():
     return [torch.randn(batch_size, dim), torch.randn(batch_size, dim)]
 

@@ -3,7 +3,7 @@ import torch.nn as nn
 
 # Module-level constants for tensor shapes
 INPUT_HEIGHT = 48
-INPUT_WIDTH = 48
+INPUT_WIDTH = 49
 INPUT_CHANNELS = 64
 BATCH_SIZE = 12
 class Model(nn.Module):

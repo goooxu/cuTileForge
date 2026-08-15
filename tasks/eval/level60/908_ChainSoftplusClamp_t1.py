@@ -1,0 +1,23 @@
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    """ChainSoftplusClamp (tier 1, activation)"""
+
+    def __init__(self):
+        super(Model, self).__init__()
+        pass
+
+    def forward(self, x: torch.Tensor):
+        return torch.clamp(torch.nn.functional.softplus(x), min=-1.0, max=1.0)
+
+
+batch_size = 24577
+dim = 40961
+def get_inputs():
+    return [torch.randn(batch_size, dim)]
+
+
+def get_init_inputs():
+    return []

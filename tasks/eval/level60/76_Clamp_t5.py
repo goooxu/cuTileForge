@@ -13,10 +13,10 @@ class Model(nn.Module):
         return torch.clamp(self.pool(x), min=-1.0, max=1.0)
 
 
-batch_size = 24
+batch_size = 25
 channels = 64
-height = 768
-width = 768
+height = 769
+width = 769
 kernel_size = 3
 stride = 1
 padding = 1

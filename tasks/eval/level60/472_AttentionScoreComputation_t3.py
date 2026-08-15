@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 
 # Module-level constants for shapes
-BATCH_SIZE = 6
-SEQ_LEN = 32
+BATCH_SIZE = 7
+SEQ_LEN = 33
 NUM_HEADS = 8
-HEAD_DIM = 16
+HEAD_DIM = 17
 HIDDEN_DIM = NUM_HEADS * HEAD_DIM
 
 class Model(nn.Module):

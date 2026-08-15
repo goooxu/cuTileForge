@@ -14,7 +14,7 @@ class Model(nn.Module):
         return torch.logsumexp(torch.relu(torch.addmm(self.b, x, self.w.t())), dim=-1)
 
 
-batch_size = 96
+batch_size = 97
 in_features = 128
 out_features = 256
 

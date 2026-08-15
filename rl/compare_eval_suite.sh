@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Queue base / M / Q (or any TAG:PATH list) on the standalone eval suite.
 #
-# Each model is one run_eval_suite.sh invocation. A tag whose two verified
-# jsonl files already exist is skipped, so a restart after an ssh drop is
+# Each model is one run_eval_suite.sh invocation. A tag whose verified
+# jsonl already exists is skipped, so a restart after an ssh drop is
 # cheap. Run this detached: an attached ssh session dying takes vLLM with it.
 #
 # Usage:
@@ -22,8 +22,7 @@ fi
 
 done_tag() {
     local tag="$1"
-    [[ -f "$WS/runs/${tag}_l60_verified.jsonl" && \
-       -f "$WS/runs/${tag}_l61_verified.jsonl" ]]
+    [[ -f "$WS/runs/${tag}_l60_verified.jsonl" ]]
 }
 
 bash "$FORGE/overlay/scripts/install_eval_suite.sh" || {

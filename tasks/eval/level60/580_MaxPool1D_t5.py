@@ -7,13 +7,12 @@ MaxPool1D (tier 5, pool)
 
 # Module-level constants for shape configuration
 INPUT_CHANNELS = 2
-INPUT_LENGTH = 8
+INPUT_LENGTH = 9
 KERNEL_SIZE = 3
 STRIDE = 2
 PADDING = 1
 OUTPUT_CHANNELS = 2
-OUTPUT_LENGTH = 4
-
+OUTPUT_LENGTH = 5
 class Model(nn.Module):
     """MaxPool1D (tier 5, pool)"""
     
@@ -39,4 +38,3 @@ def get_inputs():
 def get_init_inputs():
     # No additional inputs needed for initialization
     return []
-_EVAL_MARK = 1

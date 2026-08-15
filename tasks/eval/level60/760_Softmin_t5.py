@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.softmin(x, dim=-1)
 
 
-batch_size = 2236
-dim = 8944
+batch_size = 2237
+dim = 8939
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

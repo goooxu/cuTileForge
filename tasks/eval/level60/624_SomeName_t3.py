@@ -18,7 +18,7 @@ class Model(nn.Module):
 
 # Module-level constants for shapes
 SHAPE = (32, 64)
-BATCH_SIZE = 48
+BATCH_SIZE = 49
 FEATURES = 64
 
 def get_inputs():

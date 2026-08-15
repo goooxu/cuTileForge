@@ -14,11 +14,11 @@ class Model(nn.Module):
         return (torch.clamp(self.conv(x), -2.0, 2.0) * 1.7)
 
 
-batch_size = 48
+batch_size = 49
 in_channels = 64
 out_channels = 32
-height = 384
-width = 384
+height = 385
+width = 385
 kernel_size = 1
 padding = 0
 

@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.sigmoid(torch.nn.functional.tanhshrink((((x + r) + 0.3))))
 
 
-batch_size = 4472
-dim = 4472
+batch_size = 4471
+dim = 4473
 def get_inputs():
     return [torch.rand(batch_size, dim), torch.rand(batch_size, dim)]
 

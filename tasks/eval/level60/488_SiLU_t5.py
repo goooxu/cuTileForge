@@ -6,8 +6,7 @@ import torch.nn as nn
 # Module-level constants for tensor shapes
 BATCH_SIZE = 12
 SEQ_LEN = 1024
-HIDDEN_DIM = 768
-
+HIDDEN_DIM = 769
 class Model(nn.Module):
     """LayerNorm (tier 5, norm)"""
 

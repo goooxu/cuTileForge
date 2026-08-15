@@ -4,11 +4,11 @@ import torch.nn as nn
 """Softplus (tier 3, conv)"""
 
 # Module-level constants for shapes
-BATCH_SIZE = 3
+BATCH_SIZE = 5
 IN_CHANNELS = 4
 OUT_CHANNELS = 6
 KERNEL_SIZE = 3
-INPUT_LENGTH = 8
+INPUT_LENGTH = 9
 DILATION = 2
 PADDING = 1
 STRIDE = 1

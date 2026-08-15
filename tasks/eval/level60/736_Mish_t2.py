@@ -13,10 +13,10 @@ class Model(nn.Module):
         return torch.nn.functional.mish(torch.nn.functional.softmin(x, dim=-1))
 
 
-batch_size = 24
+batch_size = 25
 channels = 2
-height = 8
-width = 8
+height = 9
+width = 9
 def get_inputs():
     return [torch.randn(batch_size, channels, height, width)]
 

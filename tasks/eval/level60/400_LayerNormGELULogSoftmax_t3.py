@@ -13,9 +13,8 @@ class Model(nn.Module):
         return torch.log_softmax(torch.nn.functional.gelu(((x - x.mean(dim=-1, keepdim=True)) / torch.sqrt(x.var(dim=-1, keepdim=True, unbiased=False) + self.eps))), dim=-1)
 
 
-batch_size = 192
-dim = 256
-
+batch_size = 193
+dim = 257
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

@@ -18,7 +18,7 @@ batch_size = 6
 in_channels = 8
 out_channels = 32
 height = 24
-width = 24
+width = 25
 def get_inputs():
     return [torch.randn(batch_size, in_channels, height, width)]
 

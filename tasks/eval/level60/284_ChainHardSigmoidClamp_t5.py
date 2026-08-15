@@ -18,7 +18,7 @@ batch_size = 24
 in_channels = 64
 out_channels = 16
 height = 768
-width = 768
+width = 769
 kernel_size = 3
 padding = 1
 

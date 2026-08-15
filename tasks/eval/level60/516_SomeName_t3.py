@@ -4,8 +4,8 @@ import torch.nn as nn
 """SomeName (tier 3, conv)"""
 
 # Module-level constants for shapes
-INPUT_DIM = 256
-HIDDEN_DIM = 512
+INPUT_DIM = 257
+HIDDEN_DIM = 513
 NUM_HEADS = 8
 DROPOUT_P = 0.1
 
@@ -68,4 +68,3 @@ def get_inputs():
 def get_init_inputs():
     # Return arguments for model initialization
     return [INPUT_DIM, HIDDEN_DIM, NUM_HEADS]
-_EVAL_MARK = 1

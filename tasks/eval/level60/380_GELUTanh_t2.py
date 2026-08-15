@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.nn.functional.gelu((((x / torch.norm(x, p=2, dim=1, keepdim=True)) * 1.7)), approximate='tanh')
 
 
-batch_size = 48
+batch_size = 49
 dim = 384
 def get_inputs():
     return [torch.rand(batch_size, dim)]

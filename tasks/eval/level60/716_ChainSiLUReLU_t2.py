@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.relu(torch.nn.functional.silu(x))
 
 
-batch_size = 48
+batch_size = 49
 channels = 2
 length = 32
 

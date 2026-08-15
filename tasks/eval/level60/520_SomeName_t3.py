@@ -4,10 +4,9 @@ import torch.nn as nn
 """SomeName (tier 3, conv)"""
 
 # Module-level constants for shapes
-BATCH_SIZE = 12
-SEQ_LEN = 512
-HIDDEN_DIM = 1024
-
+BATCH_SIZE = 13
+SEQ_LEN = 513
+HIDDEN_DIM = 1025
 class Model(nn.Module):
     """SomeName (tier 3, conv)"""
     

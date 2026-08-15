@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.clamp(torch.nn.functional.softsign(x), min=-1.0, max=1.0)
 
 
-batch_size = 384
-dim = 768
+batch_size = 385
+dim = 769
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

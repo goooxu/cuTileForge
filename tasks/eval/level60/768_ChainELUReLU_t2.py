@@ -13,10 +13,9 @@ class Model(nn.Module):
         return torch.relu(torch.nn.functional.elu(x, alpha=1.25))
 
 
-batch_size = 24
+batch_size = 25
 channels = 2
-length = 64
-
+length = 65
 def get_inputs():
     return [torch.randn(batch_size, channels, length)]
 

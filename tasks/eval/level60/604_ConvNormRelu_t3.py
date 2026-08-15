@@ -20,9 +20,9 @@ class Model(nn.Module):
 IN_CHANNELS = 3
 OUT_CHANNELS = 16
 KERNEL_SIZE = 3
-BATCH_SIZE = 3
-HEIGHT = 48
-WIDTH = 48
+BATCH_SIZE = 5
+HEIGHT = 49
+WIDTH = 49
 def get_inputs():
     """Returns a list of tensors to pass to forward"""
     return [torch.randn(BATCH_SIZE, IN_CHANNELS, HEIGHT, WIDTH)]

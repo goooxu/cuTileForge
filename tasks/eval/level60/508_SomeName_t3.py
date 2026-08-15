@@ -21,11 +21,10 @@ class Model(nn.Module):
         return output
 
 # Module-level constants for shapes
-BATCH_SIZE = 12
-SEQ_LEN = 128
+BATCH_SIZE = 13
+SEQ_LEN = 129
 NUM_HEADS = 8
-HEAD_DIM = 64
-
+HEAD_DIM = 65
 def get_inputs():
     query = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_DIM)
     key = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_DIM)

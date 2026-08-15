@@ -14,7 +14,7 @@ class Model(nn.Module):
         return torch.addmm(self.b, x, self.w.t())
 
 
-batch_size = 96
+batch_size = 97
 in_features = 128
 out_features = 256
 

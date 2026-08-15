@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Build the standalone eval suite from HELDOUT2 and level 83.
+"""Build the standalone eval suite from HELDOUT2.
 
-Does not re-sample the builders. Copies the sealed / harvest sources, then
-applies a fixed mutation (graph, hyperparameters, shapes) so the published
-ruler is not byte-identical to anything a model has already been scored on.
+One level. 770 mutated graphs stay at latency-scale shapes (correctness +
+latency). Activation / elementwise (batch, dim) graphs also get a billion-
+element twin (throughput). A minority of both sets use awkward, unaligned
+dims so remainder tiles are not invisible.
+
+Does not re-sample the builders. Copies the sealed sources, then applies a
+fixed mutation (graph, hyperparameters, shapes) so the published ruler is
+not byte-identical to anything a model has already been scored on.
 
 Python 3.6: this has to run on the file-edit host, which cannot import
 operators.py (dataclasses).
@@ -16,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 
 # ---------------------------------------------------------------------------
@@ -55,6 +61,32 @@ assert _KB_ACT_SHAPE not in EVAL_BW_2D
 assert not (set(EVAL_BW_2D) & set(BW_2D))
 assert all(0.8e9 <= m * k <= 1.4e9 for m, k in EVAL_BW_2D)
 assert all(m % 256 == 0 and k % 256 == 0 for m, k in EVAL_BW_2D)
+
+# Throughput twins that are deliberately not 256-aligned. Both dims stay at
+# or under the CUDA grid limit so a kernel cannot IMA by using one axis as
+# grid.y (the 567:3 failure was grid=(batch, 65536, 1)).
+GRID_MAX = 65535
+EVAL_AWKWARD_2D = [
+    (15361, 65535),
+    (16383, 61441),
+    (17407, 57347),
+    (19967, 53249),
+    (20479, 49153),
+    (22271, 49151),
+    (24577, 40961),
+    (28673, 36865),
+    (30719, 32771),
+    (31745, 40959),
+    (33311, 33313),
+    (35839, 28673),
+]
+assert _KB_ACT_SHAPE not in EVAL_AWKWARD_2D
+assert not (set(EVAL_AWKWARD_2D) & set(BW_2D))
+assert not (set(EVAL_AWKWARD_2D) & set(EVAL_BW_2D))
+assert all(0.8e9 <= m * k <= 1.4e9 for m, k in EVAL_AWKWARD_2D)
+assert all(m % 256 != 0 and k % 256 != 0 for m, k in EVAL_AWKWARD_2D)
+assert all(1 <= m <= GRID_MAX and 1 <= k <= GRID_MAX
+           for m, k in EVAL_AWKWARD_2D)
 
 POINTWISE_EXPR = {
     "ReLU": "torch.relu(x)",
@@ -152,7 +184,23 @@ SPATIAL_NAMES = (
     "height", "width", "depth", "HEIGHT", "WIDTH", "DEPTH",
     "INPUT_HEIGHT", "INPUT_WIDTH", "INPUT_DEPTH",
 )
+# Spatial-like axes that may become a CUDA grid dim. channels / features
+# stay untouched: those change the op, not just the launch shape.
+GRID_NAMES = BATCH_NAMES + ("dim", "DIM") + SPATIAL_NAMES + (
+    "length", "LENGTH", "seq_len", "SEQ_LEN",
+)
+# Extra size-like axes we may twist on the awkward slice. Channel / head
+# counts stay put: those have to divide the op, they are not launch shapes.
+AWKWARD_NAMES = GRID_NAMES + (
+    "M", "N", "K",
+    "INPUT_SIZE", "OUTPUT_SIZE", "INPUT_LENGTH", "OUTPUT_LENGTH",
+    "INPUT_FEATURES", "HIDDEN_DIM", "NUM_TOKENS", "INPUT_DIM",
+    "KEY_DIM", "VALUE_DIM", "HEAD_DIM", "NORM_DIM", "REDUCTION_DIM",
+    "INPUT_BATCH", "INPUT_SEQ_LEN",
+)
 DIM_CAP = 20000000
+THROUGHPUT_CATS = ("activation", "elementwise")
+AWKWARD_ASPECT_SMALL = (3, 7, 15)
 DOC_RE = re.compile(r'"""(.+?) \(tier (\d+), (\w+)\)"""')
 ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(-?\d+)\s*$", re.M)
 SOFTMAX_RE = re.compile(r"softmax|softmin", re.I)
@@ -585,20 +633,134 @@ def scale_int(n, scale):
     return max(1, v)
 
 
-def remap_dims_speed(source):
+def pick_table_shape(key, table, skip=None):
+    """Stable index. hash() is per-process randomized."""
+    digest = hashlib.sha256(repr(key).encode("utf-8")).hexdigest()
+    start = int(digest, 16) % len(table)
+    for off in range(len(table)):
+        shape = table[(start + off) % len(table)]
+        if skip is not None and shape == skip:
+            continue
+        return shape
+    return table[start]
+
+
+def remap_dims_throughput(source, table):
     assigns = {n: v for n, v, _, _ in top_assigns(source)}
     if "batch_size" not in assigns or "dim" not in assigns:
         return source, "unchanged", None, None
     old = (assigns["batch_size"], assigns["dim"])
-    if old in BW_2D:
-        new = EVAL_BW_2D[BW_2D.index(old)]
-    else:
-        new = EVAL_BW_2D[abs(hash(old)) % len(EVAL_BW_2D)]
-        if new == old:
-            new = EVAL_BW_2D[(EVAL_BW_2D.index(new) + 1) % len(EVAL_BW_2D)]
+    new = pick_table_shape(old, table, skip=old)
     source, _ = rewrite_assign(source, "batch_size", new[0])
     source, _ = rewrite_assign(source, "dim", new[1])
-    return source, "eval_bw", old, new
+    how = "eval_awkward" if table is EVAL_AWKWARD_2D else "eval_bw"
+    return source, how, old, new
+
+
+def make_odd(n):
+    n = int(n)
+    if n % 2 == 0:
+        n += 1
+    return n
+
+
+def clamp_grid_dims(source):
+    assigns = {n: v for n, v, _, _ in top_assigns(source)}
+    changed = []
+    for name in GRID_NAMES:
+        if name in assigns and assigns[name] > GRID_MAX:
+            source, ok = rewrite_assign(source, name, GRID_MAX)
+            if ok:
+                changed.append(name)
+    return source, changed
+
+
+def recap_plain_2d(source, keep_odd=False):
+    assigns = {n: v for n, v, _, _ in top_assigns(source)}
+    if set(assigns) > {"batch_size", "dim"} or "dim" not in assigns:
+        return source
+    b, d = assigns["batch_size"], assigns["dim"]
+    if b * d <= DIM_CAP:
+        return source
+    if b >= d:
+        b = max(1, DIM_CAP // d)
+        if keep_odd and b > 1 and b % 2 == 0 and (b - 1) * d <= DIM_CAP:
+            b -= 1
+    else:
+        d = max(1, DIM_CAP // b)
+        if keep_odd and d > 1 and d % 2 == 0 and b * (d - 1) <= DIM_CAP:
+            d -= 1
+    source, _ = rewrite_assign(source, "batch_size", b)
+    source, _ = rewrite_assign(source, "dim", d)
+    return source
+
+
+def apply_awkward_latency(source, pid):
+    """Twist scaled dims. pid is 1-based. Does not change the graph."""
+    assigns = {n: v for n, v, _, _ in top_assigns(source)}
+    if not assigns:
+        return source, "awkward_unchanged", None
+    keys = set(assigns)
+    kernel = assigns.get("kernel_size", assigns.get("KERNEL_SIZE", 3))
+    plain = keys <= {"batch_size", "dim"} or keys <= {"BATCH_SIZE", "DIM"}
+    mode = (pid // 4) % 3
+    old = dict(assigns)
+
+    if mode == 0 and plain and "batch_size" in assigns and "dim" in assigns:
+        small = AWKWARD_ASPECT_SMALL[(pid // 12) % len(AWKWARD_ASPECT_SMALL)]
+        large = make_odd(min(GRID_MAX, DIM_CAP // small))
+        if (pid // 8) % 2 == 0:
+            nb, nd = small, large
+        else:
+            nb, nd = large, small
+        source, _ = rewrite_assign(source, "batch_size", nb)
+        source, _ = rewrite_assign(source, "dim", nd)
+        source = recap_plain_2d(source, keep_odd=True)
+        source, _ = clamp_grid_dims(source)
+        new_assigns = {n: v for n, v, _, _ in top_assigns(source)}
+        return source, "awkward_aspect", new_assigns
+
+    names = [n for n in AWKWARD_NAMES if n in assigns]
+    if not names:
+        return source, "awkward_unchanged", old
+    if mode == 2:
+        names = [names[pid % len(names)]]
+    changed = []
+    for name in names:
+        v = assigns[name]
+        nv = make_odd(v)
+        if name in SPATIAL_NAMES or name in ("length", "LENGTH",
+                                             "seq_len", "SEQ_LEN"):
+            if nv <= kernel:
+                nv = make_odd(kernel + 2)
+        nv = max(1, min(GRID_MAX, nv))
+        if nv == v:
+            # Already odd: step off the scaled value so the ruler moves.
+            nv = make_odd(min(GRID_MAX, v + 2))
+        if nv != v:
+            source, ok = rewrite_assign(source, name, nv)
+            if ok:
+                changed.append(name)
+    source = recap_plain_2d(source, keep_odd=True)
+    source, _ = clamp_grid_dims(source)
+    if not changed:
+        return source, "awkward_unchanged", old
+    new_assigns = {n: v for n, v, _, _ in top_assigns(source)}
+    return source, "awkward", new_assigns
+
+
+def is_throughput_eligible(source, category):
+    if category not in THROUGHPUT_CATS:
+        return False
+    head = source.split("def get_inputs")[0]
+    if SOFTMAX_RE.search(head):
+        return False
+    assigns = {n: v for n, v, _, _ in top_assigns(source)}
+    if set(assigns) != {"batch_size", "dim"}:
+        return False
+    if not init_inputs_empty(source):
+        return False
+    return True
 
 
 def remap_dims_correctness(source, scale=1.5):
@@ -735,7 +897,8 @@ def safe_filename(pid, name, tier):
 # One problem
 # ---------------------------------------------------------------------------
 
-def mutate_one(source, track, index, src_path, exclude, orig_hash):
+def mutate_one(source, track, index, src_path, exclude, orig_hash,
+               awkward=False):
     """Try a few fallbacks so the result is disjoint from every used level."""
     tail_index = index
     path_h = int(hashlib.sha256(src_path.encode()).hexdigest()[:8], 16)
@@ -749,15 +912,22 @@ def mutate_one(source, track, index, src_path, exclude, orig_hash):
     ]
     last = None
     last_info = None
+    pid = index + 1
     for att in attempts:
         text, ginfo = mutate_graph(
             source, track, index, att["shift"], att["depth"], att["tail"])
         text, hp = apply_hparams(text, alt=att["alt_hp"])
-        if track == "speed":
-            text, dim_how, old_sh, new_sh = remap_dims_speed(text)
-        else:
-            text, dim_how, old_sh, new_sh = remap_dims_correctness(
-                text, scale=att["scale"])
+        text, dim_how, old_sh, new_sh = remap_dims_correctness(
+            text, scale=att["scale"])
+        text, clamped = clamp_grid_dims(text)
+        if clamped:
+            dim_how = (dim_how or "unchanged") + "+gridcap"
+            new_sh = {n: v for n, v, _, _ in top_assigns(text)}
+        if awkward:
+            text, awk_how, awk_sh = apply_awkward_latency(text, pid)
+            dim_how = (dim_how or "unchanged") + "+" + awk_how
+            if awk_sh:
+                new_sh = awk_sh
         info = dict(ginfo)
         info["hparams"] = hp
         info["dims"] = dim_how
@@ -771,6 +941,39 @@ def mutate_one(source, track, index, src_path, exclude, orig_hash):
     # Last resort: a hashed marker. Comments do not count.
     text = last + "\n_EVAL_MARK = 1\n"
     last_info["dims"] = (last_info.get("dims") or "unchanged") + "+mark"
+    last_info["hash"] = task_hash(text)
+    return text, last_info
+
+
+def make_throughput_twin(lat_text, graph_id, exclude, awkward):
+    table = EVAL_AWKWARD_2D if awkward else EVAL_BW_2D
+    assigns = {n: v for n, v, _, _ in top_assigns(lat_text)}
+    old = (assigns.get("batch_size"), assigns.get("dim"))
+    last = None
+    last_info = None
+    digest = hashlib.sha256(repr((graph_id, old)).encode("utf-8")).hexdigest()
+    start = int(digest, 16) % len(table)
+    for off in range(len(table)):
+        new = table[(start + off) % len(table)]
+        text, _ = rewrite_assign(lat_text, "batch_size", new[0])
+        text, _ = rewrite_assign(text, "dim", new[1])
+        info = {
+            "dims": "eval_awkward" if awkward else "eval_bw",
+            "old_shape": {"batch_size": old[0], "dim": old[1]},
+            "new_shape": {"batch_size": new[0], "dim": new[1]},
+            "graph": "twin",
+            "depth_delta": 0,
+            "swap": None,
+            "wrap": None,
+            "hparams": [],
+        }
+        h = task_hash(text)
+        last, last_info = text, info
+        if h not in exclude:
+            info["hash"] = h
+            return text, info
+    text = last + "\n_EVAL_MARK = 1\n"
+    last_info["dims"] = last_info["dims"] + "+mark"
     last_info["hash"] = task_hash(text)
     return text, last_info
 
@@ -791,75 +994,113 @@ def collect_exclude(forge):
 
 
 def iter_sources(forge):
-    """Yield (track, source_level, directory, filename) in eval order."""
+    """Yield (source_level, directory, filename) in eval order."""
     ho = os.path.join(forge, "tasks", "heldout2")
     for lvl in (99, 88, 84):
         d = os.path.join(ho, "level%d" % lvl)
         for fname in numbered_py(d):
-            yield "correctness", lvl, d, fname
-    bw = os.path.join(forge, "tasks", "bw_act", "level83")
-    for fname in numbered_py(bw):
-        yield "speed", 83, bw, fname
+            yield lvl, d, fname
+
+
+def _entry(pid, level_id, out_name, role, graph_id, shape_kind, lvl, fname,
+           info, cat, tier):
+    return {
+        "problem_id": pid,
+        "level": level_id,
+        "file": out_name,
+        "role": role,
+        "graph_id": graph_id,
+        "shape_kind": shape_kind,
+        "track": role,
+        "source_level": lvl,
+        "source_file": fname,
+        "graph": info.get("graph"),
+        "depth_delta": info.get("depth_delta", 0),
+        "swap": info.get("swap"),
+        "wrap": info.get("wrap"),
+        "hparams": info.get("hparams") or [],
+        "dims": info.get("dims"),
+        "old_shape": info.get("old_shape"),
+        "new_shape": info.get("new_shape"),
+        "category": cat,
+        "tier": tier,
+    }
 
 
 def build(forge, out_root):
     exclude = collect_exclude(forge)
     print("excluding %d hashes from used levels" % len(exclude))
 
-    buckets = {"correctness": [], "speed": []}
-    for track, lvl, directory, fname in iter_sources(forge):
+    sources = []
+    for lvl, directory, fname in iter_sources(forge):
         src_path = os.path.join(directory, fname)
         source = open(src_path, encoding="utf-8", errors="replace").read()
-        buckets[track].append((lvl, fname, src_path, source))
+        sources.append((lvl, fname, src_path, source))
+    assert len(sources) == 770, len(sources)
 
-    assert len(buckets["correctness"]) == 770, len(buckets["correctness"])
-    assert len(buckets["speed"]) == 250, len(buckets["speed"])
+    dest = os.path.join(out_root, "level60")
+    if os.path.isdir(dest):
+        for old in os.listdir(dest):
+            if old.endswith(".py"):
+                os.remove(os.path.join(dest, old))
+    else:
+        os.makedirs(dest)
+    stale = os.path.join(out_root, "level61")
+    if os.path.isdir(stale):
+        shutil.rmtree(stale)
+        print("removed %s" % stale)
 
     manifest = []
-    written = {"correctness": 0, "speed": 0}
-    for track, level_id in (("correctness", 60), ("speed", 61)):
-        dest = os.path.join(out_root, "level%d" % level_id)
-        if os.path.isdir(dest):
-            for old in os.listdir(dest):
-                if old.endswith(".py"):
-                    os.remove(os.path.join(dest, old))
-        else:
-            os.makedirs(dest)
-        for i, (lvl, fname, src_path, source) in enumerate(buckets[track]):
-            pid = i + 1
-            orig_h = task_hash(source)
-            text, info = mutate_one(
-                source, track, i, src_path, exclude, orig_h)
-            exclude.add(info["hash"])
-            name, tier, cat = extract_doc(text)
-            out_name = safe_filename(pid, info.get("new_name") or name, tier)
-            with open(os.path.join(dest, out_name), "w") as fh:
-                fh.write(text)
-            written[track] += 1
-            manifest.append({
-                "problem_id": pid,
-                "level": level_id,
-                "file": out_name,
-                "track": track,
-                "source_level": lvl,
-                "source_file": fname,
-                "graph": info.get("graph"),
-                "depth_delta": info.get("depth_delta", 0),
-                "swap": info.get("swap"),
-                "wrap": info.get("wrap"),
-                "hparams": info.get("hparams") or [],
-                "dims": info.get("dims"),
-                "old_shape": info.get("old_shape"),
-                "new_shape": info.get("new_shape"),
-                "category": cat,
-                "tier": tier,
-            })
-        print("wrote %d problems to %s" % (written[track], dest))
+    twins = []
+    for i, (lvl, fname, src_path, source) in enumerate(sources):
+        pid = i + 1
+        awkward = (pid % 4 == 0)
+        orig_h = task_hash(source)
+        text, info = mutate_one(
+            source, "correctness", i, src_path, exclude, orig_h,
+            awkward=awkward)
+        exclude.add(info["hash"])
+        name, tier, cat = extract_doc(text)
+        out_name = safe_filename(pid, info.get("new_name") or name, tier)
+        with open(os.path.join(dest, out_name), "w") as fh:
+            fh.write(text)
+        dim_how = info.get("dims") or ""
+        twisted = awkward and ("awkward_unchanged" not in dim_how) and (
+            "awkward" in dim_how)
+        kind = "awkward" if twisted else "common"
+        manifest.append(_entry(
+            pid, 60, out_name, "latency", pid, kind, lvl, fname, info,
+            cat, tier))
+        if is_throughput_eligible(text, cat):
+            twins.append((pid, text, cat, tier, info.get("new_name") or name,
+                          lvl, fname))
+
+    for j, (graph_id, lat_text, cat, tier, name, lvl, fname) in enumerate(twins):
+        pid = 770 + j + 1
+        awkward = (graph_id % 3 == 0)
+        text, info = make_throughput_twin(
+            lat_text, graph_id, exclude, awkward)
+        exclude.add(info["hash"])
+        out_name = safe_filename(pid, name, tier)
+        with open(os.path.join(dest, out_name), "w") as fh:
+            fh.write(text)
+        kind = "awkward" if awkward else "common"
+        manifest.append(_entry(
+            pid, 60, out_name, "throughput", graph_id, kind, lvl, fname,
+            info, cat, tier))
+
+    n_lat = sum(1 for p in manifest if p["role"] == "latency")
+    n_thr = sum(1 for p in manifest if p["role"] == "throughput")
+    print("wrote %d latency + %d throughput -> %s" % (n_lat, n_thr, dest))
 
     man_path = os.path.join(out_root, "manifest.json")
     with open(man_path, "w") as fh:
-        json.dump({"levels": {"correctness": 60, "speed": 61},
-                   "problems": manifest}, fh, indent=2, sort_keys=True)
+        json.dump({
+            "levels": {"suite": 60},
+            "n_latency": n_lat,
+            "n_throughput": n_thr,
+            "problems": manifest,
+        }, fh, indent=2, sort_keys=True)
         fh.write("\n")
     print("wrote %s (%d entries)" % (man_path, len(manifest)))
     return manifest
@@ -870,7 +1111,7 @@ def main():
     ap.add_argument("--forge", default=None,
                     help="cuTileForge root. Default: parent of taskgen/.")
     ap.add_argument("--out-root", default=None,
-                    help="Where to write level60/level61. Default: tasks/eval.")
+                    help="Where to write level60. Default: tasks/eval.")
     args = ap.parse_args()
     forge = args.forge or forge_root()
     out_root = args.out_root or os.path.join(forge, "tasks", "eval")

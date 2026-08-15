@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.gelu(x)
 
 
-batch_size = 384
-dim = 768
+batch_size = 15
+dim = 65535
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

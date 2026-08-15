@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.nn.functional.leaky_relu(torch.nn.functional.gelu((((x - x.mean(dim=-1, keepdim=True)) / torch.sqrt((x.var(dim=-1, keepdim=True, unbiased=False) + self.eps)))), approximate='tanh'), negative_slope=0.02)
 
 
-batch_size = 192
+batch_size = 193
 dim = 256
 
 def get_inputs():

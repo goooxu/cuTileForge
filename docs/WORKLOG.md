@@ -2178,3 +2178,24 @@ NFS 上 `rm -rf` + `cp *.py` 装题会装不全；`install_eval_suite.sh` 改成
 断言 770 / 250，`run_eval_suite.sh` 在生成前再数一遍。
 
 详见 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+
+---
+
+# 独立评测集改成一套题：正确性 + 延迟 + 吞吐
+
+两轨（770 不计时 + 250 道十亿元素 level 61）测不了同一张图上的延迟，也测不了
+remainder tile：吞吐维几乎全是 256 对齐。现在合成 **一个 level 60**：
+
+- 770 张 HELDOUT2 变异图保持正确性量级，全部计时 → 正确性 + 延迟。
+- 其中 139 道 `(batch_size, dim)` 的 activation / elementwise 另写大张量副本 →
+  只做成对吞吐。softmax / norm / matmul / conv / pool / loss 不进吞吐。
+- 延迟约 1/4、吞吐约 1/3 走不规则形状（奇数、不对齐、怪长宽比；吞吐两维都
+  ≤ 65535）。`manifest` 标 `role` 和 `shape_kind`。
+- level 61 删除。旧两轨数字作废，不能和这套横比。不改 KernelBench 200 题头条。
+
+协议没变：concepts + TILE=1024，k=4，温度 1.0；一次
+`fast_verify --measure-time --ref-mode compile`。scorecard 先报延迟成对，再报
+吞吐成对，都拆 common / awkward，最后才是 770 张图的 pass@k。
+
+跑法仍是 `overlay/scripts/install_eval_suite.sh` 和
+`rl/compare_eval_suite.sh`。卡片在 [tasks/eval/EVAL.md](../tasks/eval/EVAL.md)。

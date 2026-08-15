@@ -14,7 +14,7 @@ class Model(nn.Module):
         return torch.nn.functional.mish(torch.nn.functional.celu((torch.nn.functional.silu(torch.addmm(self.b, x, self.w.t()))), alpha=1.25))
 
 
-batch_size = 96
+batch_size = 97
 in_features = 256
 out_features = 128
 

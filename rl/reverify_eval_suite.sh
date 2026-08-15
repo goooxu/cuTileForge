@@ -27,10 +27,6 @@ verify_one() {
     local tag="$1" level="$2"
     local run_name="${tag}_l${level}"
     local out="$WS/runs/${run_name}_verified.re.jsonl"
-    local extra="--timeout 120"
-    if [[ "$level" == "61" ]]; then
-        extra="--measure-time --ref-mode compile --timeout 180"
-    fi
     if [[ ! -d "$WS/runs/$run_name" ]]; then
         echo "ERROR: missing kernels $WS/runs/$run_name" >&2
         return 1
@@ -41,7 +37,7 @@ verify_one() {
         "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
             --kernel-dir /ws/runs/$run_name --level $level \
             --workers 16 --gpus 4 --out /ws/runs/${run_name}_verified.re.jsonl \
-            $extra"
+            --measure-time --ref-mode compile --timeout 180"
     while docker ps --filter name="fv_${run_name}_re" --format '{{.Names}}' \
             | grep -q "fv_${run_name}_re"; do
         sleep 30

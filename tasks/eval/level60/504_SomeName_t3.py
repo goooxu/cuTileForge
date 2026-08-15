@@ -4,8 +4,8 @@ import torch.nn as nn
 """SomeName (tier 3, conv)"""
 
 # Module-level constants for shapes
-BATCH_SIZE = 3
-SEQ_LEN = 4
+BATCH_SIZE = 5
+SEQ_LEN = 5
 IN_CHANNELS = 8
 OUT_CHANNELS = 8
 KERNEL_SIZE = 3

@@ -47,7 +47,7 @@ IN_CHANNELS = 3
 OUT_CHANNELS = 16
 KERNEL_SIZE = 3
 INPUT_HEIGHT = 48
-INPUT_WIDTH = 48
+INPUT_WIDTH = 49
 BATCH_SIZE = 6
 def get_inputs():
     """Return input tensors for the model"""

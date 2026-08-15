@@ -13,9 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.softplus(((x - x.mean(dim=-1, keepdim=True)) / torch.sqrt((x.var(dim=-1, keepdim=True, unbiased=False) + self.eps))))
 
 
-batch_size = 96
-dim = 512
-
+batch_size = 97
+dim = 513
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

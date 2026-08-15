@@ -16,10 +16,10 @@ class Model(nn.Module):
         return result
 
 # Module-level constants for shapes
-INPUT_HEIGHT = 24
-INPUT_WIDTH = 24
+INPUT_HEIGHT = 25
+INPUT_WIDTH = 25
 INPUT_CHANNELS = 3
-BATCH_SIZE = 6
+BATCH_SIZE = 7
 POOL_KERNEL_SIZE = 2
 POOL_STRIDE = 2
 

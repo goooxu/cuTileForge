@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 # Module-level constants for shapes
-INPUT_DIM = 4
+INPUT_DIM = 5
 HIDDEN_DIM = 8
 OUTPUT_DIM = 6
 BATCH_SIZE = 3

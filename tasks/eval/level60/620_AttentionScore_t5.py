@@ -4,7 +4,7 @@ import torch.nn as nn
 # Module-level constants for shapes
 BATCH_SIZE = 3
 SEQ_LEN = 4
-HEAD_DIM = 8
+HEAD_DIM = 9
 NUM_HEADS = 1
 
 class Model(nn.Module):

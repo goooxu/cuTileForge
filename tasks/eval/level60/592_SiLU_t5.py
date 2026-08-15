@@ -4,11 +4,11 @@ import torch.nn as nn
 """SiLU (tier 5, pool)"""
 
 # Module-level constants for tensor shapes
-BATCH_SIZE = 12
+BATCH_SIZE = 13
 IN_CHANNELS = 64
-DEPTH = 24
-HEIGHT = 48
-WIDTH = 48
+DEPTH = 25
+HEIGHT = 49
+WIDTH = 49
 KERNEL_SIZE = 3
 STRIDE = 2
 PADDING = 1

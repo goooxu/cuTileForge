@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.nn.functional.leaky_relu(torch.sigmoid(x), negative_slope=0.02)
 
 
-batch_size = 3072
+batch_size = 3073
 dim = 6144
 def get_inputs():
     return [torch.rand(batch_size, dim)]

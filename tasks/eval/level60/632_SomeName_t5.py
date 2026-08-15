@@ -20,8 +20,7 @@ class Model(nn.Module):
 
 # Module-level constants for shapes
 INPUT_SIZE = [3, 4, 5, 6]
-REDUCTION_DIM = 1
-
+REDUCTION_DIM = 3
 def get_inputs():
     """Returns a list of tensors to pass to forward"""
     return [torch.randn(INPUT_SIZE)]
@@ -29,4 +28,3 @@ def get_inputs():
 def get_init_inputs():
     """Returns a list of arguments to pass to __init__"""
     return [INPUT_SIZE, REDUCTION_DIM]
-_EVAL_MARK = 1

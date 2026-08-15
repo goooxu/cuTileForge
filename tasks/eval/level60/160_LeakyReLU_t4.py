@@ -14,7 +14,7 @@ class Model(nn.Module):
         return torch.nn.functional.leaky_relu(torch.addmm(self.b, x, self.w.t()), negative_slope=0.02)
 
 
-batch_size = 96
+batch_size = 97
 in_features = 128
 out_features = 128
 

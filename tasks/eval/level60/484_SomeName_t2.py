@@ -2,12 +2,11 @@ import torch
 import torch.nn as nn
 
 # Module-level constants for shapes
-INPUT_FEATURES = 16
+INPUT_FEATURES = 17
 HIDDEN_FEATURES = 32
 OUTPUT_FEATURES = 16
-BATCH_SIZE = 3
-SEQ_LEN = 3
-
+BATCH_SIZE = 5
+SEQ_LEN = 5
 class Model(nn.Module):
     """SomeName (tier 2, conv)"""
 

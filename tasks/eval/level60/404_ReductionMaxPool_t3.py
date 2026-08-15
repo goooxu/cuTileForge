@@ -25,7 +25,7 @@ class Model(nn.Module):
 # Module-level constants for shapes
 INPUT_CHANNELS = 64
 OUTPUT_CHANNELS = 32
-BATCH_SIZE = 24
+BATCH_SIZE = 25
 SEQ_LENGTH = 128
 
 def get_inputs():

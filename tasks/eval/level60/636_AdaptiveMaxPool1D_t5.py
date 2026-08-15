@@ -11,11 +11,10 @@ class Model(nn.Module):
     def forward(self, x):
         return self.pool(x)
 
-INPUT_SIZE = 1024
-BATCH_SIZE = 96
+INPUT_SIZE = 1025
+BATCH_SIZE = 97
 CHANNELS = 256
-OUTPUT_SIZE = 128
-
+OUTPUT_SIZE = 129
 def get_inputs():
     x = torch.randn(BATCH_SIZE, CHANNELS, INPUT_SIZE)
     return [x]

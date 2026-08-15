@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.silu(x)
 
 
-batch_size = 192
-dim = 1536
+batch_size = 3
+dim = 65535
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

@@ -14,11 +14,11 @@ class Model(nn.Module):
         return torch.nn.functional.leaky_relu(self.conv(x), negative_slope=0.02)
 
 
-batch_size = 6
+batch_size = 7
 in_channels = 16
 out_channels = 16
-height = 48
-width = 24
+height = 49
+width = 25
 def get_inputs():
     return [torch.randn(batch_size, in_channels, height, width)]
 

@@ -14,11 +14,11 @@ class Model(nn.Module):
         return torch.softmax(torch.sigmoid((torch.nn.functional.elu((self.conv(x)), alpha=1.25))), dim=-1)
 
 
-batch_size = 12
+batch_size = 13
 in_channels = 16
 out_channels = 16
-height = 48
-width = 48
+height = 49
+width = 49
 def get_inputs():
     return [torch.randn(batch_size, in_channels, height, width)]
 

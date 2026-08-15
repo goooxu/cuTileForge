@@ -37,7 +37,7 @@ class Model(nn.Module):
         return conv_result
 
 # Module-level constants for shapes
-BATCH_SIZE = 6
+BATCH_SIZE = 7
 IN_CHANNELS = 8
 OUT_CHANNELS = 16
 REDUCE_DIM = 1

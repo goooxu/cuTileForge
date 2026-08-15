@@ -19,9 +19,9 @@ class Model(nn.Module):
 # Module-level constants for shapes
 IN_CHANNELS = 64
 OUT_CHANNELS = 128
-BATCH_SIZE = 6
-HEIGHT = 48
-WIDTH = 48
+BATCH_SIZE = 7
+HEIGHT = 49
+WIDTH = 49
 KERNEL_SIZE = 3
 STRIDE = 1
 PADDING = 1

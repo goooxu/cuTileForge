@@ -14,11 +14,11 @@ class Model(nn.Module):
         return torch.nn.functional.silu(self.conv(x))
 
 
-batch_size = 12
+batch_size = 13
 in_channels = 16
 out_channels = 32
-height = 48
-width = 24
+height = 49
+width = 25
 def get_inputs():
     return [torch.randn(batch_size, in_channels, height, width)]
 

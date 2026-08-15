@@ -4,11 +4,11 @@ import torch.nn as nn
 """AdaptiveAvgPool3D_1x3x7x7x7 (tier 2, pool)"""
 
 # Module-level constants for tensor shapes
-BATCH_SIZE = 2
+BATCH_SIZE = 3
 IN_CHANNELS = 3
-DEPTH = 10
-HEIGHT = 10
-WIDTH = 10
+DEPTH = 11
+HEIGHT = 11
+WIDTH = 11
 OUTPUT_SIZE = (1, 1, 1)
 
 class Model(nn.Module):

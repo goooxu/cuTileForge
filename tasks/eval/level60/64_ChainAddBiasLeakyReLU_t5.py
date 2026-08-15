@@ -13,9 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.leaky_relu(torch.logsumexp((((x - x.mean(dim=-1, keepdim=True)) / torch.sqrt((x.var(dim=-1, keepdim=True, unbiased=False) + self.eps))) + 1.5), dim=-1), negative_slope=0.02)
 
 
-batch_size = 192
-dim = 512
-
+batch_size = 193
+dim = 513
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

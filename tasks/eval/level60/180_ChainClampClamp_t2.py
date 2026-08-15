@@ -13,10 +13,10 @@ class Model(nn.Module):
         return torch.clamp(torch.clamp(self.pool(x), -2.0, 2.0), min=-1.0, max=1.0)
 
 
-batch_size = 6
+batch_size = 7
 channels = 4
-height = 48
-width = 24
+height = 49
+width = 25
 kernel_size = 2
 
 def get_inputs():

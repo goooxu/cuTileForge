@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.nn.functional.hardsigmoid(x)
 
 
-batch_size = 192
+batch_size = 193
 dim = 1536
 def get_inputs():
     return [torch.randn(batch_size, dim)]

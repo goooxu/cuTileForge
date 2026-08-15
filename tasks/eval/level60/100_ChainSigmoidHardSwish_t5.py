@@ -13,10 +13,9 @@ class Model(nn.Module):
         return torch.nn.functional.hardswish((torch.sigmoid(torch.matmul(A, B)) * 1.7))
 
 
-M = 4096
-K = 16384
-N = 1024
-
+M = 4097
+K = 16385
+N = 1025
 def get_inputs():
     return [torch.rand(M, K), torch.rand(K, N)]
 

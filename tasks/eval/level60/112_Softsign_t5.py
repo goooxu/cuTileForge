@@ -13,8 +13,8 @@ class Model(nn.Module):
         return torch.nn.functional.softsign(x)
 
 
-batch_size = 4472
-dim = 4472
+batch_size = 4471
+dim = 4473
 def get_inputs():
     return [torch.randn(batch_size, dim)]
 

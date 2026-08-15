@@ -74,11 +74,11 @@ class Model(nn.Module):
 
 
 # Module-level constants for shape configuration
-BATCH_SIZE = 48
-SEQ_LEN = 128
+BATCH_SIZE = 49
+SEQ_LEN = 129
 EMBED_DIM = 512
 NUM_HEADS = 8
-HIDDEN_DIM = 2048
+HIDDEN_DIM = 2049
 DROPOUT = 0.1
 
 def get_inputs():

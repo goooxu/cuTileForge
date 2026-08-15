@@ -14,11 +14,11 @@ class Model(nn.Module):
         return (torch.nn.functional.gelu(self.conv(x)) + 0.3)
 
 
-batch_size = 6
+batch_size = 7
 in_channels = 32
 out_channels = 16
-height = 192
-width = 96
+height = 193
+width = 97
 kernel_size = 1
 padding = 0
 

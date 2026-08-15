@@ -5,8 +5,7 @@ import torch.nn as nn
 BATCH_SIZE = 2
 SEQ_LEN = 4096
 NUM_HEADS = 16
-HEAD_DIM = 64
-
+HEAD_DIM = 65
 class Model(nn.Module):
     """SomeName (tier 5, matmul)"""
     

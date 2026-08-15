@@ -7,8 +7,7 @@ import torch.nn as nn
 INPUT_CHANNELS = 4
 OUTPUT_CHANNELS = 4
 KERNEL_SIZE = 2
-INPUT_SIZE = 8
-
+INPUT_SIZE = 9
 class Model(nn.Module):
     """SomeName (tier 2, pool)"""
     
@@ -36,4 +35,3 @@ def get_inputs():
 def get_init_inputs():
     # No additional inputs needed for __init__
     return []
-_EVAL_MARK = 1

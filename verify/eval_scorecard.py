@@ -3,11 +3,13 @@
 
 Reads the jsonl that fast_verify.py writes. pass@1 is the per-sample rate;
 pass@k is the share of problems with at least one pass in the first k samples.
-Speed is the median of each problem's best compile speedup, only on the speed
-track. Two models are compared on the intersection of problems both solved.
 
-  python3 verify/eval_scorecard.py --run M:runs/eval_M
-  python3 verify/eval_scorecard.py --run M:runs/eval_M --run Q:runs/eval_Q
+Latency (770 graphs) and throughput twins are never folded into one median.
+Each is split common / awkward. Two models are compared on the intersection
+of problems both solved.
+
+  python3 verify/eval_scorecard.py --run M:runs/M
+  python3 verify/eval_scorecard.py --run M:runs/M --run Q:runs/Q
 """
 from __future__ import print_function
 
@@ -23,21 +25,32 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from worker import INCONCLUSIVE_STAGES  # noqa: E402
 
 TILE_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)\s*$", re.M)
+THRESHOLD = 1.05
 
 
-def resolve_pair(prefix):
+def forge_root():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load_manifest(path):
+    man = json.load(open(path))
+    by = {}
+    for p in man["problems"]:
+        by[int(p["problem_id"])] = p
+    return man, by
+
+
+def resolve_run(prefix):
     """prefix is a run directory stem without the _lNN suffix."""
     cands = [
-        (prefix + "_l60_verified.jsonl", prefix + "_l61_verified.jsonl",
-         prefix + "_l61"),
-        (os.path.join(prefix + "_l60", "verified.jsonl"),
-         os.path.join(prefix + "_l61", "verified.jsonl"),
-         prefix + "_l61"),
+        (prefix + "_l60_verified.jsonl", prefix + "_l60"),
+        (os.path.join(prefix + "_l60", "verified.jsonl"), prefix + "_l60"),
+        (prefix + "_verified.jsonl", prefix),
     ]
-    for c_path, s_path, kdir in cands:
-        if os.path.isfile(c_path) and os.path.isfile(s_path):
-            return c_path, s_path, kdir if os.path.isdir(kdir) else None
-    raise SystemExit("no verified jsonl pair under %s" % prefix)
+    for path, kdir in cands:
+        if os.path.isfile(path):
+            return path, kdir if os.path.isdir(kdir) else None
+    raise SystemExit("no verified jsonl under %s" % prefix)
 
 
 def load_jsonl(path):
@@ -49,6 +62,20 @@ def load_jsonl(path):
     for recs in by.values():
         recs.sort(key=lambda r: int(str(r["key"]).split(":")[1]))
     return by
+
+
+def select(by, man_by, role=None, kind=None):
+    out = {}
+    for pid, recs in by.items():
+        meta = man_by.get(pid)
+        if meta is None:
+            continue
+        if role is not None and meta.get("role") != role:
+            continue
+        if kind is not None and meta.get("shape_kind") != kind:
+            continue
+        out[pid] = recs
+    return out
 
 
 def pass_stats(by, k):
@@ -65,13 +92,15 @@ def pass_stats(by, k):
     return n_prob, n_rec, n_ok, solved, p1, pk
 
 
-def best_speedups(by):
+def best_timed(by):
     best = {}
     for pid, recs in by.items():
-        vals = [r["speedup"] for r in recs
-                if r.get("passed") and r.get("speedup")]
-        if vals:
-            best[pid] = max(vals)
+        cand = [r for r in recs
+                if r.get("passed") and r.get("speedup") and r.get("kernel_ms")]
+        if not cand:
+            continue
+        rec = max(cand, key=lambda r: r["speedup"])
+        best[pid] = {"speedup": rec["speedup"], "kernel_ms": rec["kernel_ms"]}
     return best
 
 
@@ -105,77 +134,145 @@ def count_tiles(kernel_dir, level):
     return n1024, n256, n_other, n_none
 
 
-def score_one(tag, prefix, k):
-    c_path, s_path, kdir = resolve_pair(prefix)
-    c_by, s_by = load_jsonl(c_path), load_jsonl(s_path)
-    c = pass_stats(c_by, k)
-    s = pass_stats(s_by, k)
-    speeds = best_speedups(s_by)
-    med = statistics.median(speeds.values()) if speeds else None
-    tiles = count_tiles(kdir, 61)
+def score_one(tag, prefix, k, man_by):
+    path, kdir = resolve_run(prefix)
+    by = load_jsonl(path)
+    lat = select(by, man_by, role="latency")
+    thr = select(by, man_by, role="throughput")
     return {
-        "tag": tag, "prefix": prefix,
-        "correctness": c, "speed": s,
-        "n_timed": len(speeds), "median_speedup": med,
-        "best_speed": speeds, "tiles": tiles,
+        "tag": tag, "prefix": prefix, "by": by,
+        "latency": pass_stats(lat, k),
+        "throughput": pass_stats(thr, k),
+        "best_lat": best_timed(lat),
+        "best_thr": best_timed(thr),
+        "best_lat_common": best_timed(select(by, man_by, "latency", "common")),
+        "best_lat_awkward": best_timed(select(by, man_by, "latency", "awkward")),
+        "best_thr_common": best_timed(select(by, man_by, "throughput", "common")),
+        "best_thr_awkward": best_timed(select(by, man_by, "throughput", "awkward")),
+        "tiles": count_tiles(kdir, 60),
+        "solved_lat": set(pid for pid, recs in lat.items()
+                          if any(r.get("passed") for r in recs[:k])),
     }
 
 
 def print_row(row, k):
-    c_n, _, _, c_sol, c_p1, c_pk = row["correctness"]
-    s_n, _, _, s_sol, s_p1, s_pk = row["speed"]
-    med = row["median_speedup"]
+    l_n, _, _, l_sol, l_p1, l_pk = row["latency"]
+    t_n, _, _, t_sol, t_p1, t_pk = row["throughput"]
     t1024, t256, t_other, t_none = row["tiles"]
-    med_s = ("%.3fx" % med) if med is not None else "  n/a"
-    print("  %-8s  C %3d/%-3d  p@1 %5.1f%%  p@%d %5.1f%%   "
-          "S %3d/%-3d  p@1 %5.1f%%  p@%d %5.1f%%  med %s  "
+    print("  %-8s  L %3d/%-3d  p@1 %5.1f%%  p@%d %5.1f%%   "
+          "T %3d/%-3d  p@1 %5.1f%%  p@%d %5.1f%%  "
           "tile 1024/256/other=%d/%d/%d"
-          % (row["tag"], c_sol, c_n, c_p1, k, c_pk,
-             s_sol, s_n, s_p1, k, s_pk, med_s,
+          % (row["tag"], l_sol, l_n, l_p1, k, l_pk,
+             t_sol, t_n, t_p1, k, t_pk,
              t1024, t256, t_other))
 
 
-def pairwise(a, b):
-    common = sorted(set(a["best_speed"]) & set(b["best_speed"]))
+def pairwise(a_best, b_best, a_tag, b_tag, label):
+    common = sorted(set(a_best) & set(b_best))
     if not common:
-        print("  no commonly solved timed speed problems")
+        print("  %s vs %s  %-8s  no commonly solved timed problems"
+              % (b_tag, a_tag, label))
         return
-    ratios = [b["best_speed"][pid] / a["best_speed"][pid]
-              for pid in common if a["best_speed"][pid] > 0]
-    faster = sum(1 for r in ratios if r > 1.05)
-    slower = sum(1 for r in ratios if r < 1 / 1.05)
-    print("  %s vs %s on %d commonly solved speed problems: median %.3fx  "
+    su = [b_best[pid]["speedup"] / a_best[pid]["speedup"]
+          for pid in common if a_best[pid]["speedup"] > 0]
+    ms = [a_best[pid]["kernel_ms"] / b_best[pid]["kernel_ms"]
+          for pid in common if b_best[pid]["kernel_ms"] > 0]
+    faster = sum(1 for r in su if r > THRESHOLD)
+    slower = sum(1 for r in su if r < 1 / THRESHOLD)
+    med_su = statistics.median(su) if su else float("nan")
+    med_ms = statistics.median(ms) if ms else float("nan")
+    print("  %s vs %s  %-8s  n=%-3d  med su %.3fx  med ms %.3fx  "
           "faster %d  slower %d"
-          % (b["tag"], a["tag"], len(common), statistics.median(ratios),
+          % (b_tag, a_tag, label, len(common), med_su, med_ms,
              faster, slower))
+
+
+def print_pairwise_block(rows, key_all, key_c, key_a, title):
+    print()
+    print(title)
+    if len(rows) < 2:
+        return
+    pairs = [(rows[0], rows[1])]
+    if len(rows) > 2:
+        pairs.append((rows[0], rows[2]))
+        pairs.append((rows[1], rows[2]))
+    for a, b in pairs:
+        pairwise(a[key_all], b[key_all], a["tag"], b["tag"], "all")
+        pairwise(a[key_c], b[key_c], a["tag"], b["tag"], "common")
+        pairwise(a[key_a], b[key_a], a["tag"], b["tag"], "awkward")
+
+
+def family_table(rows, man_by, k):
+    cats = collections.OrderedDict()
+    srcs = collections.OrderedDict()
+    for pid, meta in man_by.items():
+        if meta.get("role") != "latency":
+            continue
+        cats.setdefault(meta.get("category") or "?", []).append(pid)
+        srcs.setdefault(str(meta.get("source_level")), []).append(pid)
+    print()
+    print("correctness by family (solved @k=%d, latency graphs only)" % k)
+    print("  %-12s %4s  %s" % ("family", "n", "  ".join(
+        "%-8s" % r["tag"] for r in rows)))
+    for cat, pids in sorted(cats.items(), key=lambda kv: -len(kv[1])):
+        cells = []
+        for r in rows:
+            n = sum(1 for pid in pids if pid in r["solved_lat"])
+            cells.append("%3d/%-3d" % (n, len(pids)))
+        print("  %-12s %4d  %s" % (cat, len(pids), "  ".join(
+            "%-8s" % c for c in cells)))
+    print()
+    print("correctness by source (solved @k=%d)" % k)
+    for src, pids in sorted(srcs.items()):
+        cells = []
+        for r in rows:
+            n = sum(1 for pid in pids if pid in r["solved_lat"])
+            cells.append("%3d/%-3d" % (n, len(pids)))
+        print("  level %-4s n=%-3d  %s" % (src, len(pids), "  ".join(
+            "%s %s" % (r["tag"], c) for r, c in zip(rows, cells))))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", action="append", required=True,
                     metavar="TAG:PREFIX",
-                    help="Prefix is the run stem without the _l60/_l61 suffix.")
+                    help="Prefix is the run stem without the _l60 suffix.")
     ap.add_argument("--k", type=int, default=4)
+    ap.add_argument("--manifest", default=None,
+                    help="Default: tasks/eval/manifest.json next to this repo.")
     args = ap.parse_args()
 
-    print("standalone eval suite  level60 correctness / level61 speed  "
-          "k=%d  vs torch.compile" % args.k)
+    man_path = args.manifest or os.path.join(
+        forge_root(), "tasks", "eval", "manifest.json")
+    if not os.path.isfile(man_path):
+        raise SystemExit("manifest not found: %s" % man_path)
+    man, man_by = load_manifest(man_path)
+    n_lat = man.get("n_latency", sum(
+        1 for p in man["problems"] if p.get("role") == "latency"))
+    n_thr = man.get("n_throughput", sum(
+        1 for p in man["problems"] if p.get("role") == "throughput"))
+
+    print("standalone eval suite  level 60  k=%d  vs torch.compile" % args.k)
+    print("%d latency + %d throughput  (do not fold these medians together)"
+          % (n_lat, n_thr))
     print()
     rows = []
     for spec in args.run:
         tag, _, prefix = spec.partition(":")
         if not prefix:
             raise SystemExit("expected TAG:PREFIX, got %s" % spec)
-        row = score_one(tag, prefix, args.k)
+        row = score_one(tag, prefix, args.k, man_by)
         rows.append(row)
         print_row(row, args.k)
 
-    if len(rows) >= 2:
-        print()
-        pairwise(rows[0], rows[1])
-        if len(rows) > 2:
-            for other in rows[2:]:
-                pairwise(rows[0], other)
+    print_pairwise_block(
+        rows, "best_lat", "best_lat_common", "best_lat_awkward",
+        "latency pairwise  (su = compile speedup ratio; "
+        "ms = kernel_ms ratio, >1 means second tag is faster)")
+    print_pairwise_block(
+        rows, "best_thr", "best_thr_common", "best_thr_awkward",
+        "throughput pairwise  (same ratios; awkward collapse is a signal)")
+    family_table(rows, man_by, args.k)
     return 0
 
 

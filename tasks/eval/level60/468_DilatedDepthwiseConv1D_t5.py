@@ -29,7 +29,7 @@ class Model(nn.Module):
         return self.conv(x)
 
 # Module-level constants for shapes
-BATCH_SIZE = 2
+BATCH_SIZE = 3
 IN_CHANNELS = 2
 SEQ_LENGTH = 8
 

@@ -13,7 +13,7 @@ class Model(nn.Module):
         return torch.nn.functional.softsign(x)
 
 
-batch_size = 24
+batch_size = 25
 channels = 2
 length = 64
 

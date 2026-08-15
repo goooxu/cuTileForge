@@ -18,7 +18,7 @@ KERNEL_SIZE = 3
 DILATION = 2
 BATCH_SIZE = 2
 HEIGHT = 12
-WIDTH = 12
+WIDTH = 13
 def get_inputs():
     return [torch.randn(BATCH_SIZE, IN_CHANNELS, HEIGHT, WIDTH)]
 

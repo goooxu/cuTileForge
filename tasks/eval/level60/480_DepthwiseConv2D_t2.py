@@ -34,9 +34,9 @@ KERNEL_SIZE = 3
 STRIDE = 1
 PADDING = 1
 DILATION = 1
-BATCH_SIZE = 12
-HEIGHT = 48
-WIDTH = 48
+BATCH_SIZE = 13
+HEIGHT = 49
+WIDTH = 49
 def get_inputs():
     # Create a batch of input tensors
     x = torch.randn(BATCH_SIZE, IN_CHANNELS, HEIGHT, WIDTH)

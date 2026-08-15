@@ -14,7 +14,7 @@ class Model(nn.Module):
         return torch.log_softmax(torch.tanh(torch.addmm(self.b, x, self.w.t())), dim=-1)
 
 
-batch_size = 192
+batch_size = 193
 in_features = 128
 out_features = 128
 

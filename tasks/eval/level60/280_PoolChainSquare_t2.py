@@ -13,10 +13,10 @@ class Model(nn.Module):
         return (self.pool(x) ** 2)
 
 
-batch_size = 6
+batch_size = 7
 channels = 4
-height = 48
-width = 24
+height = 49
+width = 25
 kernel_size = 2
 
 def get_inputs():

@@ -14,11 +14,11 @@ class Model(nn.Module):
         return (torch.sigmoid(self.conv(x)) + 0.3)
 
 
-batch_size = 2
+batch_size = 3
 in_channels = 8
 out_channels = 4
-height = 48
-width = 48
+height = 49
+width = 49
 kernel_size = 1
 padding = 0
 

@@ -6,7 +6,7 @@ import torch.nn as nn
 # Module-level constants for shape configuration
 INPUT_BATCH = 8
 INPUT_SEQ_LEN = 64
-INPUT_FEATURES = 256
+INPUT_FEATURES = 257
 NORM_DIM = -1
 
 class Model(nn.Module):

@@ -47,9 +47,8 @@ QUERY_SHAPE = (2, 4, 64)
 KEY_SHAPE = (2, 4, 64)
 VALUE_SHAPE = (2, 4, 64)
 NUM_HEADS = 1
-KEY_DIM = 64
-VALUE_DIM = 64
-
+KEY_DIM = 65
+VALUE_DIM = 65
 def get_inputs():
     """Returns a list of tensors to pass to forward"""
     query = torch.randn(QUERY_SHAPE)
@@ -60,4 +59,3 @@ def get_inputs():
 def get_init_inputs():
     """Returns a list of arguments to pass to __init__"""
     return [QUERY_SHAPE[2], KEY_DIM, VALUE_DIM, NUM_HEADS]
-_EVAL_MARK = 1

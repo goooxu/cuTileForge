@@ -14,11 +14,11 @@ class Model(nn.Module):
         return (torch.max((self.conv(x) * 2.0), dim=-1)[0]) + 1.5
 
 
-batch_size = 12
+batch_size = 13
 in_channels = 8
 out_channels = 32
-height = 24
-width = 48
+height = 25
+width = 49
 def get_inputs():
     return [torch.randn(batch_size, in_channels, height, width)]
 

@@ -31,11 +31,10 @@ class Model(nn.Module):
         return output
 
 # Module-level constants for shapes
-BATCH_SIZE = 3
-SEQ_LEN = 4
+BATCH_SIZE = 5
+SEQ_LEN = 5
 NUM_HEADS = 3
-HEAD_DIM = 8
-
+HEAD_DIM = 9
 def get_inputs():
     """Return list of input tensors for forward pass"""
     query = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_DIM)
