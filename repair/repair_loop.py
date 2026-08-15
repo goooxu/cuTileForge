@@ -183,7 +183,7 @@ def main() -> None:
                     c["passed_round"] = rnd
                     c["final_code"] = code
                     n_pass += 1
-                elif rec["stage"] in ("oom", "worker_crash", "cuda_poison"):
+                elif rec["stage"] in ("oom", "cuda_poison", "worker_crash"):
                     # The harness failed, not the candidate. Telling the model it
                     # ran out of memory would be false feedback, so drop it and
                     # let the analysis exclude it from the denominator.

@@ -26,7 +26,6 @@ fi
 verify_one() {
     local tag="$1" level="$2"
     local run_name="${tag}_l${level}"
-    local src="$WS/runs/${run_name}_verified.jsonl"
     local out="$WS/runs/${run_name}_verified.re.jsonl"
     local extra="--timeout 120"
     if [[ "$level" == "61" ]]; then
@@ -35,9 +34,6 @@ verify_one() {
     if [[ ! -d "$WS/runs/$run_name" ]]; then
         echo "ERROR: missing kernels $WS/runs/$run_name" >&2
         return 1
-    fi
-    if [[ -f "$src" && ! -f "${src}.pre_ima_fix" ]]; then
-        cp -f "$src" "${src}.pre_ima_fix"
     fi
     echo "=== reverify $run_name -> $out ==="
     docker rm -f "fv_${run_name}_re" >/dev/null 2>&1 || true

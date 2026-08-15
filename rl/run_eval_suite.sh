@@ -5,7 +5,7 @@
 # Correctness is not timed. Speed is timed against torch.compile.
 #
 # Usage:
-#   MODEL=/raid/tmp/gemsg-cutile/model-M ./rl/run_eval_suite.sh M
+#   MODEL=/path/to/model-M ./rl/run_eval_suite.sh M
 #   MODEL=... ./rl/run_eval_suite.sh M --smoke
 set -uo pipefail
 

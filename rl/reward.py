@@ -163,7 +163,7 @@ def speed_bonus(speedup) -> float:
 def reward_for(rec: dict) -> float:
     """Map one verifier record to a scalar reward."""
     stage = rec.get("stage", "")
-    if stage in ("oom", "worker_crash", "cuda_poison"):
+    if stage in ("oom", "cuda_poison", "worker_crash"):
         # The harness failed, not the candidate. Signalling zero here would
         # punish a kernel for the verifier's own contention.
         return None

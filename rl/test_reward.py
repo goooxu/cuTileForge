@@ -78,7 +78,7 @@ def main() -> None:
         seen_stages = collections.Counter(r.get("stage", "") for r in recs)
         unknown = [s for s in seen_stages
                    if s not in STAGE_REWARD
-                   and s not in ("oom", "worker_crash", "cuda_poison")]
+                   and s not in ("oom", "cuda_poison", "worker_crash")]
         check(not unknown, "every stage the verifier emits is handled: %s"
               % (", ".join(sorted(seen_stages)) or "none"))
 

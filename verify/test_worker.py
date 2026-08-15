@@ -1,9 +1,10 @@
 """Classifier for sticky CUDA errors. No GPU required."""
 from __future__ import print_function
 
+import os
 import sys
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from worker import is_cuda_context_error  # noqa: E402
 
 

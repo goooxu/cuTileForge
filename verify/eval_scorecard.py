@@ -19,6 +19,9 @@ import re
 import statistics
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from worker import INCONCLUSIVE_STAGES  # noqa: E402
+
 TILE_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)\s*$", re.M)
 
 
@@ -48,13 +51,10 @@ def load_jsonl(path):
     return by
 
 
-INCONCLUSIVE = ("oom", "cuda_poison", "worker_crash")
-
-
 def pass_stats(by, k):
     n_prob = len(by)
     n_rec = sum(1 for v in by.values() for r in v
-                if r.get("stage") not in INCONCLUSIVE)
+                if r.get("stage") not in INCONCLUSIVE_STAGES)
     n_ok = sum(1 for v in by.values() for r in v if r.get("passed"))
     solved = 0
     for recs in by.values():

@@ -22,7 +22,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from worker import VerifierPool, verify_and_time  # noqa: E402
+from worker import INCONCLUSIVE_STAGES, VerifierPool, verify_and_time  # noqa: E402
 
 
 def load_candidates(kernel_dir: str, level: int, refs: dict, limit=None):
@@ -85,8 +85,7 @@ def main() -> None:
             results = pool.verify_batch(tasks)
 
     n_pass = sum(r["passed"] for r in results.values())
-    n_oom = sum(r["stage"] == "oom" for r in results.values())
-    n_poison = sum(r["stage"] == "cuda_poison" for r in results.values())
+    n_skip = sum(r["stage"] in INCONCLUSIVE_STAGES for r in results.values())
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
@@ -94,13 +93,12 @@ def main() -> None:
             f.write(json.dumps(rec) + "\n")
 
     elapsed = time.time() - start
-    print("done: %d/%d passed (%.1f%%), %d OOM + %d cuda_poison (inconclusive) "
-          "in %.1fs -> %.1f cand/s"
+    print("done: %d/%d passed (%.1f%%), %d inconclusive in %.1fs -> %.1f cand/s"
           % (n_pass, len(tasks), n_pass / max(len(tasks), 1) * 100,
-             n_oom, n_poison, elapsed, len(tasks) / max(elapsed, 1e-9)))
-    if n_oom or n_poison:
-        print("  rerun inconclusive candidates; a sticky CUDA context is retried "
-              "inside the pool, leftovers are not exec failures")
+             n_skip, elapsed, len(tasks) / max(elapsed, 1e-9)))
+    if n_skip:
+        print("  inconclusive (oom / cuda_poison / worker_crash) is retried "
+              "inside the pool; leftovers are not exec failures")
 
     speedups = sorted(r["speedup"] for r in results.values()
                       if r.get("speedup"))

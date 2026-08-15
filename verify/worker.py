@@ -15,6 +15,7 @@ Typical use:
 
 import multiprocessing as mp
 import os
+import queue
 import re
 import signal
 import time
@@ -37,6 +38,8 @@ _CUDA_CONTEXT_MARKERS = (
     "cudaerrorillegalinstruction",
 )
 INCONCLUSIVE_STAGES = ("oom", "cuda_poison", "worker_crash")
+# Retry these mid-batch. worker_crash is only assigned after retries are spent.
+_RETRY_STAGES = ("oom", "cuda_poison")
 # Instant failures are contagion. A real launch+fault is a few hundred ms.
 _POISON_RETRY_SECONDS = 0.05
 
@@ -65,6 +68,24 @@ def _reset_gpu_proc(device_id):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     import torch
     reset_cuda_device(torch)
+
+
+def _drain(q):
+    while True:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            break
+
+
+def _stop_proc(p, timeout=5):
+    if p is None:
+        return
+    if p.is_alive():
+        p.terminate()
+    p.join(timeout=timeout)
+    if p.is_alive():
+        p.kill()
 
 
 def _median(xs):
@@ -446,25 +467,10 @@ class VerifierPool:
         Resetting from inside a live worker hangs siblings that are mid-call.
         The device error is sticky, so new workers must start after a reset.
         """
-        import queue as _queue
         for p in self.procs:
-            if p is None:
-                continue
-            if p.is_alive():
-                p.terminate()
-            p.join(timeout=5)
-            if p.is_alive():
-                p.kill()
-        while True:
-            try:
-                self.task_q.get_nowait()
-            except _queue.Empty:
-                break
-        while True:
-            try:
-                self.result_q.get_nowait()
-            except _queue.Empty:
-                break
+            _stop_proc(p)
+        _drain(self.task_q)
+        _drain(self.result_q)
         resets = []
         for gpu in range(self.gpus):
             p = self.ctx.Process(target=_reset_gpu_proc, args=(gpu,), daemon=True)
@@ -479,8 +485,6 @@ class VerifierPool:
 
     def _run_once(self, pending: dict) -> dict:
         """Dispatch pending {key: item} and collect what comes back."""
-        import queue as _queue
-
         for it in pending.values():
             self.task_q.put(it)
 
@@ -492,7 +496,7 @@ class VerifierPool:
         while len(out) < len(pending):
             try:
                 rec = self.result_q.get(timeout=5)
-            except _queue.Empty:
+            except queue.Empty:
                 if time.time() - last > stall_s:
                     break
                 continue
@@ -521,7 +525,7 @@ class VerifierPool:
 
             crashed = {k: v for k, v in pending.items() if k not in got}
             retry = {k: pending[k] for k, r in got.items()
-                     if r["stage"] in ("oom", "cuda_poison")}
+                     if r["stage"] in _RETRY_STAGES}
             if any(r["stage"] == "cuda_poison" for r in got.values()):
                 self._recycle_all()
             else:
