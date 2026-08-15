@@ -30,7 +30,11 @@
 
 账面上 Q 的 pass@4 比 M 多 224 道。**不能这么读。**
 
-M 的 3080 个样本里有 948 个报 `illegal memory access`，其中 947 个只花了 0.001 秒——kernel 没跑，是上一道把 CUDA 上下文毒死了。OOM 在验证器里算 inconclusive，IMA 却记成 exec 失败。base 和 Q 的验证里 IMA 是 0。
+M 的 3080 个样本里有 948 个报 `illegal memory access`。前 2058 个完成的样本里 1351 个通过、零 IMA，机器当时是好的。第一发是 M 自己的 `567:3`（0.291 秒）：一道 adaptive pool，`grid = (batch, 65536, 1)`，超过 CUDA 网格上限。另外三个样本分别是 `Grid[1] too big` 和 `TileTypeError`，没有 IMA。
+
+后面 947 个 IMA 全是 0.001 秒——验证器在 IMA 之后不 `cudaDeviceReset`，同一张卡上的 worker 接着跑，kernel 没执行。OOM 算 inconclusive，IMA 却记成失败。这 947 个不是外部作业，也不是那 947 个 kernel 写爆了。
+
+Q 在同一道 567 上也写过 `grid=65536`，被 `ValueError` 拦住，没有把设备毒死。Q 的验证里 IMA 是 0。base 没 IMA，但有一次同类传染（`illegal instruction`，1140 个，几乎全是 0.001 秒）。
 
 | | 题数 | M | Q |
 | --- | ---: | ---: | ---: |
