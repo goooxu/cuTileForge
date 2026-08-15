@@ -71,13 +71,21 @@ def main() -> None:
     print("verifying %d candidates with %d workers over %d GPUs"
           % (len(tasks), args.workers, args.gpus))
 
+    def write_out(results):
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        tmp = args.out + ".tmp"
+        with open(tmp, "w") as f:
+            for key, rec in results.items():
+                f.write(json.dumps(rec) + "\n")
+        os.replace(tmp, args.out)
+
     start = time.time()
     if args.measure_time:
         results = verify_and_time(
             tasks, workers=args.workers, gpus=args.gpus,
             num_correct_trials=args.num_correct_trials, timeout_s=args.timeout,
             num_perf_trials=args.num_perf_trials, progress=print,
-            ref_mode=args.ref_mode)
+            ref_mode=args.ref_mode, checkpoint=write_out)
     else:
         with VerifierPool(workers=args.workers, gpus=args.gpus,
                           num_correct_trials=args.num_correct_trials,
@@ -87,10 +95,7 @@ def main() -> None:
     n_pass = sum(r["passed"] for r in results.values())
     n_skip = sum(r["stage"] in INCONCLUSIVE_STAGES for r in results.values())
 
-    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    with open(args.out, "w") as f:
-        for key, rec in results.items():
-            f.write(json.dumps(rec) + "\n")
+    write_out(results)
 
     elapsed = time.time() - start
     print("done: %d/%d passed (%.1f%%), %d inconclusive in %.1fs -> %.1f cand/s"

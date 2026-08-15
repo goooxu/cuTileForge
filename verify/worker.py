@@ -577,7 +577,7 @@ class VerifierPool:
 def verify_and_time(items, workers: int = 16, gpus: int = 4,
                     num_correct_trials: int = 2, timeout_s: float = 120.0,
                     num_perf_trials: int = 20, progress=None,
-                    ref_mode: str = "compile") -> dict:
+                    ref_mode: str = "compile", checkpoint=None) -> dict:
     """Screen for correctness in parallel, then time the survivors exclusively.
 
     Timing and throughput pull in opposite directions. Correctness screening
@@ -600,6 +600,10 @@ def verify_and_time(items, workers: int = 16, gpus: int = 4,
     if progress:
         progress("correct: %d/%d, timing survivors on %d exclusive GPUs"
                  % (len(survivors), len(items), gpus))
+    if checkpoint:
+        checkpoint(results)
+        if progress:
+            progress("checkpointed correctness before timing")
     if not survivors:
         return results
 
@@ -615,4 +619,6 @@ def verify_and_time(items, workers: int = 16, gpus: int = 4,
         # verdict; keep the screening result and leave it without a speedup.
         if rec["passed"]:
             results[key] = rec
+    if checkpoint:
+        checkpoint(results)
     return results

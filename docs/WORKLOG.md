@@ -2199,3 +2199,16 @@ remainder tile：吞吐维几乎全是 256 对齐。现在合成 **一个 level 
 
 跑法仍是 `overlay/scripts/install_eval_suite.sh` 和
 `rl/compare_eval_suite.sh`。卡片在 [tasks/eval/EVAL.md](../tasks/eval/EVAL.md)。
+
+重采 base / M / Q（909 × k=4，全部计时）。旧两轨 kernel 不能复用。
+
+| | 延迟解出 | pass@1 | pass@4 | 吞吐解出 |
+| --- | ---: | ---: | ---: | ---: |
+| base | 182/770 | 9.4% | 23.6% | 63/139 |
+| M | 632/770 | 66.6% | 82.1% | 130/139 |
+| Q | **634/770** | **69.3%** | **82.3%** | 130/139 |
+
+Q 与 M 共享 600 道，独有 34 / 32。延迟成对 Q vs M 1.003x，吞吐 1.002x，不规则
+子集同样打平。验证器在正确性筛完后先落盘，避免计时阶段挂掉丢掉整份 jsonl。
+
+详见 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
