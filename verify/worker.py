@@ -24,6 +24,48 @@ os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "0")
 
 STOP = None
 
+# A generated kernel can leave the GPU in a sticky error state. Later
+# candidates on the same device then fail in a millisecond without running.
+# empty_cache does not clear that; the worker has to reset the device and die
+# so the pool can retry on a fresh context. OOM is already inconclusive; these
+# are the same class of harness failure.
+_CUDA_CONTEXT_MARKERS = (
+    "illegal memory access",
+    "illegal instruction",
+    "unspecified launch failure",
+    "cudaerrorillegaladdress",
+    "cudaerrorillegalinstruction",
+)
+INCONCLUSIVE_STAGES = ("oom", "cuda_poison", "worker_crash")
+# Instant failures are contagion. A real launch+fault is a few hundred ms.
+_POISON_RETRY_SECONDS = 0.05
+
+
+def is_cuda_context_error(exc_or_msg):
+    """True when the GPU context is no longer usable for the next candidate."""
+    text = str(exc_or_msg).lower()
+    if "out of memory" in text:
+        return False
+    return any(m in text for m in _CUDA_CONTEXT_MARKERS)
+
+
+def reset_cuda_device(torch_mod):
+    """Destroy the current CUDA context. Sibling processes on this GPU must die."""
+    try:
+        torch_mod.cuda.synchronize()
+    except Exception:
+        pass
+    try:
+        torch_mod.cuda.cudart().cudaDeviceReset()
+    except Exception:
+        pass
+
+
+def _reset_gpu_proc(device_id):
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    import torch
+    reset_cuda_device(torch)
+
 
 def _median(xs):
     """Median rather than mean: one descheduled trial should not set the number."""
@@ -179,7 +221,9 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
                         and bool(torch.isfinite(got).all())
                         and bool(torch.allclose(got, expected,
                                                 atol=1e-4, rtol=1e-4)))
-        except Exception:
+        except Exception as e:
+            if is_cuda_context_error(e):
+                raise
             return False
         finally:
             if path and os.path.exists(path):
@@ -208,6 +252,7 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
         key, code, ref_src = item
         rec = {"key": key, "passed": False, "stage": "", "error": ""}
         tmp_path = None
+        poison = False
         t0 = time.perf_counter()
         signal.alarm(int(timeout_s))
         try:
@@ -309,15 +354,29 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
             rec["stage"] = "oom"
             rec["error"] = str(e)[:200]
         except Exception as e:
-            rec["stage"] = "exec"
             rec["error"] = "%s: %s" % (type(e).__name__, str(e)[:400])
+            if is_cuda_context_error(e):
+                # Sticky on the device. Put the result first: empty_cache after
+                # an illegal instruction can kill the process and lose the key.
+                rec["stage"] = "cuda_poison"
+                poison = True
+            else:
+                rec["stage"] = "exec"
         finally:
             signal.alarm(0)
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            torch.cuda.empty_cache()
             rec["seconds"] = round(time.perf_counter() - t0, 3)
             result_q.put(rec)
+            if poison:
+                # Do not reset here: sibling workers on this GPU are mid-call
+                # and would hang. The pool kills them, resets each device, then
+                # respawns.
+                os._exit(1)
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                os._exit(1)
 
 
 class VerifierPool:
@@ -332,6 +391,12 @@ class VerifierPool:
     never produces a result. Waiting on the queue for it deadlocks the run, so
     the pool watches for stalls, respawns dead workers, and retries whatever
     went missing.
+
+    A sticky illegal-memory-access is worse: the worker survives, but every
+    later candidate on that GPU fails in a millisecond. Those are marked
+    cuda_poison, the device is reset, every worker is recycled, and the
+    candidates are retried. A kernel that still faults after a fresh context
+    is an exec failure.
     """
 
     def __init__(self, workers: int = 16, gpus: int = 4,
@@ -375,6 +440,43 @@ class VerifierPool:
                 n += 1
         return n
 
+    def _recycle_all(self) -> None:
+        """Kill every worker, reset each GPU, then spawn a clean pool.
+
+        Resetting from inside a live worker hangs siblings that are mid-call.
+        The device error is sticky, so new workers must start after a reset.
+        """
+        import queue as _queue
+        for p in self.procs:
+            if p is None:
+                continue
+            if p.is_alive():
+                p.terminate()
+            p.join(timeout=5)
+            if p.is_alive():
+                p.kill()
+        while True:
+            try:
+                self.task_q.get_nowait()
+            except _queue.Empty:
+                break
+        while True:
+            try:
+                self.result_q.get_nowait()
+            except _queue.Empty:
+                break
+        resets = []
+        for gpu in range(self.gpus):
+            p = self.ctx.Process(target=_reset_gpu_proc, args=(gpu,), daemon=True)
+            p.start()
+            resets.append(p)
+        for p in resets:
+            p.join(timeout=30)
+            if p.is_alive():
+                p.terminate()
+        for i in range(self.workers):
+            self._spawn(i)
+
     def _run_once(self, pending: dict) -> dict:
         """Dispatch pending {key: item} and collect what comes back."""
         import queue as _queue
@@ -394,6 +496,8 @@ class VerifierPool:
                 if time.time() - last > stall_s:
                     break
                 continue
+            if rec.get("key") not in pending:
+                continue
             out[rec["key"]] = rec
             last = time.time()
         return out
@@ -402,8 +506,9 @@ class VerifierPool:
         """Verify (key, code, ref_src) triples; return {key: result}.
 
         Results come back out of order, so they are keyed rather than listed.
-        OOM is retried rather than reported: workers share each GPU, so it says
-        nothing about the candidate and must not be mistaken for a verdict.
+        OOM and a sticky CUDA context are retried rather than reported: both
+        say nothing about the candidate. A kernel that still illegal-accesses
+        after a fresh worker is an exec failure, not inconclusive.
         """
         pending = {key: (key, code, ref) for key, code, ref in items}
         out = {}
@@ -415,12 +520,16 @@ class VerifierPool:
             out.update(got)
 
             crashed = {k: v for k, v in pending.items() if k not in got}
-            oom = {k: pending[k] for k, r in got.items() if r["stage"] == "oom"}
-            self._respawn_dead()
+            retry = {k: pending[k] for k, r in got.items()
+                     if r["stage"] in ("oom", "cuda_poison")}
+            if any(r["stage"] == "cuda_poison" for r in got.values()):
+                self._recycle_all()
+            else:
+                self._respawn_dead()
 
             pending = {}
             pending.update(crashed)
-            pending.update(oom)
+            pending.update(retry)
             if pending and attempt < max_retries:
                 # Let transient pressure clear before trying these again.
                 time.sleep(5)
@@ -433,6 +542,15 @@ class VerifierPool:
             if out[key]["stage"] == "oom":
                 out[key] = {"key": key, "passed": False, "stage": "oom",
                             "error": "out of memory after retries", "seconds": 0.0}
+        for rec in out.values():
+            if rec.get("stage") != "cuda_poison":
+                continue
+            # Survived retries and still poisoned: a real IMA takes hundreds of
+            # ms, contagion takes 1 ms. Only the former is the kernel's fault.
+            if rec.get("seconds", 0) >= _POISON_RETRY_SECONDS:
+                rec["stage"] = "exec"
+            else:
+                rec["error"] = (rec.get("error") or "") + " (after retries)"
         return out
 
     def close(self) -> None:

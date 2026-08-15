@@ -69,13 +69,16 @@ def main() -> None:
           "OOM is inconclusive, not a zero")
     check(reward_for({"passed": False, "stage": "worker_crash"}) is None,
           "a dead verifier worker is inconclusive, not a zero")
+    check(reward_for({"passed": False, "stage": "cuda_poison"}) is None,
+          "a sticky CUDA context is inconclusive, not a zero")
 
     if args.verified:
         print("\nagainst %s:" % os.path.basename(args.verified))
         recs = [json.loads(l) for l in open(args.verified)]
         seen_stages = collections.Counter(r.get("stage", "") for r in recs)
         unknown = [s for s in seen_stages
-                   if s not in STAGE_REWARD and s not in ("oom", "worker_crash")]
+                   if s not in STAGE_REWARD
+                   and s not in ("oom", "worker_crash", "cuda_poison")]
         check(not unknown, "every stage the verifier emits is handled: %s"
               % (", ".join(sorted(seen_stages)) or "none"))
 

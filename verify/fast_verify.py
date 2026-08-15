@@ -86,6 +86,7 @@ def main() -> None:
 
     n_pass = sum(r["passed"] for r in results.values())
     n_oom = sum(r["stage"] == "oom" for r in results.values())
+    n_poison = sum(r["stage"] == "cuda_poison" for r in results.values())
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
@@ -93,11 +94,13 @@ def main() -> None:
             f.write(json.dumps(rec) + "\n")
 
     elapsed = time.time() - start
-    print("done: %d/%d passed (%.1f%%), %d OOM (inconclusive) in %.1fs -> %.1f cand/s"
+    print("done: %d/%d passed (%.1f%%), %d OOM + %d cuda_poison (inconclusive) "
+          "in %.1fs -> %.1f cand/s"
           % (n_pass, len(tasks), n_pass / max(len(tasks), 1) * 100,
-             n_oom, elapsed, len(tasks) / max(elapsed, 1e-9)))
-    if n_oom:
-        print("  rerun OOM candidates with fewer --workers to resolve them")
+             n_oom, n_poison, elapsed, len(tasks) / max(elapsed, 1e-9)))
+    if n_oom or n_poison:
+        print("  rerun inconclusive candidates; a sticky CUDA context is retried "
+              "inside the pool, leftovers are not exec failures")
 
     speedups = sorted(r["speedup"] for r in results.values()
                       if r.get("speedup"))

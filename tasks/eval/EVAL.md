@@ -77,6 +77,8 @@ python3 verify/eval_scorecard.py --run M:runs/M --run Q:runs/Q
 scorecard 会找 `runs/<tag>_l60_verified.jsonl` 和 `runs/<tag>_l61_verified.jsonl`。
 
 第一次读数（base / M / Q）在 [results/REPORT_EVAL_SUITE.md](../../results/REPORT_EVAL_SUITE.md)。
+只重验已有 kernel：`rl/reverify_eval_suite.sh TAG [TAG ...]`。
+验证器把 sticky CUDA error 标成 `cuda_poison` 并重试，不当 exec 失败。
 
 ## 已知缺口
 

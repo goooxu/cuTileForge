@@ -48,9 +48,13 @@ def load_jsonl(path):
     return by
 
 
+INCONCLUSIVE = ("oom", "cuda_poison", "worker_crash")
+
+
 def pass_stats(by, k):
     n_prob = len(by)
-    n_rec = sum(len(v) for v in by.values())
+    n_rec = sum(1 for v in by.values() for r in v
+                if r.get("stage") not in INCONCLUSIVE)
     n_ok = sum(1 for v in by.values() for r in v if r.get("passed"))
     solved = 0
     for recs in by.values():
