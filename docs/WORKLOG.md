@@ -2212,3 +2212,37 @@ Q 与 M 共享 600 道，独有 34 / 32。延迟成对 Q vs M 1.003x，吞吐 1.
 子集同样打平。验证器在正确性筛完后先落盘，避免计时阶段挂掉丢掉整份 jsonl。
 
 详见 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+
+---
+
+# 独立评测集加入 Qwen3.8-27B，协议改 32768
+
+冻结协议的 `max_tokens` 从 8192 改成 32768。Qwen3.8-27B 保持模型默认 thinking
+（`ENABLE_THINKING=1`，`reasoning_effort=xhigh`）；Next 族（base / M / Q）没有
+等价开关，不传 `chat_template_kwargs`。其余不变：`cutile_concepts` + TILE=1024，
+k=4，温度 1.0，`top_p=0.95`，`top_k=40`。
+
+8192 那一版三行（182 / 632 / 634）是另一条协议，归档在 `runs/archive_eval_8192/`，
+不能和 32768 横比。四个模型都按新协议重采。不训练，不改 909 道题，不改
+KernelBench 200 题头条。
+
+生成侧：`extra_body` 可带 thinking；`content` 被 reasoning parser 掏空时回退
+`reasoning_content`；抽取前丢掉 `<think>` / 裸 `</think>`。thinking 开着但还没
+写出 `</think>` 的，不当草图代码是 kernel。`compare_eval_suite.sh` 每个 tag
+先重启 vLLM，避免 8000 上还是上一个模型。
+
+scorecard 四人全配对。读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+
+Qwen3.8 默认 thinking。`ENABLE_THINKING=0` 会显式传 `enable_thinking=False`。
+tag `Q38nt` 是关 thinking 的对照，不覆盖 `Q38` 的 32768 thinking 结果。
+关 thinking 后 `max_tokens` 回到 8192（32768 只给 thinking 留）。32768 那次
+Q38nt 归档在 `runs/archive_q38nt_32768/`。
+
+`kernelbench/` 里曾留下四个 `core.tileiras.*`（各约 157G）。NFS 配额被吃满后，
+8192 Q38nt 的计时在写出 jsonl 时 `ENOSPC`。core 已删。`in_container.sh` 现在
+`ulimit -c 0`，避免再把配额吃满。
+
+Q38nt 按 8192 重采并计时（不复用 32768 那轮样本）。3636 条回复无 `<think>`。
+延迟 **398/770**（p@1 24.3%，p@4 51.7%），吞吐 **110/139**。和归档的 32768
+关 thinking（397 / 102）头条同量级。和 thinking 的 366 / 121 比：conv 23→75，
+激活 130→115，吞吐更差。读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。

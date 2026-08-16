@@ -15,6 +15,7 @@ from __future__ import print_function
 
 import argparse
 import collections
+import itertools
 import json
 import os
 import re
@@ -192,10 +193,7 @@ def print_pairwise_block(rows, key_all, key_c, key_a, title):
     print(title)
     if len(rows) < 2:
         return
-    pairs = [(rows[0], rows[1])]
-    if len(rows) > 2:
-        pairs.append((rows[0], rows[2]))
-        pairs.append((rows[1], rows[2]))
+    pairs = list(itertools.combinations(rows, 2))
     for a, b in pairs:
         pairwise(a[key_all], b[key_all], a["tag"], b["tag"], "all")
         pairwise(a[key_c], b[key_c], a["tag"], b["tag"], "common")

@@ -20,9 +20,10 @@ WS="${CUTILE_WS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:nightly-aarch64}"
 PORT="${PORT:-8000}"
 
-# Prompts run ~15k tokens and completions are capped at 8k; 40k of context is
-# plenty and keeps far more KV cache available than the model's native 262k.
+# Prompts run ~2.4k (cutile_concepts) and completions are capped at 32k; 40k
+# of context is enough and keeps far more KV cache than the native 262k.
 MAX_LEN="${MAX_LEN:-40960}"
+TENSOR_PARALLEL="${TENSOR_PARALLEL:-4}"
 
 # Fraction of each GPU vLLM may claim. 0.90 suits a phase that owns the machine.
 # Anything sharing the GPUs concurrently -- the repair loop's verifier workers --
@@ -58,7 +59,7 @@ docker run -d --name qwen-vllm \
     "$IMAGE" -m vllm.entrypoints.openai.api_server \
         --model "$MODEL" \
         --served-model-name Qwen3-Coder-Next \
-        --tensor-parallel-size 4 \
+        --tensor-parallel-size "$TENSOR_PARALLEL" \
         --max-model-len "$MAX_LEN" \
         --gpu-memory-utilization "$GPU_UTIL" \
         --enable-prefix-caching \

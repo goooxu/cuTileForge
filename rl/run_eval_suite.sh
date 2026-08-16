@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Sample a model on the standalone eval suite (level 60) and score it.
 #
-# Frozen protocol: cutile_concepts, TILE=1024, temperature 1.0, k=4.
+# Frozen protocol: cutile_concepts, TILE=1024, temperature 1.0, k=4,
+# max_tokens=32768. Qwen3.8 thinking: ENABLE_THINKING=1/0 forces on/off
+# (the model default is on; unset leaves that default).
 # Every problem is timed against torch.compile. The scorecard splits
 # latency (770) from throughput twins.
 #
@@ -22,6 +24,10 @@ export PROMPT_TIER="${PROMPT_TIER:-cutile_concepts}"
 export TEMPERATURE="${TEMPERATURE:-1.0}"
 export GPU_UTIL="${GPU_UTIL:-0.90}"
 export NUM_WORKERS="${NUM_WORKERS:-32}"
+export MAX_TOKENS="${MAX_TOKENS:-32768}"
+export ENABLE_THINKING="${ENABLE_THINKING:-}"
+export REASONING_EFFORT="${REASONING_EFFORT:-}"
+export TENSOR_PARALLEL="${TENSOR_PARALLEL:-4}"
 
 TAG="${1:?usage: run_eval_suite.sh <tag> [--smoke]}"
 shift || true
@@ -97,18 +103,35 @@ generate_level() {
         fi
     fi
     local expected=$((n * K))
-    echo "=== generate $run_name k=$K expected=$expected ==="
+    echo "=== generate $run_name k=$K expected=$expected thinking=${ENABLE_THINKING:-unset} max_tokens=$MAX_TOKENS ==="
+    # First generation round always (re)starts vLLM. compare switches
+    # MODEL between tags, but the served name is always Qwen3-Coder-Next,
+    # so a leftover server is the wrong weights.
+    fresh_server=1
     for round in $(seq 1 12); do
         got="$(have "$run_dir")"
         echo "=== $run_name round $round: have $got / $expected ==="
         [[ "$got" -ge "$expected" ]] && return 0
-        server_up || start_server || return 1
+        if [[ "$fresh_server" -eq 1 ]]; then
+            start_server || return 1
+            fresh_server=0
+        else
+            server_up || start_server || return 1
+        fi
         extra=()
         if [[ "$SUBSET_END" -gt 0 ]]; then
             extra+=("subset=($SUBSET_START, $SUBSET_END)")
         fi
-        NAME="gen-$run_name" "$KB/scripts/run_generate.sh" "$run_name" "$level" "$K" \
-            "${extra[@]}" log_raw_response=True 2>&1 | tail -5
+        # Detached: a foreground docker run --rm dies with this bash tree
+        # (that is how the Q38 6h generate stopped at 22:59 with no OOM).
+        NAME="gen-$run_name" DETACH=1 "$KB/scripts/run_generate.sh" \
+            "$run_name" "$level" "$K" \
+            "${extra[@]}" log_raw_response=True >/dev/null
+        while docker ps --filter name="gen-$run_name" --format '{{.Names}}' \
+                | grep -q "gen-$run_name"; do
+            sleep 30
+        done
+        docker logs "gen-$run_name" 2>&1 | tail -5 || true
         docker rm -f "gen-$run_name" >/dev/null 2>&1 || true
     done
     got="$(have "$run_dir")"
@@ -140,4 +163,5 @@ docker rm -f qwen-vllm >/dev/null 2>&1 || true
 
 verify_level 60
 
-python3 "$FORGE/verify/eval_scorecard.py" --run "$TAG:$WS/runs/${TAG}" --k "$K"
+python3 "$FORGE/verify/eval_scorecard.py" --run "$TAG:$WS/runs/${TAG}" --k "$K" \
+    || echo "scorecard failed for $TAG (non-fatal; compare continues)"

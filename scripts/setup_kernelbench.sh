@@ -34,8 +34,12 @@ echo "==> copying overlay"
 cp -r "$FORGE/overlay/." "$CHECKOUT/"
 chmod +x "$CHECKOUT"/scripts/*.sh
 
-echo "==> applying patch"
+echo "==> applying patches"
 git -C "$CHECKOUT" apply --verbose "$FORGE/patches/0001-cutile-backend.patch"
+for extra in "$FORGE"/patches/0002-*.patch; do
+    [[ -f "$extra" ]] || continue
+    git -C "$CHECKOUT" apply --verbose "$extra"
+done
 
 # The golden solutions are referenced by path from inside the checkout, so make
 # them reachable without duplicating them into the overlay. The link must be

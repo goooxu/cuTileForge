@@ -52,7 +52,12 @@ python3 taskgen/test_eval_suite.py
 以后每个新模型都按这个跑，否则不能横比。
 
 - Prompt：`cutile_concepts` + overlay 里的 `TILE_SIZE = 1024`
-- `k=4`，温度 `1.0`，`top_p=0.95`，`top_k=40`，`max_tokens=8192`，`check_kernel=False`
+- `k=4`，温度 `1.0`，`top_p=0.95`，`top_k=40`，`max_tokens=32768`，`check_kernel=False`
+- Qwen3.8-27B 头条保持模型默认 thinking（tag `Q38`：`ENABLE_THINKING=1`，`reasoning_effort=xhigh`）。
+  关 thinking 的对照是另一条协议（tag `Q38nt`：`ENABLE_THINKING=0`，`max_tokens=8192`），
+  不能和开 thinking 的 32768 数印成一行。32768 的关 thinking 试跑归档在 `runs/archive_q38nt_32768/`。
+  Next 族（base / M / Q）没有等价开关，不传 `chat_template_kwargs`
+- 8192 上限那一版是另一条协议，不能和 32768 横比
 - 通过：数值对 **且** 全是 cuTile
 - 计时：`fast_verify --measure-time --ref-mode compile` 一次跑完
 - 头条顺序：延迟成对（再拆 common / awkward）→ 吞吐成对（同样拆）→ 770 张图
@@ -81,8 +86,14 @@ CUTILE_WS=... MODEL=... ./rl/run_eval_suite.sh <tag> --smoke
 CUTILE_WS=... rl/compare_eval_suite.sh \
     base:/path/to/Qwen3-Coder-Next \
     M:/path/to/model-M \
-    Q:/path/to/model-Q
+    Q:/path/to/model-Q \
+    Q38:/path/to/Qwen3.8-27B \
+    Q38nt:/path/to/Qwen3.8-27B
 ```
+
+`Q38` 会开 thinking 并设 `max_tokens=32768`。`Q38nt` 会关 thinking 并设
+`max_tokens=8192`。其它 tag 默认 32768、不传 thinking 开关。
+
 
 已经有 jsonl 时只打分：
 

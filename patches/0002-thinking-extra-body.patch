@@ -1,0 +1,136 @@
+--- a/src/kernelbench/utils.py
++++ b/src/kernelbench/utils.py
+@@ -137,7 +137,13 @@ def query_server(
+             api_key=SGLANG_KEY, base_url=f"{url}/v1", timeout=None, max_retries=0
+         )
+         # top_k is not in the OpenAI schema; vLLM and SGLang accept it via extra_body.
+         extra_body = {"top_k": top_k} if top_k and top_k > 0 else {}
++        thinking = _thinking_flag()
++        if thinking is not None:
++            extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = thinking
++        effort = os.environ.get("REASONING_EFFORT", "").strip()
++        if effort:
++            extra_body["reasoning_effort"] = effort
++
+         use_chat = server_type == "local_chat" or not isinstance(prompt, str)
+         if use_chat:
+             if isinstance(prompt, list):
+@@ -157,7 +163,7 @@ def query_server(
+                 top_p=top_p,
+                 extra_body=extra_body,
+             )
+-            outputs = [choice.message.content for choice in response.choices]
++            outputs = [_choice_text(choice) for choice in response.choices]
+         else:
+             response = client.completions.create(
+                 model=model_name,
+@@ -415,6 +421,28 @@ def print_messages(messages):
+         print("\n\n")
+ 
+ 
++def _thinking_flag():
++    """ENABLE_THINKING=1/0 forces thinking on or off. Unset leaves the model default."""
++    v = os.environ.get("ENABLE_THINKING", "").strip().lower()
++    if v in ("1", "true", "yes"):
++        return True
++    if v in ("0", "false", "no"):
++        return False
++    return None
++
++
++def _choice_text(choice):
++    """Final answer text. Reasoning parsers may empty content."""
++    msg = choice.message
++    content = getattr(msg, "content", None) or ""
++    if isinstance(content, list):
++        parts = []
++        for p in content:
++            if isinstance(p, dict):
++                parts.append(p.get("text") or "")
++            else:
++                parts.append(getattr(p, "text", None) or "")
++        content = "".join(parts)
++    if str(content).strip():
++        return content
++    return getattr(msg, "reasoning_content", None) or ""
++
++
++def _strip_think_blocks(text):
++    """Drop Qwen thinking so sketch fences inside cannot win.
++
++    Some traces are wrapped in <think>...</think>. Qwen3.8 often emits the
++    reasoning then a bare </think> with no opener; everything before the
++    closer is thinking.
++    """
++    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
++    if re.search(r"</think>", text, flags=re.IGNORECASE):
++        text = re.split(r"</think>", text, maxsplit=1, flags=re.IGNORECASE)[-1]
++    return text
++
++
+ def extract_python_code(text):
+     """
+     Extract python code from model output
+@@ -473,32 +507,55 @@ def extract_best_code(output_string: str, code_language_types: list[str]) -> str
+     if output_string is None:
+         return None
+ 
+-    blocks = re.findall(r"```(\w*)\n?(.*?)```", output_string.strip(), re.DOTALL)
+-    if not blocks:
+-        return None
++    thinking_on = _thinking_flag() is True
++    # Truncated mid-think: do not harvest sketch fences as the kernel.
++    if thinking_on and not re.search(r"</think>", output_string, re.I):
++        return None
++
++    output_string = _strip_think_blocks(output_string)
++    blocks = re.findall(r"```(\w*)\n?(.*?)```", output_string.strip(), re.DOTALL)
+ 
+     def clean(lang: str, body: str) -> str:
+         body = body.strip()
+         # Handle ```python foo``` written on one line, where the tag lands in the body.
+         for code_type in code_language_types:
+             if body.startswith(code_type):
+                 body = body[len(code_type):].strip()
+         return body
+ 
+     cleaned = [(lang.lower(), clean(lang, body)) for lang, body in blocks]
+ 
+     defines_model = [c for _, c in cleaned if re.search(r"class\s+ModelNew\b", c)]
+     if defines_model:
+         return defines_model[-1]
+ 
+     tagged = [c for lang, c in cleaned if lang in code_language_types]
+     if tagged:
+         return tagged[-1]
+ 
+-    return max((c for _, c in cleaned), key=len)
++    if cleaned:
++        return max((c for _, c in cleaned), key=len)
++
++    # Thinking + kernel often hits the cap with an unclosed final fence.
++    dangling = re.search(r"```(\w*)\n?(.*)$", output_string.strip(), re.DOTALL)
++    if dangling:
++        body = clean(dangling.group(1), dangling.group(2))
++        if re.search(r"class\s+ModelNew\b", body):
++            return body
++    return None
+--- a/scripts/generate_samples.py
++++ b/scripts/generate_samples.py
+@@ -159,8 +159,14 @@ def generate_sample_single(
+             f.write(raw_response or "")
+ 
+     custom_kernel = extract_best_code(raw_response, ["python", "cpp"])
+-    # check LLM is able to generate custom CUDA code
+-    assert custom_kernel is not None, "Custom CUDA code generation failed"
++    # Truncated thinking (no </think>) or an unclosed fence used to raise
++    # here, so the retry loop re-queried the same 32k traces for hours.
++    # Write a stub instead: verify counts it as a failed sample.
++    if custom_kernel is None:
++        custom_kernel = (
++            "# extract_best_code returned None "
++            "(truncated thinking or no ModelNew fence)\n"
++        )
+ 
+     # Optional: we provide a static code checker for kernel code using regex matching
+     # NOTE: by no means, is this checker complete, but it might could help catch some potential hacks and issues

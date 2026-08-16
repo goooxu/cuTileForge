@@ -59,6 +59,8 @@ args=(--user "$(id -u):$(id -g)" --ipc=host --network host
       # The OpenAI client refuses to construct without a key; the local vLLM
       # server is started without --api-key and ignores its value.
       -e SGLANG_API_KEY=local-no-auth
+      -e ENABLE_THINKING="${ENABLE_THINKING:-}"
+      -e REASONING_EFFORT="${REASONING_EFFORT:-}"
       -v "$WS":/ws
       -w "/ws/$REL")
 
@@ -84,5 +86,8 @@ if [[ $# -eq 1 ]]; then
 else
     cmd="$(printf '%q ' "$@")"
 fi
+
+# tileiras has dumped 157G cores into the checkout and filled the NFS quota.
+cmd="ulimit -c 0; $cmd"
 
 exec docker run "${args[@]}" --entrypoint bash "$IMAGE" -lc "$cmd"

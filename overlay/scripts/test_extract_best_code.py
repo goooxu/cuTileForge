@@ -54,13 +54,55 @@ Wait, that is wrong. Corrected:
 
 NO_FENCE = "I cannot write this kernel."
 
+THINK_SKETCH = f"""<think>
+A first sketch:
+
+```python
+class ModelNew(nn.Module):
+    pass
+```
+</think>
+
+Here is the kernel:
+
+```python
+{REAL_KERNEL}```
+"""
+
+THINK_CLOSER_ONLY = f"""A first sketch:
+
+```python
+class ModelNew(nn.Module):
+    pass
+```
+</think>
+
+Here is the kernel:
+
+```python
+{REAL_KERNEL}```
+"""
+
 CASES = [
     ("formula block before code", FORMULA_FIRST, True),
     ("plain single python block", PLAIN, True),
     ("untagged single block", UNTAGGED_ONLY, True),
     ("revised, takes last", REVISED, True),
     ("no fenced block", NO_FENCE, False),
+    ("think sketch discarded", THINK_SKETCH, True),
+    ("think closer-only discarded", THINK_CLOSER_ONLY, True),
 ]
+
+# Mid-think traces must not yield a sketch when ENABLE_THINKING is on.
+import os
+os.environ["ENABLE_THINKING"] = "1"
+mid = extract_best_code(THINK_CLOSER_ONLY.replace("</think>\n\n", ""), ["python", "cpp"])
+if mid is not None:
+    print("[FAIL] mid-think harvested a sketch")
+    failures += 1
+else:
+    print("[ok ] mid-think returns None")
+os.environ.pop("ENABLE_THINKING", None)
 
 failures = 0
 for name, text, expect_kernel in CASES:

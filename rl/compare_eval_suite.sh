@@ -9,7 +9,10 @@
 #   CUTILE_WS=... rl/compare_eval_suite.sh \
 #       base:/path/to/Qwen3-Coder-Next \
 #       M:/path/to/model-M \
-#       Q:/path/to/model-Q
+#       Q:/path/to/model-Q \
+#       Q38:/path/to/Qwen3.8-27B \
+#       Q38nt:/path/to/Qwen3.8-27B
+# Q38 = thinking on, max_tokens=32768. Q38nt = thinking off, max_tokens=8192.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,8 +45,24 @@ for spec in "$@"; do
         echo "  ERROR: model path missing: $path" >&2
         exit 1
     fi
-    MODEL="$path" MOUNTS="-v /raid/tmp:/raid/tmp:ro" \
-        bash "$FORGE/rl/run_eval_suite.sh" "$tag" || {
+    export MODEL="$path"
+    export MOUNTS="-v /raid/tmp:/raid/tmp:ro"
+    # Per-tag protocol. Always set MAX_TOKENS so a previous tag cannot leak.
+    if [[ "$tag" == "Q38" ]]; then
+        export ENABLE_THINKING=1
+        export REASONING_EFFORT=xhigh
+        export MAX_TOKENS=32768
+    elif [[ "$tag" == "Q38nt" ]]; then
+        # No-think: 32768 was only for thinking traces. Same 8192 as the
+        # archived non-thinking protocol.
+        export ENABLE_THINKING=0
+        unset REASONING_EFFORT || true
+        export MAX_TOKENS=8192
+    else
+        unset ENABLE_THINKING REASONING_EFFORT || true
+        export MAX_TOKENS=32768
+    fi
+    bash "$FORGE/rl/run_eval_suite.sh" "$tag" || {
         echo "  ERROR: run_eval_suite failed for $tag" >&2
         exit 1
     }
