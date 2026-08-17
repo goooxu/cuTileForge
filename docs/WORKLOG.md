@@ -2273,3 +2273,19 @@ base / M / Q / Q38 / Q38nt 不重采。
 
 读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
 提交邮箱改为 `gems@x.ai`。
+
+---
+
+# 验证器：编译超时算失败
+
+`signal.alarm` 只打断 Python worker。cuTile 的 JIT 是 tileiras → PTX → ptxas，
+ptxas 在 tileiras 死后会被容器 init 收养，继续编一个多小时，worker 已经去干下一
+个样本。评测协议里的 `--timeout 180` 对这种编译等于没设。
+
+验证器现在：
+
+- 设 `CUDA_TILE_COMPILER_TIMEOUT_SEC`（和 candidate timeout 同一预算）。tileiras
+  超时抛 `TileCompilerTimeoutError`，记 `stage=timeout`，算失败，不重试。
+- 每个 worker 独占 `CUDA_TILE_TEMP_DIR`。超时后按进程树和该目录杀掉残留的
+  `tileiras` / `ptxas`，避免孤儿占满 CPU。
+

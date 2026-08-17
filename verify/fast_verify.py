@@ -7,7 +7,8 @@ only ~65 ms, so that cost is dominated by per-sample process startup and the
 100 performance trials -- neither of which rejection sampling needs.
 
 The verification itself lives in verify/worker.py, shared with the repair loop
-so the pass criterion cannot drift between the two.
+so the pass criterion cannot drift between the two. `--timeout` covers tileiras
+and ptxas: overtime is a `timeout` failure, not a hung worker.
 
 Usage:
     python3 verify/fast_verify.py --kernel-dir runs/synth/kernels \\

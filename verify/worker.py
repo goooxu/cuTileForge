@@ -18,6 +18,8 @@ import os
 import queue
 import re
 import signal
+import tempfile
+import threading
 import time
 
 # Must be set before any worker imports torch.
@@ -50,6 +52,100 @@ def is_cuda_context_error(exc_or_msg):
     if "out of memory" in text:
         return False
     return any(m in text for m in _CUDA_CONTEXT_MARKERS)
+
+
+def is_compiler_timeout(exc_or_msg):
+    """True when tileiras/ptxas hit CUDA_TILE_COMPILER_TIMEOUT_SEC."""
+    name = type(exc_or_msg).__name__ if not isinstance(exc_or_msg, str) else ""
+    if name == "TileCompilerTimeoutError":
+        return True
+    text = ("%s %s" % (name, exc_or_msg)).lower()
+    return "tilecompilertimeouterror" in text.replace(" ", "") or (
+        "compiler" in text and "timeout" in text and "tile" in text)
+
+
+_COMPILER_COMMS = frozenset({"ptxas", "tileiras", "llc"})
+
+
+def _iter_pids():
+    try:
+        for name in os.listdir("/proc"):
+            if name.isdigit():
+                yield int(name)
+    except OSError:
+        return
+
+
+def _ppid_of(pid):
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            buf = f.read()
+        rp = buf.rfind(")")
+        return int(buf[rp + 2:].split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _proc_comm(pid):
+    try:
+        with open("/proc/%d/comm" % pid) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _proc_cmdline(pid):
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def descendant_pids(root):
+    """All current descendants of root (not including root)."""
+    children = {}
+    for pid in _iter_pids():
+        parent = _ppid_of(pid)
+        if parent is None:
+            continue
+        children.setdefault(parent, []).append(pid)
+    out = []
+    stack = list(children.get(root, ()))
+    while stack:
+        pid = stack.pop()
+        out.append(pid)
+        stack.extend(children.get(pid, ()))
+    return out
+
+
+def kill_stray_compilers(temp_dir, root_pid=None):
+    """Kill tileiras/ptxas this worker launched, including init-reparented orphans.
+
+    SIGALRM only interrupts the Python worker. tileiras spawns ptxas; when the
+    parent dies, ptxas is reparented to the container init and keeps compiling
+    for an hour. Attribute leftovers by process tree or CUDA_TILE_TEMP_DIR.
+    """
+    root_pid = os.getpid() if root_pid is None else root_pid
+    marker = os.path.abspath(temp_dir) if temp_dir else ""
+    mine = set(descendant_pids(root_pid))
+    victims = []
+    for pid in _iter_pids():
+        if pid == root_pid:
+            continue
+        comm = _proc_comm(pid)
+        cmd = _proc_cmdline(pid)
+        is_compiler = comm in _COMPILER_COMMS or "ptxas" in cmd or "tileiras" in cmd
+        if not is_compiler:
+            continue
+        if pid in mine or (marker and marker in cmd):
+            victims.append(pid)
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return victims
 
 
 def reset_cuda_device(torch_mod):
@@ -113,9 +209,13 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
     older numbers.
     """
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    # tileiras respects this: compile overtime becomes TileCompilerTimeoutError
+    # instead of a hung ptxas. Same budget as the candidate alarm.
+    os.environ["CUDA_TILE_COMPILER_TIMEOUT_SEC"] = str(max(1, int(timeout_s)))
+    temp_dir = tempfile.mkdtemp(prefix="cutile-%d-" % os.getpid())
+    os.environ["CUDA_TILE_TEMP_DIR"] = temp_dir
 
     import importlib.util
-    import tempfile
 
     import torch
     from kernelbench.eval import load_original_model_and_inputs, set_seed
@@ -137,6 +237,7 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
         pass
 
     def _on_alarm(signum, frame):
+        kill_stray_compilers(temp_dir)
         raise Timeout("exceeded %.0fs" % timeout_s)
 
     # Compiling the reference costs a couple of seconds, and every candidate for
@@ -275,7 +376,11 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
         tmp_path = None
         poison = False
         t0 = time.perf_counter()
-        signal.alarm(int(timeout_s))
+        signal.alarm(max(1, int(timeout_s)))
+        # SIGALRM does not kill a ptxas that tileiras spawned. The timer does.
+        killer = threading.Timer(timeout_s, kill_stray_compilers, args=(temp_dir,))
+        killer.daemon = True
+        killer.start()
         try:
             ok, msg = purity(code)
             if not ok:
@@ -376,7 +481,9 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
             rec["error"] = str(e)[:200]
         except Exception as e:
             rec["error"] = "%s: %s" % (type(e).__name__, str(e)[:400])
-            if is_cuda_context_error(e):
+            if is_compiler_timeout(e):
+                rec["stage"] = "timeout"
+            elif is_cuda_context_error(e):
                 # Sticky on the device. Put the result first: empty_cache after
                 # an illegal instruction can kill the process and lose the key.
                 rec["stage"] = "cuda_poison"
@@ -385,6 +492,9 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
                 rec["stage"] = "exec"
         finally:
             signal.alarm(0)
+            killer.cancel()
+            if rec.get("stage") == "timeout":
+                kill_stray_compilers(temp_dir)
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             rec["seconds"] = round(time.perf_counter() - t0, 3)
