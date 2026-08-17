@@ -55,20 +55,36 @@ python3 taskgen/test_eval_suite.py
 - `k=4`，温度 `1.0`，`top_p=0.95`，`top_k=40`，`check_kernel=False`
 - 发表两张表，不能横比：
   - **表 A**：`max_tokens=32768`。Q38 开 thinking（`ENABLE_THINKING=1`，`xhigh`）。
-    Next 族（base / M / Q）没有等价开关，不传 `chat_template_kwargs`
+    G4t 开 thinking（无 effort 档）。GL（Muse Glimmer）thinking 关不掉，
+    `reasoning_strength=xhigh`。Next 族没有等价开关，不传 `chat_template_kwargs`
   - **表 B**：`max_tokens=8192`。Q38nt 关 thinking（`ENABLE_THINKING=0`）。
-    G4（`google/gemma-4-31B-it`）走官方默认：关 thinking，`EXTRA_ARGS=--reasoning-parser gemma4`。
-    Next 族用同一 8192 上限的采样（归档在 `runs/archive_eval_8192/`）
+    G4（`google/gemma-4-31B-it`）关 thinking，`vllm/vllm-openai:nightly-aarch64`，
+    `EXTRA_ARGS=--reasoning-parser gemma4`。v0.27.1 正式镜像起不来（`head_dim`），
+    发表数仍是 nightly。Next 族用同一 8192 上限的采样（归档在 `runs/archive_eval_8192/`）
 - 32768 的关 thinking 试跑归档在 `runs/archive_q38nt_32768/`，不单开第三张表
 - 通过：数值对 **且** 全是 cuTile
-- 计时：`fast_verify --measure-time --ref-mode compile` 一次跑完
+- 计时：`fast_verify --measure-time --ref-mode compile` 一次跑完。`--timeout`
+  （本套评测 180s）含 tileiras/ptxas 编译，超时记 `timeout`、算失败。
 - 头条顺序：延迟成对（再拆 common / awkward）→ 吞吐成对（同样拆）→ 770 张图
   pass@1 / pass@4（按族、按出处）
 - 两个模型比速度：只用两边都解出的题做成对比较，阈值 1.05x
 - 禁止：延迟中位 ms 和吞吐中位加速比横比；conv / matmul 进吞吐头条；只报对齐
   子集假装「也会写 remainder」
-- 不要和 TILE=256 时期的 M 数、也不要和 KernelBench 200 题头条混在一张表里
+- 不要和 TILE=256 时期的 Next-M 数、也不要和 KernelBench 200 题头条混在一张表里
 - 旧两轨（770 不计时 + 250 道 level 61）上的数字作废，不能和这套横比
+
+## 表内名称
+
+目录和脚本仍用短 tag。发表表用下面的名字：
+
+| 表内 | tag | 是什么 |
+| --- | --- | --- |
+| Next | `base` | Qwen3-Coder-Next，未在本项目训练 |
+| Next-M | `M` | 拒绝采样 SFT → 丢掉长文档 → 自蒸馏 → GRPO |
+| Next-Q | `Q` | 在 Next-M 的通过解上第二次自蒸馏 |
+| Q38 / Q38nt | `Q38` / `Q38nt` | Qwen3.8-27B，开 / 关 thinking |
+| G4 / G4t | `G4` / `G4t` | Gemma-4-31B-it，关 / 开 thinking |
+| GL | `GL` | Muse Glimmer 30B |
 
 ## 怎么跑
 
@@ -91,12 +107,15 @@ CUTILE_WS=... rl/compare_eval_suite.sh \
     Q:/path/to/model-Q \
     Q38:/path/to/Qwen3.8-27B \
     Q38nt:/path/to/Qwen3.8-27B \
-    G4:/path/to/Gemma-4-31B-it
+    G4:/path/to/Gemma-4-31B-it \
+    G4t:/path/to/Gemma-4-31B-it \
+    GL:/path/to/Muse-Glimmer-30B
 ```
 
 `Q38` 会开 thinking 并设 `max_tokens=32768`。`Q38nt` 会关 thinking 并设
-`max_tokens=8192`。`G4` 关 thinking、`max_tokens=8192`，并带
-`--reasoning-parser gemma4`。其它 tag 默认 32768、不传 thinking 开关。
+`max_tokens=8192`。`G4` 关 thinking、8192、v0.27.1-aarch64。`G4t` 开 thinking、
+32768、同一镜像。`GL` 用 `muse-glimmer` 镜像、`reasoning_strength=xhigh`、32768。
+其它 tag 默认 32768、不传 thinking 开关。
 
 
 已经有 jsonl 时只打分：

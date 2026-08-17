@@ -2301,3 +2301,17 @@ G4t 生成 3636 齐了，正确性 1917/3636。同一容器里筛完再开计时
 Glimmer 校验完整：延迟 **580/770**（p@1 51.5%，p@4 75.3%），吞吐 **123/139**。
 读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
 
+---
+
+# 表内名称：base / M / Q → Next / Next-M / Next-Q
+
+发表表不再用字母代号。对照：
+
+| 表内 | tag | 是什么 |
+| --- | --- | --- |
+| Next | `base` | Qwen3-Coder-Next，未在本项目训练 |
+| Next-M | `M` | 拒绝采样 SFT → 丢掉长文档 → 自蒸馏 → GRPO |
+| Next-Q | `Q` | 在 Next-M 的通过解上第二次自蒸馏 |
+
+`runs/` 和 `compare_eval_suite.sh` 的 tag 不变。历史阶段报告里的 model M / Q 不改写。
+
