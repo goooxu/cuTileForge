@@ -27,6 +27,7 @@ export NUM_WORKERS="${NUM_WORKERS:-32}"
 export MAX_TOKENS="${MAX_TOKENS:-32768}"
 export ENABLE_THINKING="${ENABLE_THINKING:-}"
 export REASONING_EFFORT="${REASONING_EFFORT:-}"
+export REASONING_STRENGTH="${REASONING_STRENGTH:-}"
 export EXTRA_ARGS="${EXTRA_ARGS:-}"
 export TENSOR_PARALLEL="${TENSOR_PARALLEL:-4}"
 
@@ -48,7 +49,11 @@ else
     SUBSET_END=0
 fi
 
-bash "$FORGE/overlay/scripts/install_eval_suite.sh"
+# SKIP_INSTALL=1 when another host is already verifying from this
+# checkout: install_eval_suite.sh wipes KernelBench/level60 first.
+if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
+    bash "$FORGE/overlay/scripts/install_eval_suite.sh"
+fi
 
 have() {
     python3 - "$1" <<'PY'
@@ -143,13 +148,28 @@ verify_level() {
     local level="$1"
     local run_name="${TAG}_l${level}"
     local out="$WS/runs/${run_name}_verified.jsonl"
-    echo "=== verify $run_name timed=1 ==="
+    # Two containers: after the screening pool exits, CUDA in that container
+    # can fail to re-init (G4t: timing workers hit "No CUDA GPUs are available"
+    # and the parent wedged). Timing always starts clean.
+    echo "=== verify $run_name correctness ==="
     docker rm -f "fv_$run_name" >/dev/null 2>&1 || true
     CUTILE_WS="$WS" DETACH=1 NAME="fv_$run_name" "$KB/scripts/in_container.sh" \
         "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
             --kernel-dir /ws/runs/$run_name --level $level \
             --workers 16 --gpus 4 --out /ws/runs/${run_name}_verified.jsonl \
-            --measure-time --ref-mode compile --timeout 180"
+            --timeout 180"
+    while docker ps --filter name="fv_$run_name" --format '{{.Names}}' \
+            | grep -q "fv_$run_name"; do
+        sleep 30
+    done
+    echo "=== verify $run_name timing (fresh container) ==="
+    docker rm -f "fv_$run_name" >/dev/null 2>&1 || true
+    CUTILE_WS="$WS" DETACH=1 NAME="fv_$run_name" "$KB/scripts/in_container.sh" \
+        "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
+            --kernel-dir /ws/runs/$run_name --level $level \
+            --workers 4 --gpus 4 --out /ws/runs/${run_name}_verified.jsonl \
+            --measure-time --timing-from /ws/runs/${run_name}_verified.jsonl \
+            --ref-mode compile --timeout 180"
     while docker ps --filter name="fv_$run_name" --format '{{.Names}}' \
             | grep -q "fv_$run_name"; do
         sleep 30

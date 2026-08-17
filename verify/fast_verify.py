@@ -26,7 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from worker import INCONCLUSIVE_STAGES, VerifierPool, verify_and_time  # noqa: E402
 
 
-def load_candidates(kernel_dir: str, level: int, refs: dict, limit=None):
+def load_candidates(kernel_dir: str, level: int, refs: dict, limit=None,
+                    only_keys=None):
     pattern = re.compile(r"level_%d_problem_(\d+)_sample_(\d+)_kernel\.py" % level)
     tasks = []
     for fname in sorted(os.listdir(kernel_dir)):
@@ -36,9 +37,21 @@ def load_candidates(kernel_dir: str, level: int, refs: dict, limit=None):
         pid, sid = int(m.group(1)), int(m.group(2))
         if pid not in refs:
             continue
+        key = "%d:%d" % (pid, sid)
+        if only_keys is not None and key not in only_keys:
+            continue
         with open(os.path.join(kernel_dir, fname)) as f:
-            tasks.append(("%d:%d" % (pid, sid), f.read(), refs[pid]))
+            tasks.append((key, f.read(), refs[pid]))
     return tasks[:limit] if limit else tasks
+
+
+def load_jsonl(path):
+    out = {}
+    with open(path) as f:
+        for line in f:
+            rec = json.loads(line)
+            out[rec["key"]] = rec
+    return out
 
 
 def main() -> None:
@@ -55,6 +68,11 @@ def main() -> None:
     ap.add_argument("--measure-time", action="store_true",
                     help="Also time correct candidates against the reference. "
                          "Adds a second, GPU-exclusive phase.")
+    ap.add_argument("--timing-from", default=None,
+                    help="JSONL from a prior correctness pass. Only time the "
+                         "passed keys, in this process. Timing must be a fresh "
+                         "container: CUDA in the screening container can die "
+                         "after the first worker pool exits.")
     ap.add_argument("--num-perf-trials", type=int, default=20)
     ap.add_argument("--ref-mode", default="compile", choices=["compile", "eager"],
                     help="What the reference is timed as. compile is the honest "
@@ -68,7 +86,10 @@ def main() -> None:
     refs = {pid: dataset.get_problem_by_id(pid).code
             for pid in dataset.get_problem_ids()}
 
-    tasks = load_candidates(args.kernel_dir, args.level, refs, args.limit)
+    prior = load_jsonl(args.timing_from) if args.timing_from else None
+    only_keys = set(k for k, r in prior.items() if r.get("passed")) if prior else None
+    tasks = load_candidates(args.kernel_dir, args.level, refs, args.limit,
+                            only_keys=only_keys)
     print("verifying %d candidates with %d workers over %d GPUs"
           % (len(tasks), args.workers, args.gpus))
 
@@ -81,7 +102,25 @@ def main() -> None:
         os.replace(tmp, args.out)
 
     start = time.time()
-    if args.measure_time:
+    if args.timing_from:
+        results = prior
+        passed = tasks
+        print("timing %d survivors from %s on %d exclusive GPUs"
+              % (len(passed), args.timing_from, args.gpus))
+        if not passed:
+            print("no passed candidates to time")
+        else:
+            with VerifierPool(workers=args.gpus, gpus=args.gpus,
+                              num_correct_trials=args.num_correct_trials,
+                              timeout_s=args.timeout, measure_time=True,
+                              num_perf_trials=args.num_perf_trials,
+                              ref_mode=args.ref_mode) as pool:
+                timed = pool.verify_batch(passed)
+            for key, rec in timed.items():
+                if rec.get("passed"):
+                    results[key] = rec
+            write_out(results)
+    elif args.measure_time:
         results = verify_and_time(
             tasks, workers=args.workers, gpus=args.gpus,
             num_correct_trials=args.num_correct_trials, timeout_s=args.timeout,

@@ -668,14 +668,15 @@ class VerifierPool:
         return out
 
     def close(self) -> None:
+        # put(STOP) with no timeout deadlocks if a worker died holding the
+        # queue feeder (G4t timing: CUDA init crash, parent stuck on futex).
         for _ in self.procs:
-            self.task_q.put(STOP)
+            try:
+                self.task_q.put(STOP, timeout=2)
+            except Exception:
+                break
         for p in self.procs:
-            if p is None:
-                continue
-            p.join(timeout=15)
-            if p.is_alive():
-                p.terminate()
+            _stop_proc(p, timeout=5)
 
     def __enter__(self):
         return self

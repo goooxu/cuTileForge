@@ -2289,3 +2289,15 @@ ptxas 在 tileiras 死后会被容器 init 收养，继续编一个多小时，w
 - 每个 worker 独占 `CUDA_TILE_TEMP_DIR`。超时后按进程树和该目录杀掉残留的
   `tileiras` / `ptxas`，避免孤儿占满 CPU。
 
+---
+
+# G4t 计时拆到新容器；Glimmer 进表 A
+
+G4t 生成 3636 齐了，正确性 1917/3636。同一容器里筛完再开计时池，新 worker
+报 `No CUDA GPUs are available`，父进程卡在 multiprocessing 队列上，容器不退。
+计时改成独立容器（`--timing-from` 正确性 jsonl）。`VerifierPool.close` 的
+`Queue.put` 加超时，避免再楔死。
+
+Glimmer 校验完整：延迟 **580/770**（p@1 51.5%，p@4 75.3%），吞吐 **123/139**。
+读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+
