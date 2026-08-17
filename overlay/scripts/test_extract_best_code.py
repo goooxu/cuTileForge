@@ -126,6 +126,32 @@ PARSER_STRIPPED = f"""Here is the kernel:
 {REAL_KERNEL}```
 """
 
+MUSE_EMPTY_SELF = f"""to=self<|message|><|eom|>```python
+{REAL_KERNEL}```
+"""
+
+MUSE_THOUGHT_THEN_KERNEL = f"""to=self<|message|>
+A first sketch:
+
+```python
+class ModelNew(nn.Module):
+    pass
+```
+<|eom|>Here is the kernel:
+
+```python
+{REAL_KERNEL}```
+"""
+
+MUSE_MID_THINK = f"""to=self<|message|>
+A first sketch:
+
+```python
+class ModelNew(nn.Module):
+    pass
+```
+"""
+
 CASES = [
     ("formula block before code", FORMULA_FIRST, True),
     ("plain single python block", PLAIN, True),
@@ -137,6 +163,9 @@ CASES = [
     ("gemma empty channel", GEMMA_EMPTY_CHANNEL, True),
     ("gemma thought then kernel", GEMMA_THOUGHT_THEN_KERNEL, True),
     ("parser-stripped final content", PARSER_STRIPPED, True),
+    ("muse empty to=self", MUSE_EMPTY_SELF, True),
+    ("muse thought then kernel", MUSE_THOUGHT_THEN_KERNEL, True),
+    ("bare ModelNew no fence", REAL_KERNEL, True),
 ]
 
 failures = 0
@@ -153,6 +182,11 @@ for name, text, expect_none in (
     failures += not ok
     print(f"[{'ok ' if ok else 'FAIL'}] {name}")
 os.environ.pop("ENABLE_THINKING", None)
+
+got = extract_best_code(MUSE_MID_THINK, ["python", "cpp"])
+ok = got is None
+failures += not ok
+print(f"[{'ok ' if ok else 'FAIL'}] muse mid-think without ENABLE_THINKING")
 
 for name, text, expect_kernel in CASES:
     got = extract_best_code(text, ["python", "cpp"])

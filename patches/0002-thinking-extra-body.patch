@@ -1,6 +1,6 @@
 --- a/src/kernelbench/utils.py
 +++ b/src/kernelbench/utils.py
-@@ -137,7 +137,13 @@ def query_server(
+@@ -137,7 +137,17 @@ def query_server(
              api_key=SGLANG_KEY, base_url=f"{url}/v1", timeout=None, max_retries=0
          )
          # top_k is not in the OpenAI schema; vLLM and SGLang accept it via extra_body.
@@ -11,11 +11,14 @@
 +        effort = os.environ.get("REASONING_EFFORT", "").strip()
 +        if effort:
 +            extra_body["reasoning_effort"] = effort
++        strength = os.environ.get("REASONING_STRENGTH", "").strip()
++        if strength:
++            extra_body.setdefault("chat_template_kwargs", {})["reasoning_strength"] = strength
 +
          use_chat = server_type == "local_chat" or not isinstance(prompt, str)
          if use_chat:
              if isinstance(prompt, list):
-@@ -157,7 +163,7 @@ def query_server(
+@@ -157,7 +167,7 @@ def query_server(
                  top_p=top_p,
                  extra_body=extra_body,
              )
@@ -24,7 +27,7 @@
          else:
              response = client.completions.create(
                  model=model_name,
-@@ -415,6 +421,28 @@ def print_messages(messages):
+@@ -415,6 +425,76 @@ def print_messages(messages):
          print("\n\n")
  
  
@@ -59,20 +62,32 @@
 +    r"<\|channel>thought\s*.*?<channel\|>",
 +    flags=re.DOTALL | re.IGNORECASE,
 +)
++_MUSE_SELF_RE = re.compile(
++    r"to=self(?:<\|message\|>)?.*?<\|eom\|>",
++    flags=re.DOTALL | re.IGNORECASE,
++)
 +
 +
 +def _strip_think_blocks(text):
-+    """Drop Qwen / Gemma thinking so sketch fences inside cannot win.
++    """Drop Qwen / Gemma / Muse thinking so sketch fences inside cannot win.
 +
 +    Qwen: <think>...</think>, or a bare </think> (everything before is thinking).
 +    Gemma 4: <|channel>thought ... <channel|>, including the empty channel
 +    31B still emits when thinking is off.
++    Muse Glimmer: to=self ... <|eom|> (always-on reasoning channel).
 +    """
 +    text = _GEMMA_CHANNEL_RE.sub("", text)
++    text = _MUSE_SELF_RE.sub("", text)
 +    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
 +    if re.search(r"</think>", text, flags=re.IGNORECASE):
 +        text = re.split(r"</think>", text, maxsplit=1, flags=re.IGNORECASE)[-1]
 +    return text
++
++
++def _has_unclosed_muse(text):
++    """True when a Muse to=self reasoning turn is still open."""
++    rest = _MUSE_SELF_RE.sub("", text)
++    return bool(re.search(r"to=self", rest, re.I))
 +
 +
 +def _has_unclosed_think(text):
@@ -89,7 +104,7 @@
  def extract_python_code(text):
      """
      Extract python code from model output
-@@ -473,32 +507,55 @@ def extract_best_code(output_string: str, code_language_types: list[str]) -> str
+@@ -473,32 +559,61 @@ def extract_best_code(output_string: str, code_language_types: list[str]) -> str
      if output_string is None:
          return None
  
@@ -98,7 +113,10 @@
 -        return None
 +    thinking_on = _thinking_flag() is True
 +    # Truncated mid-think only. Parser-stripped final content (no markers)
-+    # is a real answer and must still extract.
++    # is a real answer and must still extract. Muse reasoning is always on,
++    # so an unclosed to=self block is a refuse even when ENABLE_THINKING is unset.
++    if _has_unclosed_muse(output_string):
++        return None
 +    if thinking_on and _has_unclosed_think(output_string):
 +        return None
 +
@@ -133,6 +151,9 @@
 +        body = clean(dangling.group(1), dangling.group(2))
 +        if re.search(r"class\s+ModelNew\b", body):
 +            return body
++    # Muse Glimmer often emits bare Python with no markdown fence.
++    if re.search(r"class\s+ModelNew\b", output_string):
++        return output_string.strip()
 +    return None
 --- a/scripts/generate_samples.py
 +++ b/scripts/generate_samples.py

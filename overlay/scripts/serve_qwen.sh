@@ -48,24 +48,37 @@ docker rm -f qwen-vllm 2>/dev/null || true
 # FLASHINFER_CUBIN_DIR), so a non-root user cannot populate it and engine startup
 # fails during profile_run. The workspace is only read here, and root can read it
 # through the NFS root-squash, so nothing needs to be written back as root.
-docker run -d --name qwen-vllm \
-    --gpus all --ipc=host --network host \
-    -e HOME=/tmp \
-    -e HF_HOME=/tmp/hf \
-    -e VLLM_CACHE_ROOT=/tmp/vllm-cache \
-    -v "$WS":"$WS":ro \
-    "${extra_mounts[@]}" \
-    --entrypoint python3 \
-    "$IMAGE" -m vllm.entrypoints.openai.api_server \
-        --model "$MODEL" \
-        --served-model-name Qwen3-Coder-Next \
-        --tensor-parallel-size "$TENSOR_PARALLEL" \
-        --max-model-len "$MAX_LEN" \
-        --gpu-memory-utilization "$GPU_UTIL" \
-        --enable-prefix-caching \
-        --port "$PORT" \
-        --host 0.0.0.0 \
-        $EXTRA_ARGS
+#
+# The official muse-glimmer image ENTRYPOINT is `vllm serve`; the python -m
+# module path is not what that image is built around.
+common_args=(
+    --gpus all --ipc=host --network host
+    -e HOME=/tmp
+    -e HF_HOME=/tmp/hf
+    -e VLLM_CACHE_ROOT=/tmp/vllm-cache
+    -v "$WS":"$WS":ro
+)
+[[ ${#extra_mounts[@]} -gt 0 ]] && common_args+=("${extra_mounts[@]}")
+serve_flags=(
+    --model "$MODEL"
+    --served-model-name Qwen3-Coder-Next
+    --tensor-parallel-size "$TENSOR_PARALLEL"
+    --max-model-len "$MAX_LEN"
+    --gpu-memory-utilization "$GPU_UTIL"
+    --enable-prefix-caching
+    --port "$PORT"
+    --host 0.0.0.0
+)
+if [[ "$IMAGE" == *muse-glimmer* ]]; then
+    docker run -d --name qwen-vllm "${common_args[@]}" \
+        --entrypoint vllm \
+        "$IMAGE" serve "${serve_flags[@]}" $EXTRA_ARGS
+else
+    docker run -d --name qwen-vllm "${common_args[@]}" \
+        --entrypoint python3 \
+        "$IMAGE" -m vllm.entrypoints.openai.api_server \
+        "${serve_flags[@]}" $EXTRA_ARGS
+fi
 
 echo "started container qwen-vllm on port $PORT"
 echo "follow startup with: docker logs -f qwen-vllm"

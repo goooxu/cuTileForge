@@ -61,6 +61,7 @@ args=(--user "$(id -u):$(id -g)" --ipc=host --network host
       -e SGLANG_API_KEY=local-no-auth
       -e ENABLE_THINKING="${ENABLE_THINKING:-}"
       -e REASONING_EFFORT="${REASONING_EFFORT:-}"
+      -e REASONING_STRENGTH="${REASONING_STRENGTH:-}"
       -v "$WS":/ws
       -w "/ws/$REL")
 
