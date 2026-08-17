@@ -27,6 +27,7 @@ export NUM_WORKERS="${NUM_WORKERS:-32}"
 export MAX_TOKENS="${MAX_TOKENS:-32768}"
 export ENABLE_THINKING="${ENABLE_THINKING:-}"
 export REASONING_EFFORT="${REASONING_EFFORT:-}"
+export EXTRA_ARGS="${EXTRA_ARGS:-}"
 export TENSOR_PARALLEL="${TENSOR_PARALLEL:-4}"
 
 TAG="${1:?usage: run_eval_suite.sh <tag> [--smoke]}"

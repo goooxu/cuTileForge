@@ -57,6 +57,7 @@ python3 taskgen/test_eval_suite.py
   - **表 A**：`max_tokens=32768`。Q38 开 thinking（`ENABLE_THINKING=1`，`xhigh`）。
     Next 族（base / M / Q）没有等价开关，不传 `chat_template_kwargs`
   - **表 B**：`max_tokens=8192`。Q38nt 关 thinking（`ENABLE_THINKING=0`）。
+    G4（`google/gemma-4-31B-it`）走官方默认：关 thinking，`EXTRA_ARGS=--reasoning-parser gemma4`。
     Next 族用同一 8192 上限的采样（归档在 `runs/archive_eval_8192/`）
 - 32768 的关 thinking 试跑归档在 `runs/archive_q38nt_32768/`，不单开第三张表
 - 通过：数值对 **且** 全是 cuTile
@@ -89,11 +90,13 @@ CUTILE_WS=... rl/compare_eval_suite.sh \
     M:/path/to/model-M \
     Q:/path/to/model-Q \
     Q38:/path/to/Qwen3.8-27B \
-    Q38nt:/path/to/Qwen3.8-27B
+    Q38nt:/path/to/Qwen3.8-27B \
+    G4:/path/to/Gemma-4-31B-it
 ```
 
 `Q38` 会开 thinking 并设 `max_tokens=32768`。`Q38nt` 会关 thinking 并设
-`max_tokens=8192`。其它 tag 默认 32768、不传 thinking 开关。
+`max_tokens=8192`。`G4` 关 thinking、`max_tokens=8192`，并带
+`--reasoning-parser gemma4`。其它 tag 默认 32768、不传 thinking 开关。
 
 
 已经有 jsonl 时只打分：

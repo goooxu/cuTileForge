@@ -2251,3 +2251,25 @@ Q38nt 按 8192 重采并计时（不复用 32768 那轮样本）。3636 条回�
 表 A：开 thinking、32768（base 166、M 629、Q 634、Q38 366）。
 表 B：关 thinking、8192（base 182、M 632、Q 634、Q38nt 398）。
 读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+
+---
+
+# 表 B 加入 Gemma 4 31B-it
+
+官方指令权重 `google/gemma-4-31B-it`（31B dense，Apache 2.0）。thinking 默认关，
+没有 Qwen 那种 `reasoning_effort`。这一轮只跑官方默认、只进表 B：tag `G4`，
+`ENABLE_THINKING=0`，`max_tokens=8192`，`--reasoning-parser gemma4`。不开
+thinking，不跑 32768，不进表 A。以后若补 thinking 再开 `G4t`。
+
+抽取要剥 Gemma 的 `<|channel>thought ... <channel|>`（关 thinking 时 31B 仍可能
+吐空 channel）。只有 thinking 开着且 channel/`<think>` 未闭合才当截断；parser
+剥干净的 final content 照常抽。`compare_eval_suite.sh` 给 `G4` 设上述协议。
+
+权重落到 NVMe `.../Gemma-4-31B-it`。nightly aarch64 能起 `Gemma4ForConditionalGeneration`。
+smoke：关 thinking 时没有真 thought 正文。全量 3636 条回复无 `<think>`、无
+thought channel。延迟 **354/770**（p@1 29.2%，p@4 46.0%），吞吐 **95/139**。
+低于同表 Q38nt（398 / 110），远低于 M/Q。conv 57/209，激活 111/150，loss 5/5。
+base / M / Q / Q38 / Q38nt 不重采。
+
+读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+提交邮箱改为 `gems@x.ai`。

@@ -55,17 +55,35 @@
 +    return getattr(msg, "reasoning_content", None) or ""
 +
 +
-+def _strip_think_blocks(text):
-+    """Drop Qwen thinking so sketch fences inside cannot win.
++_GEMMA_CHANNEL_RE = re.compile(
++    r"<\|channel>thought\s*.*?<channel\|>",
++    flags=re.DOTALL | re.IGNORECASE,
++)
 +
-+    Some traces are wrapped in <think>...</think>. Qwen3.8 often emits the
-+    reasoning then a bare </think> with no opener; everything before the
-+    closer is thinking.
++
++def _strip_think_blocks(text):
++    """Drop Qwen / Gemma thinking so sketch fences inside cannot win.
++
++    Qwen: <think>...</think>, or a bare </think> (everything before is thinking).
++    Gemma 4: <|channel>thought ... <channel|>, including the empty channel
++    31B still emits when thinking is off.
 +    """
++    text = _GEMMA_CHANNEL_RE.sub("", text)
 +    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
 +    if re.search(r"</think>", text, flags=re.IGNORECASE):
 +        text = re.split(r"</think>", text, maxsplit=1, flags=re.IGNORECASE)[-1]
 +    return text
++
++
++def _has_unclosed_think(text):
++    """True when a think/channel opener is still open (truncated mid-think)."""
++    rest = _GEMMA_CHANNEL_RE.sub("", text)
++    rest = re.sub(r"<think>.*?</think>", "", rest, flags=re.DOTALL | re.IGNORECASE)
++    if re.search(r"<think>", rest, re.I):
++        return True
++    if re.search(r"<\|channel>thought", rest, re.I):
++        return True
++    return False
 +
 +
  def extract_python_code(text):
@@ -79,8 +97,9 @@
 -    if not blocks:
 -        return None
 +    thinking_on = _thinking_flag() is True
-+    # Truncated mid-think: do not harvest sketch fences as the kernel.
-+    if thinking_on and not re.search(r"</think>", output_string, re.I):
++    # Truncated mid-think only. Parser-stripped final content (no markers)
++    # is a real answer and must still extract.
++    if thinking_on and _has_unclosed_think(output_string):
 +        return None
 +
 +    output_string = _strip_think_blocks(output_string)

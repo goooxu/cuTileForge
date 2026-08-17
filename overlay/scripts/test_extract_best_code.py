@@ -4,6 +4,7 @@ The motivating case: several generations opened with an untagged fence holding a
 formula, and extract_first_code() returned that formula as the kernel.
 """
 
+import os
 import sys
 
 from kernelbench.utils import extract_best_code, extract_first_code
@@ -83,6 +84,48 @@ Here is the kernel:
 {REAL_KERNEL}```
 """
 
+GEMMA_EMPTY_CHANNEL = f"""<|channel>thought
+<channel|>```python
+{REAL_KERNEL}```
+"""
+
+GEMMA_THOUGHT_THEN_KERNEL = f"""<|channel>thought
+A first sketch:
+
+```python
+class ModelNew(nn.Module):
+    pass
+```
+<channel|>Here is the kernel:
+
+```python
+{REAL_KERNEL}```
+"""
+
+GEMMA_MID_THINK = f"""<|channel>thought
+A first sketch:
+
+```python
+class ModelNew(nn.Module):
+    pass
+```
+"""
+
+QWEN_MID_THINK = f"""<think>
+A first sketch:
+
+```python
+class ModelNew(nn.Module):
+    pass
+```
+"""
+
+PARSER_STRIPPED = f"""Here is the kernel:
+
+```python
+{REAL_KERNEL}```
+"""
+
 CASES = [
     ("formula block before code", FORMULA_FIRST, True),
     ("plain single python block", PLAIN, True),
@@ -91,20 +134,26 @@ CASES = [
     ("no fenced block", NO_FENCE, False),
     ("think sketch discarded", THINK_SKETCH, True),
     ("think closer-only discarded", THINK_CLOSER_ONLY, True),
+    ("gemma empty channel", GEMMA_EMPTY_CHANNEL, True),
+    ("gemma thought then kernel", GEMMA_THOUGHT_THEN_KERNEL, True),
+    ("parser-stripped final content", PARSER_STRIPPED, True),
 ]
 
-# Mid-think traces must not yield a sketch when ENABLE_THINKING is on.
-import os
+failures = 0
+
 os.environ["ENABLE_THINKING"] = "1"
-mid = extract_best_code(THINK_CLOSER_ONLY.replace("</think>\n\n", ""), ["python", "cpp"])
-if mid is not None:
-    print("[FAIL] mid-think harvested a sketch")
-    failures += 1
-else:
-    print("[ok ] mid-think returns None")
+for name, text, expect_none in (
+    ("qwen mid-think", QWEN_MID_THINK, True),
+    ("gemma mid-think", GEMMA_MID_THINK, True),
+    ("parser-stripped with thinking on", PARSER_STRIPPED, False),
+):
+    got = extract_best_code(text, ["python", "cpp"])
+    none = got is None
+    ok = none if expect_none else (got is not None and "@ct.kernel" in got)
+    failures += not ok
+    print(f"[{'ok ' if ok else 'FAIL'}] {name}")
 os.environ.pop("ENABLE_THINKING", None)
 
-failures = 0
 for name, text, expect_kernel in CASES:
     got = extract_best_code(text, ["python", "cpp"])
     ok = (got is not None and "@ct.kernel" in got) if expect_kernel else (got is None)
@@ -112,7 +161,7 @@ for name, text, expect_kernel in CASES:
     old = extract_first_code(text, ["python", "cpp"])
     old_ok = (old is not None and "@ct.kernel" in old) if expect_kernel else (old is None)
     note = "" if old_ok else "   <- extract_first_code got this wrong"
-    print(f"[{'ok ' if ok else 'FAIL'}] {name:28s}{note}")
+    print(f"[{'ok ' if ok else 'FAIL'}] {name:32s}{note}")
 
 print()
 print("all cases passed" if not failures else f"{failures} case(s) failed")
