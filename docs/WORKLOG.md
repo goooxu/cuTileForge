@@ -2315,3 +2315,12 @@ Glimmer 校验完整：延迟 **580/770**（p@1 51.5%，p@4 75.3%），吞吐 **
 
 `runs/` 和 `compare_eval_suite.sh` 的 tag 不变。历史阶段报告里的 model M / Q 不改写。
 
+---
+
+# G4t 进表 A
+
+G4t 计时 1917/1917。延迟 **569/770**（p@1 49.4%，p@4 73.9%），吞吐 **124/139**。
+紧挨 GL。conv 119/209，matmul 73/102，norm 85/102。`muse-glimmer` 用镜像自带
+`vllm serve` 入口；Gemma 4 必须 nightly（v0.27.1 的 `head_dim` 起不来）。
+一次性的 `launch_g4t.sh` / `wait_g4t_timing.sh` 已删，协议在
+`rl/compare_eval_suite.sh`。

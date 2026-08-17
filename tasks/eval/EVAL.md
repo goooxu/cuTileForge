@@ -63,8 +63,9 @@ python3 taskgen/test_eval_suite.py
     发表数仍是 nightly。Next 族用同一 8192 上限的采样（归档在 `runs/archive_eval_8192/`）
 - 32768 的关 thinking 试跑归档在 `runs/archive_q38nt_32768/`，不单开第三张表
 - 通过：数值对 **且** 全是 cuTile
-- 计时：`fast_verify --measure-time --ref-mode compile` 一次跑完。`--timeout`
-  （本套评测 180s）含 tileiras/ptxas 编译，超时记 `timeout`、算失败。
+- 计时：正确性筛完后，在新容器里 `--timing-from` 对通过的 kernel 量
+  `torch.compile`。`--timeout`（本套评测 180s）含 tileiras/ptxas 编译，超时记
+  `timeout`、算失败。通过但计时失败的样本保留通过、没有 `speedup`。
 - 头条顺序：延迟成对（再拆 common / awkward）→ 吞吐成对（同样拆）→ 770 张图
   pass@1 / pass@4（按族、按出处）
 - 两个模型比速度：只用两边都解出的题做成对比较，阈值 1.05x
@@ -113,9 +114,9 @@ CUTILE_WS=... rl/compare_eval_suite.sh \
 ```
 
 `Q38` 会开 thinking 并设 `max_tokens=32768`。`Q38nt` 会关 thinking 并设
-`max_tokens=8192`。`G4` 关 thinking、8192、v0.27.1-aarch64。`G4t` 开 thinking、
-32768、同一镜像。`GL` 用 `muse-glimmer` 镜像、`reasoning_strength=xhigh`、32768。
-其它 tag 默认 32768、不传 thinking 开关。
+`max_tokens=8192`。`G4` 关 thinking、8192、`nightly-aarch64`（v0.27.1 起不来）。
+`G4t` 开 thinking、32768、同一镜像。`GL` 用 `muse-glimmer` 镜像、
+`reasoning_strength=xhigh`、32768。其它 tag 默认 32768、不传 thinking 开关。
 
 
 已经有 jsonl 时只打分：
