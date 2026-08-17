@@ -2245,4 +2245,9 @@ Q38nt 归档在 `runs/archive_q38nt_32768/`。
 Q38nt 按 8192 重采并计时（不复用 32768 那轮样本）。3636 条回复无 `<think>`。
 延迟 **398/770**（p@1 24.3%，p@4 51.7%），吞吐 **110/139**。和归档的 32768
 关 thinking（397 / 102）头条同量级。和 thinking 的 366 / 121 比：conv 23→75，
-激活 130→115，吞吐更差。读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+激活 130→115，吞吐更差。
+
+报告改成两张对等协议表，不再把 8192 三行和 Q38nt 塞进「旧协议 / 旁注」。
+表 A：开 thinking、32768（base 166、M 629、Q 634、Q38 366）。
+表 B：关 thinking、8192（base 182、M 632、Q 634、Q38nt 398）。
+读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
