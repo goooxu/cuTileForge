@@ -2324,3 +2324,58 @@ G4t 计时 1917/1917。延迟 **569/770**（p@1 49.4%，p@4 73.9%），吞吐 **
 `vllm serve` 入口；Gemma 4 必须 nightly（v0.27.1 的 `head_dim` 起不来）。
 一次性的 `launch_g4t.sh` / `wait_g4t_timing.sh` 已删，协议在
 `rl/compare_eval_suite.sh`。
+
+---
+
+# 换基座：在 Muse Glimmer 上跑第一关 SFT
+
+**结论**：GL 580 → GL-M **619/770**，p@1 51.5% → 57.5%，p@4 75.3% → 80.4%，
+吞吐 123 → 126/139，样本通过 1970 → 2175。三个口径同时涨。速度没动（共同 547 道
+中位 0.972x）。读数在 [results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+
+## 训练栈原来只认识一个架构
+
+四处按模型族分支（`train/lora_config.py` 现在是这些知识的唯一出处）：
+
+- **加载**：`MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["muse_glimmer"]` 是 `None`，GL 只注册在
+  多模态映射里，`AutoModelForCausalLM` 连一个 shard 都没读就抛错。改成按
+  `config.architectures` 取类。
+- **LoRA 目标**：GL 是 dense 52 层、gated attention（`self_attn` 自带 `gate_proj`，
+  语言侧 `gate_proj` 出现 104 次）。1.8B 视觉塔里也有 `q_proj/k_proj/v_proj`，所以
+  目标必须是锚定到 `model.language_model.*` 的正则，不能用裸名字。attention-only
+  r=128 → 306M 可训练（1.02%），260 个模块，零视觉塔。
+- **损失**：GL 的 forward 在 lm_head 之后做 `T*tanh(x*output_multiplier/T)` 软截断。
+  项目的稀疏损失绕过 forward 自己算 CE，不复制这一步的话读数是 **54.8**，而模型
+  自己的 `labels=` 路径是 **13.3**。补上后两者差 0.00e+00。同一个洞在
+  `rl/grpo.py` 的 logprob 上也有，一并补了（对 Qwen 是空操作）。
+- **停止符**：GL 的 eos 是 `<|end_of_text|>`，但轮结束符是 `<|eot|>`；训练目标追加
+  eos 会教它用模板从不使用的 token 收尾。
+
+`transformers` 5.14.1 不认识 `muse_glimmer`，5.15.0 认识——镜像里这一项从此钉住。
+
+## 采推理轨迹：必须让服务器保留特殊 token
+
+vLLM 默认 `skip_special_tokens=True`，于是 `to=self` 后面的 `<|eom|>` 被剥掉，
+`extract_best_code` 判定「思考被截断」并给每个样本写 stub——smoke 时 12/12 全废。
+`KEEP_SPECIAL_TOKENS=1` 之后 stub 降到 1/12（那条真的撞了 32768 上限）。
+发表协议不受影响：评测仍开 parser，训练采样才关。
+
+顺带发现 `patches/0002` 在动手前就已经是坏的（`corrupt patch at line 160`），
+任何人重建 checkout 都会失败；已按 live checkout 重新生成并在 pinned upstream 上
+验证能干净应用。
+
+## 数据与训练
+
+三个训练层（92 / 93 / 94，禁用 84/88/99 与 97/98），k=8、温度 1.2、xhigh、32768：
+10800 样本，通过 **3889（36.0%）**，解出 1185 题。未加配额时 norm 占 31.9%（GL 在
+norm 上 396/407 题都能解），正是第十一阶段那个「配比跟着好采的族走」的坑，所以把
+norm 压到 500、matmul 压到 600。成品 2440 条、1184 个任务，全部带推理通道，
+完成部分中位 5.9k token、p95 12.2k。
+
+`--max-len 20480` 保留 98.6%，超长整条丢弃而不是从 prompt 前面截。1 个 epoch
+（历史上拒绝采样 SFT 都是 1，只有自蒸馏轮用 2），301 步，146 分钟，损失 3.17 → 1.02。
+非有限损失丢 **15/2406（0.6%）**，按族分散（norm 1.4% 最高，elementwise 0%），
+没有集中在某一族。开梯度检查点，峰值显存 74 GB。
+
+训练动的正是该动的地方：matmul +8、pool +8、conv +10、norm +9，本来最强的
+activation −3。纯度失败 970 → 791。

@@ -85,7 +85,8 @@ python3 taskgen/test_eval_suite.py
 | Next-Q | `Q` | 在 Next-M 的通过解上第二次自蒸馏 |
 | Q38 / Q38nt | `Q38` / `Q38nt` | Qwen3.8-27B，开 / 关 thinking |
 | G4 / G4t | `G4` / `G4t` | Gemma-4-31B-it，关 / 开 thinking |
-| GL | `GL` | Muse Glimmer 30B |
+| GL | `GL` | Muse Glimmer 30B，未在本项目训练 |
+| GL-M | `GLM` | 在 GL 上拒绝采样 SFT（`rl/run_gl_harvest.sh` 采数据） |
 
 ## 怎么跑
 
@@ -115,8 +116,11 @@ CUTILE_WS=... rl/compare_eval_suite.sh \
 
 `Q38` 会开 thinking 并设 `max_tokens=32768`。`Q38nt` 会关 thinking 并设
 `max_tokens=8192`。`G4` 关 thinking、8192、`nightly-aarch64`（v0.27.1 起不来）。
-`G4t` 开 thinking、32768、同一镜像。`GL` 用 `muse-glimmer` 镜像、
+`G4t` 开 thinking、32768、同一镜像。`GL` 和 `GLM` 用 `muse-glimmer` 镜像、
 `reasoning_strength=xhigh`、32768。其它 tag 默认 32768、不传 thinking 开关。
+
+采训练数据是另一回事，不要照抄这里的协议：`rl/run_gl_harvest.sh` 故意**不开**
+reasoning parser，并让服务器保留特殊 token，否则推理轨迹拿不到（见脚本开头）。
 
 
 已经有 jsonl 时只打分：
