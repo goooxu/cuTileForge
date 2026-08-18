@@ -86,7 +86,7 @@ python3 taskgen/test_eval_suite.py
 | Q38 / Q38nt | `Q38` / `Q38nt` | Qwen3.8-27B，开 / 关 thinking |
 | G4 / G4t | `G4` / `G4t` | Gemma-4-31B-it，关 / 开 thinking |
 | GL | `GL` | Muse Glimmer 30B，未在本项目训练 |
-| GL-M | `GLM` | 在 GL 上拒绝采样 SFT（`rl/run_gl_harvest.sh` 采数据） |
+| GL-A | `GLA` | 在 GL 上拒绝采样 SFT（`rl/run_gl_harvest.sh` 采数据） |
 
 ## 怎么跑
 
@@ -116,7 +116,7 @@ CUTILE_WS=... rl/compare_eval_suite.sh \
 
 `Q38` 会开 thinking 并设 `max_tokens=32768`。`Q38nt` 会关 thinking 并设
 `max_tokens=8192`。`G4` 关 thinking、8192、`nightly-aarch64`（v0.27.1 起不来）。
-`G4t` 开 thinking、32768、同一镜像。`GL` 和 `GLM` 用 `muse-glimmer` 镜像、
+`G4t` 开 thinking、32768、同一镜像。`GL` 和 `GLA` 用 `muse-glimmer` 镜像、
 `reasoning_strength=xhigh`、32768。其它 tag 默认 32768、不传 thinking 开关。
 
 采训练数据是另一回事，不要照抄这里的协议：`rl/run_gl_harvest.sh` 故意**不开**
