@@ -36,19 +36,21 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--lora-r", type=int, default=32)
+    ap.add_argument("--targets", default="default",
+                    choices=["default", "attention_only"])
     args = ap.parse_args()
 
     import torch
-    from transformers import AutoModelForCausalLM
     from peft import LoraConfig, get_peft_model
 
-    from lora_config import DEFAULT_TARGETS
+    from lora_config import load_base_model, targets_for, validate_targets
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, dtype=torch.bfloat16, device_map="cpu", trust_remote_code=True)
+    model = load_base_model(args.model, device_map="cpu", dtype=torch.bfloat16)
+    targets = targets_for(model, args.targets)
+    validate_targets(model, targets)
     model = get_peft_model(model, LoraConfig(
         r=args.lora_r, lora_alpha=args.lora_r * 2, lora_dropout=0.0,
-        bias="none", task_type="CAUSAL_LM", target_modules=DEFAULT_TARGETS))
+        bias="none", task_type="CAUSAL_LM", target_modules=targets))
 
     train = collections.Counter()
     frozen = collections.Counter()

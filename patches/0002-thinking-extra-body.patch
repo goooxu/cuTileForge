@@ -1,34 +1,7 @@
 --- a/src/kernelbench/utils.py
 +++ b/src/kernelbench/utils.py
-@@ -137,7 +137,17 @@ def query_server(
-             api_key=SGLANG_KEY, base_url=f"{url}/v1", timeout=None, max_retries=0
-         )
-         # top_k is not in the OpenAI schema; vLLM and SGLang accept it via extra_body.
-         extra_body = {"top_k": top_k} if top_k and top_k > 0 else {}
-+        thinking = _thinking_flag()
-+        if thinking is not None:
-+            extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = thinking
-+        effort = os.environ.get("REASONING_EFFORT", "").strip()
-+        if effort:
-+            extra_body["reasoning_effort"] = effort
-+        strength = os.environ.get("REASONING_STRENGTH", "").strip()
-+        if strength:
-+            extra_body.setdefault("chat_template_kwargs", {})["reasoning_strength"] = strength
-+
-         use_chat = server_type == "local_chat" or not isinstance(prompt, str)
-         if use_chat:
-             if isinstance(prompt, list):
-@@ -157,7 +167,7 @@ def query_server(
-                 top_p=top_p,
-                 extra_body=extra_body,
-             )
--            outputs = [choice.message.content for choice in response.choices]
-+            outputs = [_choice_text(choice) for choice in response.choices]
-         else:
-             response = client.completions.create(
-                 model=model_name,
-@@ -415,6 +425,76 @@ def print_messages(messages):
-         print("\n\n")
+@@ -100,6 +100,16 @@
+     torch.set_float32_matmul_precision("highest")
  
  
 +def _thinking_flag():
@@ -41,6 +14,45 @@
 +    return None
 +
 +
+ def query_server(
+     prompt: str | list[dict],  # string if normal prompt, list of dicts if chat prompt,
+     system_prompt: str = "You are a helpful assistant",  # only used for chat prompts
+@@ -138,6 +148,22 @@
+         )
+         # top_k is not in the OpenAI schema; vLLM and SGLang accept it via extra_body.
+         extra_body = {"top_k": top_k} if top_k and top_k > 0 else {}
++        thinking = _thinking_flag()
++        if thinking is not None:
++            extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = thinking
++        effort = os.environ.get("REASONING_EFFORT", "").strip()
++        if effort:
++            extra_body["reasoning_effort"] = effort
++        strength = os.environ.get("REASONING_STRENGTH", "").strip()
++        if strength:
++            extra_body.setdefault("chat_template_kwargs", {})["reasoning_strength"] = strength
++        # vLLM strips special tokens from the returned text by default, which on a
++        # channel-based model removes the markers that delimit the reasoning turn:
++        # `to=self ... <|eom|>` arrives as bare prose, so the extractor cannot tell
++        # a finished trace from one truncated mid-think and refuses every sample.
++        # A harvest that trains on the trace needs the raw stream instead.
++        if os.environ.get("KEEP_SPECIAL_TOKENS", "").strip() in ("1", "true", "yes"):
++            extra_body["skip_special_tokens"] = False
+ 
+         use_chat = server_type == "local_chat" or not isinstance(prompt, str)
+         if use_chat:
+@@ -157,7 +183,7 @@
+                 top_p=top_p,
+                 extra_body=extra_body,
+             )
+-            outputs = [choice.message.content for choice in response.choices]
++            outputs = [_choice_text(choice) for choice in response.choices]
+         else:
+             response = client.completions.create(
+                 model=model_name,
+@@ -415,6 +441,66 @@
+         print("\n\n")
+ 
+ 
 +def _choice_text(choice):
 +    """Final answer text. Reasoning parsers may empty content."""
 +    msg = choice.message
@@ -104,13 +116,12 @@
  def extract_python_code(text):
      """
      Extract python code from model output
-@@ -473,32 +559,61 @@ def extract_best_code(output_string: str, code_language_types: list[str]) -> str
+@@ -477,10 +563,18 @@
      if output_string is None:
          return None
  
 -    blocks = re.findall(r"```(\w*)\n?(.*?)```", output_string.strip(), re.DOTALL)
 -    if not blocks:
--        return None
 +    thinking_on = _thinking_flag() is True
 +    # Truncated mid-think only. Parser-stripped final content (no markers)
 +    # is a real answer and must still extract. Muse reasoning is always on,
@@ -118,26 +129,15 @@
 +    if _has_unclosed_muse(output_string):
 +        return None
 +    if thinking_on and _has_unclosed_think(output_string):
-+        return None
-+
+         return None
+ 
 +    output_string = _strip_think_blocks(output_string)
 +    blocks = re.findall(r"```(\w*)\n?(.*?)```", output_string.strip(), re.DOTALL)
- 
++
      def clean(lang: str, body: str) -> str:
          body = body.strip()
          # Handle ```python foo``` written on one line, where the tag lands in the body.
-         for code_type in code_language_types:
-             if body.startswith(code_type):
-                 body = body[len(code_type):].strip()
-         return body
- 
-     cleaned = [(lang.lower(), clean(lang, body)) for lang, body in blocks]
- 
-     defines_model = [c for _, c in cleaned if re.search(r"class\s+ModelNew\b", c)]
-     if defines_model:
-         return defines_model[-1]
- 
-     tagged = [c for lang, c in cleaned if lang in code_language_types]
+@@ -499,7 +593,19 @@
      if tagged:
          return tagged[-1]
  
@@ -155,9 +155,12 @@
 +    if re.search(r"class\s+ModelNew\b", output_string):
 +        return output_string.strip()
 +    return None
+ 
+ 
+ def extract_last_code(output_string: str, code_language_types: list[str]) -> str | None:
 --- a/scripts/generate_samples.py
 +++ b/scripts/generate_samples.py
-@@ -159,8 +159,14 @@ def generate_sample_single(
+@@ -159,8 +159,14 @@
              f.write(raw_response or "")
  
      custom_kernel = extract_best_code(raw_response, ["python", "cpp"])

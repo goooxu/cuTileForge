@@ -7,12 +7,17 @@
 # exists -- so the fix is to relaunch and continue rather than lose the run.
 #
 # Usage: ./generate_with_restart.sh <run_name> <level> <num_samples> [max_rounds]
+#                                   [extra pydra args...]
 set -uo pipefail
 
 RUN_NAME="${1:?usage: generate_with_restart.sh <run_name> <level> <num_samples> [max_rounds]}"
 LEVEL="${2:?}"
 NUM_SAMPLES="${3:?}"
 MAX_ROUNDS="${4:-12}"
+shift 4 2>/dev/null || shift $#
+# Anything further goes to generate_samples.py, so a caller can restrict the run
+# to a subset without needing its own copy of the restart loop.
+EXTRA_PYDRA=("$@")
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WS="${CUTILE_WS:-$(dirname "$FORGE")}"
@@ -77,7 +82,7 @@ for round in $(seq 1 "$MAX_ROUNDS"); do
 
     # generate_samples.py exits non-zero on engine death; that is expected here.
     NAME="$GEN_CONTAINER" "$KB/scripts/run_generate.sh" "$RUN_NAME" "$LEVEL" "$NUM_SAMPLES" \
-        log_raw_response=True 2>&1 | tail -3
+        log_raw_response=True "${EXTRA_PYDRA[@]}" 2>&1 | tail -3
     cleanup
 
     after="$(have)"

@@ -1,14 +1,17 @@
-"""Gate G3: confirm Qwen3-Next can actually be LoRA fine-tuned on this hardware.
+"""Gate G3: confirm a base model can actually be LoRA fine-tuned on this hardware.
 
 Checks the three things that would sink the training stage:
-  1. the Gated DeltaNet backward pass works (transformers ships a pure-PyTorch
-     fallback, so autograd should cover it even without fused kernels)
+  1. the backward pass works through whatever this architecture does instead of
+     plain attention (Qwen3-Next's Gated DeltaNet has a pure-PyTorch fallback,
+     so autograd should cover it even without fused kernels)
   2. the LoRA target modules match a meaningful share of the network rather than
-     the ~0.02% that the standard attention-only names would reach
+     the ~0.02% that the standard attention-only names would reach, and on a
+     multimodal checkpoint that they stay out of the vision tower
   3. a handful of optimiser steps reduce the loss without producing NaN
 
 Run inside the training image:
     python3 train/smoke_lora.py --model /ws/models/Qwen3-Coder-Next
+    python3 train/smoke_lora.py --model /raid/tmp/.../Muse-Glimmer-30B
 """
 
 import argparse
@@ -19,7 +22,20 @@ import time
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lora_config import DEFAULT_TARGETS, resolve_targets  # noqa: E402
+from lora_config import (family_of, load_base_model,  # noqa: E402
+                         targets_for, validate_targets)
+
+
+def n_layers(cfg):
+    """Layer count, wherever this config keeps it.
+
+    Multimodal configs nest the decoder's own config, so the attribute is not on
+    the top level: Muse Glimmer has text_config.num_hidden_layers.
+    """
+    for holder in (cfg, getattr(cfg, "text_config", None)):
+        if holder is not None and getattr(holder, "num_hidden_layers", None):
+            return holder.num_hidden_layers
+    return "?"
 
 
 def main() -> None:
@@ -29,15 +45,19 @@ def main() -> None:
     ap.add_argument("--seq-len", type=int, default=1024)
     ap.add_argument("--lora-r", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--targets", default="default",
+                    choices=["default", "attention_only"])
     args = ap.parse_args()
 
-    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoTokenizer
     from peft import LoraConfig, get_peft_model
 
     print("torch", torch.__version__, "| GPUs", torch.cuda.device_count())
     cfg = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
-    print("arch", cfg.architectures, "| layers", cfg.num_hidden_layers,
-          "| full_attention_interval", getattr(cfg, "full_attention_interval", "?"))
+    print("arch", cfg.architectures, "| model_type", family_of(cfg),
+          "| layers", n_layers(cfg))
+    if getattr(cfg, "full_attention_interval", None):
+        print("full_attention_interval", cfg.full_attention_interval)
 
     import importlib.util
     print("flash-linear-attention: %s"
@@ -46,25 +66,12 @@ def main() -> None:
 
     t0 = time.time()
     print("loading weights ...")
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        dtype=torch.bfloat16,
-        device_map="auto",
-        trust_remote_code=True,
-    )
+    model = load_base_model(args.model, device_map="auto", dtype=torch.bfloat16)
     print("loaded in %.1fs" % (time.time() - t0))
     print("device map spans:", sorted({str(p.device) for p in model.parameters()}))
 
-    counts, matched, total = resolve_targets(model, DEFAULT_TARGETS)
-    from lora_config import DELTANET_TARGETS
-    if not any(counts.get(t) for t in DELTANET_TARGETS):
-        print("\nFAIL: no DeltaNet projections matched; adapters would cover only "
-              "the full-attention layers")
-        return
-    unmatched = [t for t, c in counts.items() if c == 0]
-    if unmatched:
-        print("\nFAIL: these target names match nothing: %s" % ", ".join(unmatched))
-        return
+    targets = targets_for(model, args.targets)
+    validate_targets(model, targets)
 
     lora = LoraConfig(
         r=args.lora_r,
@@ -72,7 +79,7 @@ def main() -> None:
         lora_dropout=0.0,
         bias="none",
         task_type="CAUSAL_LM",
-        target_modules=DEFAULT_TARGETS,
+        target_modules=targets,
     )
     model = get_peft_model(model, lora)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)

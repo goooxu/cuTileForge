@@ -23,8 +23,9 @@ def main() -> None:
     args = ap.parse_args()
 
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
 
+    from lora_config import load_base_model, targets_for
     from train_lora import CompletionOnlyDataset, collate, sparse_lm_loss
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -33,8 +34,7 @@ def main() -> None:
     # the very cost this is avoiding.
     ds = CompletionOnlyDataset(args.data, tok, 4096)
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+    model = load_base_model(args.model, device_map="auto", dtype=torch.bfloat16)
     model.eval()
     model.config.use_cache = False
     dev = next(model.parameters()).device
@@ -46,7 +46,7 @@ def main() -> None:
               % ("example", "labels= loss", "sparse loss", "abs diff"))
         with torch.no_grad():
             for i in range(min(args.n, len(ds))):
-                input_ids, labels, attn = collate([ds[i]], pad_id)
+                input_ids, labels, attn, _cats = collate([ds[i]], pad_id)
                 input_ids = input_ids.to(dev)
                 labels, attn = labels.to(dev), attn.to(dev)
 
@@ -62,11 +62,10 @@ def main() -> None:
     # The training path wraps the model in PEFT, whose attribute forwarding is
     # exactly what unwrap() has to see through, so cover that too.
     from peft import LoraConfig, get_peft_model
-    from train_lora import DEFAULT_TARGETS
 
     peft_model = get_peft_model(model, LoraConfig(
         r=8, lora_alpha=16, lora_dropout=0.0, bias="none",
-        task_type="CAUSAL_LM", target_modules=DEFAULT_TARGETS))
+        task_type="CAUSAL_LM", target_modules=targets_for(model)))
     peft_model.eval()
     worst = max(worst, compare("PEFT-wrapped", peft_model))
 

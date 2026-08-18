@@ -13,9 +13,13 @@ Usage:
 import argparse
 import os
 import shutil
+import sys
 import time
 
 import torch
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lora_config import load_base_model  # noqa: E402
 
 
 def main() -> None:
@@ -25,13 +29,12 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
     from peft import PeftModel
 
     print("loading base ...")
     t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
-        args.base, dtype=torch.bfloat16, device_map="cpu", trust_remote_code=True)
+    model = load_base_model(args.base, device_map="cpu", dtype=torch.bfloat16)
     print("  %.1fs" % (time.time() - t0))
 
     print("applying adapter ...")
@@ -50,11 +53,15 @@ def main() -> None:
     tok.save_pretrained(args.out)
 
     # vLLM reads the chat template from here; without it the served model would
-    # be prompted differently from the baseline.
-    for extra in ("chat_template.jinja", "generation_config.json"):
+    # be prompted differently from the baseline. Multimodal checkpoints also need
+    # their processor config, or AutoProcessor cannot construct and the server
+    # refuses to start on weights that are otherwise fine.
+    for extra in ("chat_template.jinja", "generation_config.json",
+                  "processor_config.json", "preprocessor_config.json"):
         src = os.path.join(args.base, extra)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(args.out, extra))
+            print("  copied %s" % extra)
 
     total = sum(os.path.getsize(os.path.join(args.out, f))
                 for f in os.listdir(args.out))

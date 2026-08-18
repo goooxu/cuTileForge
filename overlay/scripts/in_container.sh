@@ -62,6 +62,9 @@ args=(--user "$(id -u):$(id -g)" --ipc=host --network host
       -e ENABLE_THINKING="${ENABLE_THINKING:-}"
       -e REASONING_EFFORT="${REASONING_EFFORT:-}"
       -e REASONING_STRENGTH="${REASONING_STRENGTH:-}"
+      # Harvests that train on a reasoning trace need the channel markers, which
+      # the server strips from the text by default.
+      -e KEEP_SPECIAL_TOKENS="${KEEP_SPECIAL_TOKENS:-}"
       -v "$WS":/ws
       -w "/ws/$REL")
 

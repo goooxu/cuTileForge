@@ -29,10 +29,11 @@ def main() -> None:
     args = ap.parse_args()
 
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
     from peft import LoraConfig, get_peft_model
 
-    from train_lora import CompletionOnlyDataset, collate, DEFAULT_TARGETS
+    from lora_config import load_base_model, targets_for
+    from train_lora import CompletionOnlyDataset, collate
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
@@ -41,16 +42,16 @@ def main() -> None:
     order = sorted(range(len(ds)), key=lambda i: -len(ds[i]["input_ids"]))[:args.n]
     print("testing token lengths:", [len(ds[i]["input_ids"]) for i in order])
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+    model = load_base_model(args.model, device_map="auto", dtype=torch.bfloat16)
     dev = next(model.parameters()).device
+    targets = targets_for(model)
 
     def run(tag, use_lora, train_mode, ckpt, reentrant=None):
         m = model
         if use_lora:
             m = get_peft_model(model, LoraConfig(
                 r=32, lora_alpha=64, lora_dropout=0.0, bias="none",
-                task_type="CAUSAL_LM", target_modules=DEFAULT_TARGETS))
+                task_type="CAUSAL_LM", target_modules=targets))
         if ckpt:
             if reentrant is None:
                 m.gradient_checkpointing_enable()
@@ -64,7 +65,7 @@ def main() -> None:
 
         results = []
         for i in order:
-            input_ids, labels, attn = collate([ds[i]], pad_id)
+            input_ids, labels, attn, _cats = collate([ds[i]], pad_id)
             out = m(input_ids=input_ids.to(dev), attention_mask=attn.to(dev),
                     labels=labels.to(dev))
             results.append("%.4f" % out.loss.item()
@@ -108,7 +109,7 @@ def main() -> None:
         model.enable_input_require_grads()
         results = []
         for i in order:
-            input_ids, labels, attn = collate([ds[i]], pad_id)
+            input_ids, labels, attn, _cats = collate([ds[i]], pad_id)
             out = model(input_ids=input_ids.to(dev), attention_mask=attn.to(dev),
                         labels=labels.to(dev))
             results.append("%.4f" % out.loss.item()

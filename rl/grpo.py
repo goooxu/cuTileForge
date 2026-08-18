@@ -60,7 +60,8 @@ sys.path.insert(0, os.path.join(HERE, "..", "train"))
 sys.path.insert(0, os.path.join(HERE, "..", "repair"))
 sys.path.insert(0, HERE)
 
-from lora_config import ATTENTION_ONLY_TARGETS, freeze_experts  # noqa: E402
+from lora_config import (ATTENTION_ONLY_TARGETS, freeze_experts,  # noqa: E402
+                         logit_transform)
 from repair_loop import Chat, extract_code, sample_batch  # noqa: E402
 from reward import score_rollouts, summarise  # noqa: E402
 from train_lora import unwrap  # noqa: E402
@@ -96,8 +97,13 @@ def completion_logprobs(model, ids, comp_mask, grad: bool):
     tokens of documentation and the completion is a fraction of that, so
     projecting everything through a 152k vocabulary would cost gigabytes to
     produce numbers that are immediately discarded.
+
+    Calling the head directly also skips whatever the model's forward does after
+    it, which on some architectures is a logit softcap; without it these would
+    be log probabilities of a distribution the model does not have.
     """
     body, lm_head = unwrap(model)
+    transform = logit_transform(body)
     ctx = torch.enable_grad() if grad else torch.no_grad()
     with ctx:
         hidden = body(input_ids=ids,
@@ -109,8 +115,10 @@ def completion_logprobs(model, ids, comp_mask, grad: bool):
         keep = comp_mask[:, 1:].to(h.device).bool()
         if not keep.any():
             return None
-        logits = lm_head(h[keep]).float()
-        return torch.log_softmax(logits, dim=-1).gather(
+        logits = lm_head(h[keep])
+        if transform is not None:
+            logits = transform(logits)
+        return torch.log_softmax(logits.float(), dim=-1).gather(
             1, target[keep].unsqueeze(1)).squeeze(1)
 
 

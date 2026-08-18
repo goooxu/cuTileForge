@@ -26,18 +26,49 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lora_config import (ATTENTION_ONLY_TARGETS, DEFAULT_TARGETS,  # noqa: E402
-                         DELTANET_TARGETS, resolve_targets)
+from lora_config import (family_of, load_base_model,  # noqa: E402
+                         logit_transform, targets_for, validate_targets)
+
+# The token that ends an assistant turn, where it is not the tokenizer's EOS.
+# Muse Glimmer's eos_token is <|end_of_text|> (200001), but its chat template
+# closes every turn with <|eot|> (200008); training on the wrong one teaches the
+# model to stop with a token the template never uses.
+TURN_END = {"muse_glimmer": "<|eot|>"}
 
 
 class CompletionOnlyDataset(Dataset):
     """Tokenised prompt+completion with the prompt masked out of the loss."""
 
-    def __init__(self, path, tokenizer, max_len):
+    def __init__(self, path, tokenizer, max_len, chat_kwargs=None,
+                 turn_end=None, on_overflow="drop"):
         self.rows = [json.loads(l) for l in open(path)]
         self.tok = tokenizer
         self.max_len = max_len
+        self.chat_kwargs = dict(chat_kwargs or {})
+        self.turn_end = turn_end if turn_end is not None else tokenizer.eos_token
+        self.on_overflow = on_overflow
         self.n_truncated = 0
+        self.n_dropped = 0
+        if on_overflow == "drop":
+            self.rows, dropped = self._fit(self.rows)
+            self.n_dropped = dropped
+
+    def _fit(self, rows):
+        """Drop rows that do not fit, rather than truncating into the prompt.
+
+        Front-truncation removes the task description the model is supposed to
+        be conditioning on, and nothing downstream can tell that it happened --
+        the labels still look intact. With reasoning traces in the target,
+        overflow is common enough that silently training on headless prompts
+        would be the single largest source of noise in the run.
+        """
+        kept, dropped = [], 0
+        for row in rows:
+            if len(self._encode(row)[0]) <= self.max_len:
+                kept.append(row)
+            else:
+                dropped += 1
+        return kept, dropped
 
     def __len__(self):
         return len(self.rows)
@@ -57,24 +88,34 @@ class CompletionOnlyDataset(Dataset):
             x = x[0]
         return list(x)
 
-    def __getitem__(self, i):
-        row = self.rows[i]
+    def _encode(self, row):
         # Match how the model is prompted at inference: a user turn through the
-        # chat template, with the assistant turn as the target.
+        # chat template, with the assistant turn as the target. chat_kwargs
+        # carries anything the template needs to agree with serving -- for Muse
+        # Glimmer that is reasoning_strength, which the template writes into the
+        # system block and which therefore changes the prompt prefix.
         prompt_ids = self._as_ids(self.tok.apply_chat_template(
             [{"role": "user", "content": row["prompt"]}],
             add_generation_prompt=True,
             tokenize=True,
+            **self.chat_kwargs,
         ))
-        completion_ids = self.tok(row["completion"] + self.tok.eos_token,
+        completion = row["completion"]
+        # A harvested assistant turn may already carry its terminator.
+        if self.turn_end and not completion.endswith(self.turn_end):
+            completion += self.turn_end
+        completion_ids = self.tok(completion,
                                   add_special_tokens=False)["input_ids"]
+        return prompt_ids + completion_ids, len(prompt_ids), completion_ids
 
-        ids = prompt_ids + completion_ids
-        labels = [-100] * len(prompt_ids) + list(completion_ids)
+    def __getitem__(self, i):
+        row = self.rows[i]
+        ids, n_prompt, completion_ids = self._encode(row)
+        labels = [-100] * n_prompt + list(completion_ids)
 
         if len(ids) > self.max_len:
-            # Trim from the front of the prompt: the completion and the task
-            # description at the prompt's end are what matter.
+            # Only reachable with --on-overflow truncate. Trims the front of the
+            # prompt, which costs the task description; see _fit.
             overflow = len(ids) - self.max_len
             ids = ids[overflow:]
             labels = labels[overflow:]
@@ -128,6 +169,10 @@ def sparse_lm_loss(model, input_ids, attn, labels):
     fits in 87 GB and one that does not fit at all. The value is identical: the
     mean is over the same tokens, and test_sparse_loss.py checks that against
     the model's own labels= path.
+
+    Bypassing the model's forward means also repeating whatever it does between
+    the head and its own loss, which is not nothing on every architecture; see
+    lora_config.logit_transform.
     """
     import torch.nn.functional as F
 
@@ -142,7 +187,11 @@ def sparse_lm_loss(model, input_ids, attn, labels):
     keep = target != -100
     if not keep.any():
         return torch.tensor(float("nan"), device=hidden.device)
-    return F.cross_entropy(lm_head(hidden[keep]).float(), target[keep])
+    logits = lm_head(hidden[keep])
+    transform = logit_transform(body)
+    if transform is not None:
+        logits = transform(logits)
+    return F.cross_entropy(logits.float(), target[keep])
 
 
 def main() -> None:
@@ -166,11 +215,23 @@ def main() -> None:
                          "non-finite loss.")
     ap.add_argument("--targets", default="default",
                     choices=["default", "attention_only"],
-                    help="default reaches the routed experts through peft's "
-                         "ParamWrapper, which trains 6.88B including a full "
-                         "fine-tune of their base weights. attention_only keeps "
-                         "to the attention and DeltaNet projections, where a much "
-                         "higher rank is affordable. See train/lora_config.py.")
+                    help="Which module set to adapt; resolved per architecture "
+                         "by lora_config.targets_for. On Qwen3-Next, default "
+                         "reaches the routed experts through peft's ParamWrapper "
+                         "and trains 6.88B including a full fine-tune of their "
+                         "base weights, while attention_only keeps to the "
+                         "attention and DeltaNet projections at a much higher "
+                         "affordable rank.")
+    ap.add_argument("--reasoning-strength", default=None,
+                    help="Passed to the chat template, for models whose prompt "
+                         "prefix depends on it (Muse Glimmer writes it into the "
+                         "system block). Must match what serving will send, or "
+                         "training and inference see different prompts.")
+    ap.add_argument("--on-overflow", default="drop",
+                    choices=["drop", "truncate"],
+                    help="What to do with examples longer than --max-len. drop "
+                         "is the default because truncate trims the front of the "
+                         "prompt, silently removing the task description.")
     ap.add_argument("--resume-adapter", default=None,
                     help="Continue training an existing adapter instead of a fresh "
                          "one. Note this stacks rounds: the result inherits whatever "
@@ -180,29 +241,36 @@ def main() -> None:
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoTokenizer
     from peft import LoraConfig, get_peft_model
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
 
-    ds = CompletionOnlyDataset(args.data, tok, args.max_len)
-    print("dataset: %d examples" % len(ds))
+    family = family_of(AutoConfig.from_pretrained(args.model,
+                                                  trust_remote_code=True))
+    chat_kwargs = ({"reasoning_strength": args.reasoning_strength}
+                   if args.reasoning_strength else {})
+    ds = CompletionOnlyDataset(args.data, tok, args.max_len,
+                               chat_kwargs=chat_kwargs,
+                               turn_end=TURN_END.get(family),
+                               on_overflow=args.on_overflow)
+    print("dataset: %d examples (turn end %r, chat kwargs %s)"
+          % (len(ds), ds.turn_end, chat_kwargs or "none"))
+    if ds.n_dropped:
+        print("  dropped %d examples longer than max_len=%d"
+              % (ds.n_dropped, args.max_len))
+    if not len(ds):
+        raise SystemExit("no examples fit in max_len=%d" % args.max_len)
 
     print("loading model ...")
     t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+    model = load_base_model(args.model, device_map="auto",
+                            dtype=torch.bfloat16)
     print("loaded in %.1fs" % (time.time() - t0))
 
-    targets = (ATTENTION_ONLY_TARGETS if args.targets == "attention_only"
-               else DEFAULT_TARGETS)
-    counts, _, _ = resolve_targets(model, targets)
-    missing = [t for t, c in counts.items() if c == 0]
-    if missing:
-        raise SystemExit("target modules match nothing: %s" % ", ".join(missing))
-    if not any(counts[t] for t in DELTANET_TARGETS):
-        raise SystemExit("no DeltaNet projections matched")
+    targets = targets_for(model, args.targets)
+    validate_targets(model, targets)
 
     if args.resume_adapter:
         from peft import PeftModel
@@ -212,9 +280,9 @@ def main() -> None:
         model = PeftModel.from_pretrained(model, args.resume_adapter,
                                           is_trainable=True)
     else:
-        # lora_dropout must stay 0: some of these targets are fused MoE parameters
-        # rather than nn.Linear, and peft wraps those with ParamWrapper, which
-        # rejects any nonzero dropout.
+        # lora_dropout must stay 0: on Qwen3-Next some of these targets are fused
+        # MoE parameters rather than nn.Linear, and peft wraps those with
+        # ParamWrapper, which rejects any nonzero dropout.
         model = get_peft_model(model, LoraConfig(
             r=args.lora_r, lora_alpha=args.lora_r * 2, lora_dropout=0.0,
             bias="none", task_type="CAUSAL_LM", target_modules=targets))
@@ -329,10 +397,11 @@ def main() -> None:
     tok.save_pretrained(args.out)
     with open(os.path.join(args.out, "train_log.json"), "w") as f:
         json.dump({"history": history, "args": vars(args),
-                   "truncated_examples": ds.n_truncated}, f, indent=2)
+                   "truncated_examples": ds.n_truncated,
+                   "dropped_examples": ds.n_dropped}, f, indent=2)
 
-    print("\ntruncated %d/%d examples at max_len=%d"
-          % (ds.n_truncated, len(ds), args.max_len))
+    print("\ntruncated %d, dropped %d, of %d examples at max_len=%d"
+          % (ds.n_truncated, ds.n_dropped, len(ds), args.max_len))
     print("skipped %d micro-batches for non-finite loss" % n_skipped)
     print("peak GPU memory: %.1f GB"
           % (max(torch.cuda.max_memory_allocated(i)

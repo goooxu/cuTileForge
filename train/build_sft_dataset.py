@@ -77,6 +77,15 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-per-problem", type=int, default=3,
                     help="Cap solutions kept per task so easy tasks do not dominate.")
+    ap.add_argument("--completion-from", default="kernel",
+                    choices=["kernel", "response"],
+                    help="kernel fences the extracted code, which is what a "
+                         "model with no reasoning channel is asked to produce. "
+                         "response keeps the sampled assistant turn verbatim, "
+                         "reasoning channel included, which is the only faithful "
+                         "target for a model that always reasons -- it needs the "
+                         "harvest to have been logged with log_raw_response and "
+                         "the channel markers intact.")
     ap.add_argument("--prompt-tier", default="cutile_docs",
                     help="Which prompt composition to train on. The full "
                          "reference is 91%% of every sequence, so cutile_concepts "
@@ -107,7 +116,7 @@ def main() -> None:
     from kernelbench.prompt_constructor_toml import get_custom_prompt
 
     kept, seen_hashes = [], set()
-    dropped_dup = dropped_cap = 0
+    dropped_dup = dropped_cap = dropped_no_response = 0
     n_tasks = 0
 
     for spec in args.run:
@@ -174,10 +183,28 @@ def main() -> None:
                 with open(path) as f:
                     code = f.read()
 
+                # Dedup on the code even when the target is the whole turn, so
+                # the meaning of the per-task cap does not change with the target:
+                # two traces that reach the same kernel are one solution.
                 h = hashlib.sha256(normalise(code).encode()).hexdigest()
                 if h in seen_hashes:
                     dropped_dup += 1
                     continue
+
+                if args.completion_from == "response":
+                    resp_path = path[: -len("_kernel.py")] + "_response.txt"
+                    if not os.path.exists(resp_path):
+                        dropped_no_response += 1
+                        continue
+                    with open(resp_path) as f:
+                        # Verbatim: the leading space and the channel markers are
+                        # part of the token stream the model actually produced.
+                        completion = f.read()
+                else:
+                    # Fenced so the target matches the format the model is asked
+                    # for and the eval-time extractor expects.
+                    completion = "```python\n%s\n```" % code.strip()
+
                 seen_hashes.add(h)
                 n_for_problem += 1
 
@@ -190,9 +217,7 @@ def main() -> None:
                     "speedup": speedup,
                     "prompt_tier": tier,
                     "prompt": prompt,
-                    # Fenced so the target matches the format the model is asked
-                    # for and the eval-time extractor expects.
-                    "completion": "```python\n%s\n```" % code.strip(),
+                    "completion": completion,
                 })
 
     before = collections.Counter(r["category"] for r in kept)
@@ -207,6 +232,9 @@ def main() -> None:
 
     print("kept %d examples from %d distinct tasks" % (len(kept), n_tasks))
     print("  dropped %d duplicates, %d over per-task cap" % (dropped_dup, dropped_cap))
+    if dropped_no_response:
+        print("  dropped %d with no logged response (needs log_raw_response=True)"
+              % dropped_no_response)
 
     print("  by category:")
     for cat in sorted(before, key=lambda c: -before[c]):
@@ -228,6 +256,18 @@ def main() -> None:
     print("  prompt tiers: %s" % dict(tiers))
     print("  total %0.1fM characters, ~%0.1fM tokens per epoch"
           % (chars / 1e6, chars / 4 / 1e6))
+
+    # Target length decides max_len, and with a reasoning channel in the target
+    # it is the number that sets whether the run fits at all.
+    lens = sorted(len(r["completion"]) for r in kept)
+    if lens:
+        def at(frac):
+            return lens[min(int(frac * len(lens)), len(lens) - 1)]
+        print("  completion chars: median %d, p90 %d, max %d (~%d tokens at p90)"
+              % (at(0.5), at(0.9), lens[-1], at(0.9) / 4))
+    n_reasoning = sum(1 for r in kept if "to=self" in r["completion"])
+    if n_reasoning:
+        print("  %d/%d targets carry a reasoning channel" % (n_reasoning, len(kept)))
     print("wrote", args.out)
 
 

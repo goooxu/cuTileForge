@@ -1,4 +1,4 @@
-# LoRA fine-tuning image for Qwen3-Coder-Next.
+# LoRA fine-tuning image for Qwen3-Coder-Next and Muse Glimmer.
 #
 # Deliberately pinned to 26.06 while the eval image moved to 26.07. The two are
 # independent, and 26.07 makes this training run unusable: bf16 loss goes
@@ -14,8 +14,12 @@
 # just slower.
 FROM nvcr.io/nvidia/pytorch:26.06-py3
 
+# transformers is pinned because the architecture set is a hard dependency, not
+# a detail: 5.14.1 does not know `muse_glimmer` and refuses the checkpoint
+# outright, 5.15.0 registers MuseGlimmerForConditionalGeneration. Leaving it
+# unpinned meant a rebuild could silently drop a model this image must load.
 RUN pip install --no-cache-dir \
-        transformers \
+        transformers==5.15.0 \
         peft \
         accelerate \
         datasets \
