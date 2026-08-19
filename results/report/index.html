@@ -1,0 +1,2109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cuTile kernel 生成：评测、配方，以及还没解决的问题</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1b1f24;
+    --muted: #626b75;
+    --line: #e3e7ec;
+    --accent: #76b900;
+    --accent-dark: #5c9000;
+    --code-bg: #f6f8fa;
+    --max: 900px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    color: var(--fg);
+    font: 16px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(1100px 420px at 50% -180px,
+                      rgba(118, 185, 0, 0.13), rgba(118, 185, 0, 0) 70%),
+      linear-gradient(180deg, #e7edf2 0%, #f2f5f8 420px, #f2f5f8 100%);
+    background-attachment: fixed;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--accent) 0%, #4a9e2f 45%, #2f8f7d 100%);
+    z-index: 10;
+  }
+
+  header.masthead {
+    padding: 52px 24px 26px;
+  }
+  header.masthead .inner { max-width: var(--max); margin: 0 auto; }
+
+  nav.toc {
+    max-width: var(--max);
+    margin: 0 auto 30px;
+    padding: 0 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  nav.toc a {
+    font-size: 13px;
+    color: var(--muted);
+    text-decoration: none;
+    background: rgba(255, 255, 255, .7);
+    border: 1px solid rgba(16, 24, 40, .08);
+    border-radius: 999px;
+    padding: 5px 13px;
+  }
+  nav.toc a:hover { color: var(--accent-dark); border-color: var(--accent); }
+  header.masthead .eyebrow {
+    color: var(--accent-dark);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin: 0 0 12px;
+  }
+  h1 { font-size: 34px; line-height: 1.3; margin: 0 0 12px; font-weight: 650; }
+  .subtitle { color: var(--muted); font-size: 17px; margin: 0; }
+
+  /* The text column stays 900px; the card is wide enough that the charts,
+     which break out by 130px on each side, still land inside it. */
+  main {
+    max-width: 1180px;
+    margin: 0 auto 72px;
+    padding: 24px 140px 80px;
+    background: var(--bg);
+    border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .05),
+                0 14px 40px rgba(16, 24, 40, .07);
+  }
+  @media (max-width: 1200px) {
+    main {
+      max-width: none;
+      margin: 0 0 40px;
+      padding: 8px 24px 64px;
+      border-radius: 0;
+      box-shadow: none;
+    }
+  }
+  section { padding-top: 44px; }
+  section + section { border-top: 1px solid var(--line); margin-top: 40px; }
+  h2 {
+    font-size: 27px;
+    margin: 0 0 18px;
+    font-weight: 650;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  h2 .n {
+    flex: none;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(160deg, var(--accent) 0%, #4f9b23 100%);
+    color: #fff;
+    font-size: 19px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(118, 185, 0, .35);
+  }
+  h3 {
+    font-size: 19px;
+    margin: 36px 0 10px;
+    padding-left: 13px;
+    border-left: 4px solid var(--accent);
+    line-height: 1.4;
+  }
+  h4 {
+    font-size: 15.5px;
+    margin: 26px 0 6px;
+    color: var(--accent-dark);
+    font-weight: 650;
+  }
+
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: linear-gradient(90deg, #f4faea 0%, #fbfdf7 100%);
+    border-radius: 0 10px 10px 0;
+    padding: 14px 20px;
+    margin: 22px 0;
+  }
+  .callout p { margin: 6px 0; }
+  .callout.warn {
+    border-left-color: #d0563f;
+    background: linear-gradient(90deg, #fdf3f1 0%, #fefaf9 100%);
+  }
+  p { margin: 12px 0; }
+
+  table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+    margin: 22px 0;
+    font-size: 15px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+  }
+  th, td { border-bottom: 1px solid var(--line); padding: 10px 13px; text-align: left; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even) td { background: #fafbfc; }
+  th {
+    background: linear-gradient(180deg, #f3f6f8 0%, #eef2f5 100%);
+    font-weight: 650;
+    color: #2b3138;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.group { text-align: center; font-weight: 600; }
+  td.sep, th.sep { border-left: 1px solid #cfd6dd; }
+  tbody tr.highlight td,
+  tbody tr.highlight:nth-child(even) td {
+    background: #f2f9e6;
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco,
+                 "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace;
+    font-size: 13.5px;
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    overflow-wrap: break-word;
+  }
+  pre {
+    background: #f7f9fb;
+    border: 1px solid var(--line);
+    padding: 14px 16px;
+    border-radius: 10px;
+    overflow-x: auto;
+    line-height: 1.6;
+    tab-size: 4;
+  }
+  pre code { background: none; padding: 0; white-space: pre; }
+
+  .filename {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    padding: 6px 12px;
+    display: block;
+    margin-bottom: -8px;
+  }
+  .filename + pre { border-radius: 0 0 8px 8px; margin-top: 0; }
+  pre.tall { max-height: 460px; overflow-y: auto; }
+  .caption { color: var(--muted); font-size: 14px; margin-top: -4px; }
+
+  /* Charts break out of the text column: inside a 900px column the SVG scales
+     down and its labels end up smaller than the surrounding prose. */
+  figure.chart {
+    margin: 30px -130px 34px;
+    padding: 18px 20px 10px;
+    background: linear-gradient(180deg, #fcfdfe 0%, #f7f9fb 100%);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+  }
+  @media (max-width: 1200px) {
+    figure.chart { margin-left: 0; margin-right: 0; }
+  }
+  figure.chart svg { display: block; }
+  figure.chart svg text {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 "PingFang SC", "Hiragino Sans GB", sans-serif;
+  }
+  figure.chart figcaption {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 8px;
+    text-align: center;
+  }
+  .verdict-pass { color: var(--accent-dark); font-weight: 600; }
+  .verdict-fail { color: #b3261e; font-weight: 600; }
+
+  .placeholder {
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    padding: 28px;
+    color: var(--muted);
+    background: #fbfcfd;
+  }
+
+  footer {
+    padding: 0 24px 48px;
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+  }
+  footer .inner { max-width: var(--max); margin: 0 auto; }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="inner">
+    <p class="eyebrow">技术报告 · 草稿 · 2026-08-19</p>
+    <h1>cuTile kernel 生成：评测、配方，以及还没解决的问题</h1>
+    <p class="subtitle">
+      在一套自建的 909 道题上量七个模型，并给出把解出数从 166 推到 634 的训练配方。
+    </p>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#eval-suite">1　评测集</a>
+  <a href="#results">2　现有模型表现</a>
+  <a href="#recipe">3　训练配方</a>
+  <a href="#closing">结语</a>
+</nav>
+
+<main>
+
+  <section id="eval-suite">
+    <h2><span class="n">1</span>评测集：909 道题的独立尺子</h2>
+
+    <p>
+      这一章只回答一个问题：<strong>我们用什么尺子量“模型会不会写 cuTile”，以及凭什么相信这把尺子。</strong>
+      后面所有的模型对比、所有的涨跌，都是在这一套题、这一套判据下量出来的。
+      至于它和公开基准 KernelBench 是什么关系、差在哪里，放在本章最后的 1.9 对照着说。
+    </p>
+
+    <h3>1.1 题目从哪来</h3>
+
+    <p>
+      题目取自第二套封存题集（<code>level 99 / 88 / 84</code>，共 770 道）。这套题生成时就没有给任何模型看过，
+      也没有参与过任何训练或选数。评测用的是它们变异后的冻结副本，装成 <code>level 60</code>。
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>出处</th><th class="num">题数</th><th>怎么来的</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>level 99</code></td><td class="num">400</td><td>程序化 builder，全类别 curriculum</td></tr>
+        <tr><td><code>level 88</code></td><td class="num">250</td><td>模型自撰图，经沙箱验证</td></tr>
+        <tr><td><code>level 84</code></td><td class="num">120</td><td>程序化，专补激活 / 损失 / 归约</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      <strong>干净性是查过的，不是假设的。</strong> 按规范化哈希（去注释、去空行、压空格）比对了全部十三个已用
+      level（85、86、87、89、90–96 训练池，以及 97、98 第一套 held-out），结论是 770 道内部无重复、
+      与 3899 道已用任务无交集；生成时另外挡掉了约 1950 个逐字重复的候选。
+      这一点值得强调：<strong>换个随机种子不构成 held-out</strong>——第一套题集量过，那样做重复率高达 80%。
+    </p>
+
+    <h3>1.2 变异：让“背过原题”拿不到分</h3>
+
+    <p>
+      封存题集的原文一直留着不动，评测装的是按固定规则改写过的副本。不重新抽题、不加新算子词表、
+      不换骨干（conv / gemm / norm / pool / loss），只在已有的 <code>forward</code> 上改三件事：
+      近邻逐点算子置换、已知默认超参替换、维度重算。改完的哈希与 level 1、2、83–99 均无交集。
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>变异</th><th class="num">题数</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>图结构被改</td><td class="num">450</td><td>逐点算子置换 335、外包一层 77、链序对调 15、去掉一层 13、复合 9</td></tr>
+        <tr><td>链长 ±1</td><td class="num">275</td><td>加一层 198、减一层 77；只动逐点部分</td></tr>
+        <tr><td>超参被换</td><td class="num">161</td><td>只替换已知默认字面量，如 <code>negative_slope</code> 0.01→0.02、<code>eps</code> 1e-5→1e-4</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      整套题可重复生成：<code>taskgen/build_eval_suite.py</code> 写出同一批文件，
+      <code>taskgen/test_eval_suite.py</code> 校验构成。
+    </p>
+
+    <h3>1.3 两条轨：770 道延迟 + 139 道吞吐</h3>
+
+    <p>
+      909 = 770 + 139。这两条轨问的是不同的问题，<strong>读数拆开报，不折进同一个中位数</strong>。
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>轨</th><th class="num">题数</th><th>形状量级</th><th>看什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>延迟</td><td class="num">770</td>
+          <td>正确性量级（二维乘积 ≤ 2e7，中位约 3.2e6）</td>
+          <td>正确性 pass@1 / pass@4；对 <code>torch.compile</code> 的加速比</td>
+        </tr>
+        <tr>
+          <td>吞吐</td><td class="num">139</td>
+          <td>同图的大张量副本（1.0e9–1.3e9 元素）</td>
+          <td>只做成对吞吐比较，不对副本另开头条正确性</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      139 道吞吐副本全部来自 <code>(batch_size, dim)</code> 的 activation / elementwise 图
+      （elementwise 73、activation 66），图与母题完全相同，只放大形状。
+      <strong>softmax 族、norm、matmul、conv、pool、loss 不进吞吐轨</strong>——
+      带跨 tile 归约或复杂索引的算子，在大张量上量到的是别的东西，混进来这个数就没法读了。
+    </p>
+
+    <h3>1.4 算子族与形状分布</h3>
+
+    <p>770 道延迟题按算子族分布如下。这张表是后面所有“训练动了哪里”的判读基础：</p>
+
+    <table>
+      <thead>
+        <tr><th>族</th><th class="num">conv</th><th class="num">activation</th><th class="num">elementwise</th><th class="num">matmul</th><th class="num">norm</th><th class="num">pool</th><th class="num">reduction</th><th class="num">loss</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>题数</td><td class="num">209</td><td class="num">150</td><td class="num">105</td><td class="num">102</td><td class="num">102</td><td class="num">75</td><td class="num">22</td><td class="num">5</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      形状按 <code>problem_id</code> 取模分成两类，不随机，所以每次生成都一样：
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>轨</th><th class="num">常见形状</th><th class="num">不规则形状</th><th>不规则指什么</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>延迟</td><td class="num">583</td><td class="num">187</td><td>奇数维、不对齐、怪长宽比；3D/4D 保持 rank</td></tr>
+        <tr><td>吞吐</td><td class="num">103</td><td class="num">36</td><td>两维都 ≤ 65535 且不 256 对齐，乘积仍约 1e9</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      不规则那一档是刻意留的。<strong>模型很容易学会只在整除、对齐的形状上写对</strong>，
+      在不规则形状上崩掉或明显变慢是一个信号，而不是噪声。
+    </p>
+
+    <h3>1.5 通过判据：数值对，而且全是 cuTile</h3>
+
+    <p>一个样本要算通过，两件事必须同时成立：</p>
+
+    <p>
+      <strong>数值正确</strong>：与 PyTorch 参考实现逐元素比对。参考侧强制关掉 TF32
+      （<code>allow_tf32=False</code>、<code>float32_matmul_precision="highest"</code>）——
+      NGC 容器默认开 TF32，会让参考解自己就偏出 2e-2，反而把算得准的 cuTile matmul 判错。
+    </p>
+    <p>
+      <strong>纯度：完全用 cuTile 实现</strong>。三条静态检查同时通过：真的 import 了 <code>cuda.tile</code>
+      并有 <code>@ct.kernel</code> / <code>ct.launch</code>、没有残留 torch 计算算子、没有残留 <code>torch.nn</code> 计算层。
+      后两条在 KernelBench 上游只是 WARNING，这里提成硬性要求。宿主端脚手架
+      （<code>nn.Module</code>、<code>torch.empty_like</code>、<code>.contiguous()</code>）照常放行。
+    </p>
+    <p>
+      这条判据是这套评测最贵也最值的一部分：<strong>它让“看起来能跑”和“真的用 cuTile 写出来了”分开计分。</strong>
+      后面会看到，有的训练轮次涨的几乎全是纯度。
+    </p>
+
+    <h3>1.6 冻结协议</h3>
+
+    <p>
+      每个新模型都按同一套参数跑，否则不能横比。这套参数已经冻结，入口是
+      <code>rl/compare_eval_suite.sh</code>。
+    </p>
+
+    <table>
+      <thead><tr><th>项</th><th>值</th></tr></thead>
+      <tbody>
+        <tr><td>Prompt</td><td><code>cutile_concepts</code> 档；one-shot 示例与导读里的 tile 大小固定为 <code>1024</code>（见 1.7）</td></tr>
+        <tr><td>采样</td><td><code>k=4</code>，温度 <code>1.0</code>，<code>top_p=0.95</code>，<code>top_k=40</code></td></tr>
+        <tr><td>落盘</td><td><code>check_kernel=False</code>：静态检查不合格的样本也全量留存，纯度门放到分析阶段</td></tr>
+        <tr><td>计时</td><td>正确性筛完后在新容器里对 <code>torch.compile</code> 计时；180s 超时含 tileiras / ptxas 编译</td></tr>
+        <tr><td>表 A</td><td><code>max_tokens=32768</code>，thinking 开</td></tr>
+        <tr><td>表 B</td><td><code>max_tokens=8192</code>，thinking 关</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      <strong>表 A 和表 B 不能横比</strong>，它们是两条协议。性能只在两个模型都解出的题上做成对比较，
+      不用各自解出集合上的中位数互相比——那个数会被“解出的是哪些题”带偏。
+    </p>
+
+    <h3>1.7 一个真实的例子：从输入到打分</h3>
+
+    <p>
+      抽第 92 题（<code>92_ChainGELUAddBias_t4.py</code>，elementwise 族，不规则形状）走一遍完整流程。
+      选它是因为四个模型在这一道题上刚好给出了三种不同的结局。
+    </p>
+
+    <h4>输入：题目</h4>
+
+    <p>题目本身是一段标准的 PyTorch <code>Model</code>，一行 forward：</p>
+
+    <span class="filename">tasks/eval/level60/92_ChainGELUAddBias_t4.py</span>
+<pre><code>import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    """ChainGELUAddBias (tier 4, elementwise)"""
+
+    def __init__(self):
+        super(Model, self).__init__()
+        pass
+
+    def forward(self, x: torch.Tensor):
+        return torch.nn.functional.gelu(x) + 1.5
+
+
+batch_size = 3073
+dim = 6144
+def get_inputs():
+    return [torch.rand(batch_size, dim)]
+
+
+def get_init_inputs():
+    return []</code></pre>
+
+    <p>
+      注意形状 <code>3073 × 6144</code>：这是被判成「不规则」的那一档。
+      3073 = 3×1024 + 1，<strong>刚好比 tile 大小的整数倍多出一个元素</strong>，
+      边界处理写错的实现会在这里露馅。母题原本是 4096 × 2048 的规整形状。
+    </p>
+
+    <h4>输入：实际发给模型的 prompt</h4>
+
+    <p>
+      发出去的完整 prompt 是 9,472 字符 / 247 行（约 2.4k token），由五部分拼成，
+      每道题只有最后的题目部分不同：
+    </p>
+
+    <table>
+      <thead><tr><th>段落</th><th>内容</th></tr></thead>
+      <tbody>
+        <tr><td>任务说明</td><td>用 cuTile kernel 替换 PyTorch 算子；可以自行决定替换哪些、是否融合</td></tr>
+        <tr><td>cuTile 编程模型导读</td><td><code>cutile_concepts</code> 档：tile 语义、<code>@ct.kernel</code> / <code>ct.launch</code>、tile 形状必须是编译期 2 的幂等约束；<strong>以及 tile 该取多大</strong></td></tr>
+        <tr><td>one-shot 示例</td><td>一个向量加法的完整实现，含 host 端 launcher 和 <code>ModelNew</code>；<strong><code>TILE_SIZE = 1024</code> 就写在这里</strong></td></tr>
+        <tr><td>题目</td><td>上面那段 <code>Model</code> 源码，原样贴入</td></tr>
+        <tr><td>输出要求</td><td>fp32 精度；命名为 <code>ModelNew</code>；只输出代码块</td></tr>
+      </tbody>
+    </table>
+
+    <p>导读部分的开头是这样的——注意它明确写了「这不是 Triton」，因为模型最容易犯的错就是把 Triton 的 API 搬过来：</p>
+
+<pre><code>cuTile is NVIDIA's tile-based GPU programming model, exposed in Python as the
+`cuda.tile` package (conventionally imported as `ct`). It is *not* Triton, CUDA C++,
+or CuTe/CUTLASS, and none of their APIs exist here.
+
+Where a SIMT kernel reasons about individual threads, a cuTile kernel reasons about
+whole **tiles**: you load a tile of many elements, operate on the entire tile at once,
+and store it back. ...
+
+- **Tile shapes must be compile-time constants, and each dimension must be a power of two.**
+  A shape like `(96,)` or a shape read from `x.shape` at runtime will not compile.</code></pre>
+
+    <p>
+      文档档位是刻意选的。完整 API 参考约 14.9k token，会占掉整条序列的 91%；
+      <code>cutile_concepts</code> 档只有约 2.4k token，是训练和评测都负担得起的档位。
+    </p>
+
+    <h4>tile 大小：协议里最不起眼、却最贵的一行</h4>
+
+    <p>
+      协议写着「<code>TILE_SIZE = 1024</code>」，但 prompt 里<strong>没有任何一句话命令模型用 1024</strong>。
+      它是通过两处「示范」传达的。一处是导读里的一段话：
+    </p>
+
+<pre><code>A pointwise kernel over a large array should use a large power-of-two tile
+(1024 or more). A 256-element tile on a billion-element input launches millions
+of blocks; that launch overhead is pure loss on a bandwidth-bound kernel. Tile
+dimensions must still be compile-time powers of two.</code></pre>
+
+    <p>另一处是 one-shot 示例的第一行常量——模型照抄的其实主要是这个：</p>
+
+<pre><code>import cuda.tile as ct
+
+TILE_SIZE = 1024
+
+
+@ct.kernel
+def add_kernel(a, b, out):
+    # One tile block per TILE_SIZE-element chunk of the flattened arrays.
+    i = ct.bid(0)
+    # PaddingMode.ZERO zero-fills the tail tile when the length is not a
+    # multiple of TILE_SIZE; out-of-bounds stores are discarded automatically.
+    a_tile = ct.load(a, index=(i,), shape=(TILE_SIZE,), padding_mode=ct.PaddingMode.ZERO)
+    b_tile = ct.load(b, index=(i,), shape=(TILE_SIZE,), padding_mode=ct.PaddingMode.ZERO)
+    ct.store(out, index=(i,), tile=a_tile + b_tile)</code></pre>
+
+    <p>
+      为什么要把这件事单独拎出来说：<strong>这一个常量值本身就抵得上一轮训练。</strong>
+      示例原本写的是 256。把它改成 1024、其余一律不动、<strong>权重一个字节都没改</strong>之后重测：
+      60 个 kernel 里 56 个写了 1024、<strong>0 个写 256</strong>，
+      几道逐点激活锚点对 <code>torch.compile</code> 从约 0.55x 跳到 <strong>1.02–1.05x</strong>，
+      大张量 GELU 从 0.75x 到 1.12x。
+    </p>
+
+    <p>
+      原因不难理解：十亿元素的逐点核用 256 的 tile，要启动几百万个 block，
+      在带宽受限的算子上这部分开销是纯亏。但模型不会自己推断这一点，它照抄示例。
+      <strong>这也是为什么协议必须把 tile 大小连同 prompt 一起冻结</strong>——
+      不冻的话，换个示例就能让分数动一大截，那量到的就不是模型能力了。
+    </p>
+
+    <h4>输出：同一道题上的三种结局</h4>
+
+    <p>每个模型采 4 个样本。这一道题上的逐样本结果：</p>
+
+    <table>
+      <thead>
+        <tr><th>模型</th><th class="num">通过</th><th>四个样本分别发生了什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Next</td><td class="num">0 / 4</td>
+          <td><span class="verdict-fail">全部编译失败</span>：3 个 rank 不匹配，1 个 tile 形状非法</td>
+        </tr>
+        <tr>
+          <td>GL</td><td class="num">2 / 4</td>
+          <td>2 个通过；<span class="verdict-fail">2 个纯度失败</span>——GELU 仍然调 torch</td>
+        </tr>
+        <tr>
+          <td>GL-A</td><td class="num">2 / 4</td>
+          <td>2 个通过；2 个编造了不存在的 API（<code>ct.erf</code>、<code>ct.gelu</code>）</td>
+        </tr>
+        <tr class="highlight">
+          <td>Next-Q</td><td class="num">4 / 4</td>
+          <td><span class="verdict-pass">全部通过</span>，对 <code>torch.compile</code> 加速 1.92x–2.21x</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p><strong>这就是判据在做的事。</strong> 三种失败各自长什么样，值得看一眼原始代码。</p>
+
+    <h4>失败形态一：host 端 launcher 写错</h4>
+
+    <p>
+      未训练的 Next 把输入展平了，却忘了把输出也展平，于是 kernel 收到一个 2 维数组、
+      却按 1 维索引去写：
+    </p>
+
+    <span class="filename">runs/base_l60/level_60_problem_92_sample_0_kernel.py（节选）</span>
+<pre><code>    x_flat = x.view(-1)
+    n = x_flat.numel()
+    grid = (ct.cdiv(n, TILE_SIZE), 1, 1)
+    ct.launch(torch.cuda.current_stream(), grid, gelu_add_bias_kernel, (x_flat, out))</code></pre>
+
+    <p class="caption">
+      最后一个参数应当是 <code>out.view(-1)</code>。
+      判定：<code>TileTypeError: Index size 1 does not match the array rank 2</code> → <span class="verdict-fail">失败（exec）</span>。
+      kernel 主体其实写对了，GELU 的 tanh 近似、边界 padding 都没问题——错在最后一行。
+    </p>
+
+    <h4>失败形态二：数值全对，但不是 cuTile</h4>
+
+    <p>
+      未训练的 GL 只把「+1.5」写成了 kernel，GELU 留给了 <code>F.gelu</code>。
+      这份实现<strong>数值完全正确、也能跑</strong>，标准 pass@k 会给它记一分：
+    </p>
+
+    <span class="filename">runs/GL_l60/level_60_problem_92_sample_2_kernel.py（节选）</span>
+<pre><code>import torch.nn.functional as F
+
+@ct.kernel
+def add_bias_kernel(x, out):
+    i = ct.bid(0)
+    t = ct.load(x, index=(i,), shape=(TILE_SIZE,), padding_mode=ct.PaddingMode.ZERO)
+    ct.store(out, index=(i,), tile=t + 1.5)
+
+class ModelNew(nn.Module):
+    def forward(self, x):
+        x = F.gelu(x)
+        return add_bias(x)</code></pre>
+
+    <p class="caption">
+      真正的计算（GELU）还留在 torch 里，kernel 只做了那个加法。
+      判定：<code>Uses torch.nn.functional op: F.gelu</code> → <span class="verdict-fail">失败（purity）</span>。
+      这正是 1.5 里说的那条判据在起作用——<strong>不这样判，这份答案会让分数虚高。</strong>
+    </p>
+
+    <h4>通过的样子</h4>
+
+    <p>训练完成的 Next-Q 在这道题上四个样本全通过。这是其中之一，逐字原文：</p>
+
+    <span class="filename">runs/Q_l60/level_60_problem_92_sample_0_kernel.py</span>
+<pre class="tall"><code>import torch
+import torch.nn as nn
+import cuda.tile as ct
+
+# Tile size should be a power of 2, using 1024 as it's a good balance
+TILE_SIZE = 1024
+
+@ct.kernel
+def gelu_add_bias_kernel(x, out):
+    i = ct.bid(0)
+
+    # Load tile with padding for boundary handling
+    x_tile = ct.load(x, index=(i,), shape=(TILE_SIZE,), padding_mode=ct.PaddingMode.ZERO)
+
+    # Apply GELU approximation: 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
+    # For better performance, we'll use the efficient approximation
+    x_squared = x_tile * x_tile
+    x_cubed = x_squared * x_tile
+
+    # GELU approximation coefficients
+    sqrt_2_over_pi = 0.7978845608028654  # sqrt(2/π)
+    coef = 0.044715
+
+    # Compute GELU: 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
+    inner = sqrt_2_over_pi * (x_tile + coef * x_cubed)
+    tanh_inner = ct.tanh(inner)
+    gelu_result = 0.5 * x_tile * (1.0 + tanh_inner)
+
+    # Add bias of 1.5
+    result = gelu_result + 1.5
+
+    # Store result (out-of-bounds writes are automatically discarded)
+    ct.store(out, index=(i,), tile=result)
+
+
+def cutile_gelu_add_bias(x: torch.Tensor) -> torch.Tensor:
+    """Host-side launcher for GELU + bias operation."""
+    x = x.contiguous()
+    out = torch.empty_like(x)
+
+    # Flatten input for tile-based processing
+    x_flat = x.view(-1)
+    out_flat = out.view(-1)
+    n = x_flat.numel()
+
+    # Calculate grid size
+    grid = (ct.cdiv(n, TILE_SIZE), 1, 1)
+
+    # Launch kernel
+    ct.launch(torch.cuda.current_stream(), grid, gelu_add_bias_kernel, (x_flat, out_flat))
+    return out
+
+
+class ModelNew(nn.Module):
+    """ChainGELUAddBias (tier 4, elementwise) - optimized with cuTile"""
+
+    def __init__(self):
+        super(ModelNew, self).__init__()
+        pass
+
+    def forward(self, x: torch.Tensor):
+        return cutile_gelu_add_bias(x)</code></pre>
+
+    <p class="caption">
+      判定：<span class="verdict-pass">通过</span>，对 <code>torch.compile</code> <strong>2.21x</strong>。
+    </p>
+
+    <p>
+      三件事让它成立：GELU 用 tanh 近似<strong>自己算出来</strong>而不是找一个不存在的 <code>ct.gelu</code>；
+      输入输出<strong>都</strong>展平；<code>PaddingMode.ZERO</code> 配合越界写丢弃，
+      让 3073×6144 这个不能被 1024 整除的形状不需要任何特判就正确。
+      最后这点正是不规则形状那一档要考的东西。
+    </p>
+
+    <h3>1.8 这套尺子量不到什么</h3>
+
+    <p>
+      两个缺口是已知的，写在这里免得被误读：
+    </p>
+    <p>
+      <strong>损失函数只有 5 道，基本没有判别力。</strong> 不是配置失误：损失族的算子面只有 7 个算子、
+      形状阶梯又短，组合空间已经被训练集吃干。要真正覆盖损失，得先扩充损失算子面本身。
+    </p>
+    <p>
+      <strong>测不到 cuTile API 面的泛化。</strong> 题目用的 torch 算子词表都是训练期见过的，
+      变的只是形状和组合方式。要量 API 泛化，需要词表本身没见过的题集，目前没有。
+    </p>
+    <h3>1.9 和 KernelBench 的关系与区别</h3>
+
+    <p>
+      项目起步时用的就是 KernelBench：Level 1（100 道单算子）+ Level 2（100 道融合链），共 200 道题。
+      现在这 200 道题只留作历史对照，头条读数换成了自建的 909 道。
+    </p>
+
+    <p>
+      需要先说清楚：<strong>我们没有抛弃 KernelBench 的工程</strong>。题目格式仍是它的
+      （<code>Model</code> / <code>get_inputs</code> / <code>get_init_inputs</code>），
+      cuTile backend 是接进它的 backend 抽象里的，加载、prompt 组装、评测入口都沿用它的代码。
+      换掉的是<strong>题目本身、判据和性能基线</strong>这三样。
+    </p>
+
+    <table>
+      <thead>
+        <tr><th></th><th>KernelBench（Level 1+2）</th><th>本项目评测集（level 60）</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>题量</td>
+          <td>200</td>
+          <td>909（770 延迟 + 139 吞吐）</td>
+        </tr>
+        <tr>
+          <td>题目来源</td>
+          <td>公开仓库，可被搜索到</td>
+          <td>程序化 builder + 模型自撰，从未公开发布</td>
+        </tr>
+        <tr>
+          <td>污染风险</td>
+          <td>题面与参考解大概率在预训练语料里</td>
+          <td>与十三个已用 level 逐一做哈希比对，确认无交集</td>
+        </tr>
+        <tr class="highlight">
+          <td>通过判据</td>
+          <td>数值正确即可；<strong>允许只替换一部分算子</strong>，纯度检查是 WARNING 级</td>
+          <td>数值正确 <strong>且</strong> 完全用 cuTile；三条纯度检查提为硬性</td>
+        </tr>
+        <tr class="highlight">
+          <td>性能基线</td>
+          <td>默认对 <strong>eager</strong> PyTorch</td>
+          <td>一律对 <code>torch.compile</code>（inductor）</td>
+        </tr>
+        <tr>
+          <td>形状</td>
+          <td>原题给定</td>
+          <td>按 id 分成常见 / 不规则两档，187 道刻意不整除、不对齐</td>
+        </tr>
+        <tr>
+          <td>吞吐</td>
+          <td>无此概念</td>
+          <td>139 道大张量副本单独成轨，与延迟分开报</td>
+        </tr>
+        <tr>
+          <td>采样协议</td>
+          <td>随实验而变</td>
+          <td>冻结：prompt 档位、tile 大小、k、温度、top_p / top_k 全部固定</td>
+        </tr>
+        <tr>
+          <td>计时吞吐量</td>
+          <td>每样本重开进程 + 100 次性能计时，约 6 样本/分钟</td>
+          <td>批量校验、20 次性能计时；正确性与计时分两个阶段</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>下面三条是这几处差别里最要紧的，各自都有踩过坑的来由。</p>
+
+    <h4>差别一：判据——“正确”不等于“写了 cuTile”</h4>
+
+    <p>
+      KernelBench 允许模型只替换一部分算子，于是一个通篇 <code>torch.matmul</code>、
+      一行 cuTile 都没有的 <code>ModelNew</code>，照样能拿到“正确 + 约 1.0x 加速”。
+      要量的是 cuTile 生成能力，这种答案就必须判失败。1.5 会给出完整判据，
+      1.7 有一份真实的、数值全对但被判纯度失败的代码。
+    </p>
+
+    <h4>差别二：性能基线——对 eager 比是在跟一个偏弱的对手比</h4>
+
+    <p>
+      这是项目中代价最大的一次口径修正。<strong>前十二轮所有加速比都是对 eager 量的</strong>，
+      而基准里一半是融合链，我们在那里的胜绩几乎全部来自“PyTorch 会物化中间结果”——
+      恰恰是 <code>torch.compile</code> 免费消除的那部分。
+    </p>
+    <p>
+      换成 compile 基线重测后，<strong>模型排序直接翻转</strong>：eager 口径下 L 胜 K（60 比 49 道更快），
+      compile 口径下 K 胜 L（45 比 41）。“中位追平 PyTorch”也不成立了，实际是 0.92x。
+      更糟的是，当时的强化学习奖励函数用的正是 eager 口径——
+      <strong>我们在训练模型去赢一个偏弱的对手。</strong>
+    </p>
+    <p>
+      教训写进了协议：<strong>基线的选择本身就是一个可以骗自己的旋钮。</strong>
+      该问的是“用户真正会用什么”，而不是“哪个跑得出好看的数”。
+    </p>
+
+    <h4>差别三：这 200 道题已经被我们自己用旧了</h4>
+
+    <p>
+      每一轮训练完都在这 200 道题上挑“留哪个 checkpoint”，前后挑了六次。
+      挑到第六次，它衡量的就不只是模型能力，还包含了我们照着它做的调优。
+      一把用来做过六轮选型的尺子，不能再当作对外汇报的尺子——
+      这也是为什么新题集在生成时就封存，且规定只按冻结协议跑、不参与选型。
+    </p>
+
+  </section>
+
+  <section id="results">
+    <h2><span class="n">2</span>现有模型在这套评测集上的表现</h2>
+
+    <div class="callout">
+    <p>
+      这一章只报读数，不讲怎么训的。<strong>结论一句话：没有任何一个公开模型能把 cuTile 写到可用。</strong>
+      最好的公开模型在 770 道题上解出 580 道，看上去不算低，但它的 pass@1 只有 51.5%——
+      也就是<strong>随手采一次有一半写不对</strong>；而 Qwen3.8-27B 这样的通用强模型只有 366 道。
+    </p>
+    </div>
+
+    <h3>2.1 参赛的七个模型</h3>
+
+    <table>
+      <thead>
+        <tr><th>表内名称</th><th>模型</th><th>规模</th><th>本项目是否训练过</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Next</td><td>Qwen3-Coder-Next</td><td>80B MoE（bf16 权重 159 GB）</td><td>否，原始权重</td></tr>
+        <tr><td>GL</td><td>Muse Glimmer 30B</td><td>30B dense + 1.8B 视觉塔</td><td>否，原始权重</td></tr>
+        <tr><td>G4t</td><td>Gemma-4-31B-it</td><td>31B dense</td><td>否，原始权重</td></tr>
+        <tr><td>Q38</td><td>Qwen3.8-27B</td><td>27B</td><td>否，原始权重</td></tr>
+        <tr class="highlight"><td>Next-M</td><td>Next 训练后</td><td>同 Next</td><td>是</td></tr>
+        <tr class="highlight"><td>Next-Q</td><td>Next-M 再自蒸馏一轮</td><td>同 Next</td><td>是</td></tr>
+        <tr class="highlight"><td>GL-A</td><td>GL 训练一轮后</td><td>同 GL</td><td>是</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      绿色三行是本项目训练出来的，放在同一张表里是为了给公开模型一个参照
+      ——<strong>配方本身在第 3 章讲</strong>，这里只看数。
+    </p>
+
+    <h3>2.2 表 A 头条（开 thinking，32K）</h3>
+
+    <p>
+      k=4 采样。pass@4 = 四次里至少一次通过的题目占比，括号里是题数；
+      pass@1 是逐样本通过率。两条轨分开报，<strong>不折进同一个数</strong>。
+    </p>
+
+    <figure class="chart">
+<svg viewBox="0 0 900 496" role="img" aria-label="图 2.1　表 A 延迟轨：pass@4 与 pass@1" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">pass@4</text>
+<rect x="226" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
+<text x="245" y="17" fill="#626b75" font-size="14">pass@1</text>
+<line x1="108.0" y1="36" x2="108.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0%</text>
+<line x1="273.0" y1="36" x2="273.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">25%</text>
+<line x1="438.0" y1="36" x2="438.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">50%</text>
+<line x1="603.0" y1="36" x2="603.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">75%</text>
+<line x1="768.0" y1="36" x2="768.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">100%</text>
+
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="42.0" width="543.4" height="18" rx="2" fill="#76b900"/>
+<text x="658.4" y="57.0" fill="#626b75" font-size="13.5">82.3%（634 题）</text>
+<rect x="108" y="65.0" width="458.0" height="18" rx="2" fill="#3b7dd8"/>
+<text x="573.0" y="80.0" fill="#626b75" font-size="13.5">69.4%</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="106.0" width="539.1" height="18" rx="2" fill="#76b900"/>
+<text x="654.1" y="121.0" fill="#626b75" font-size="13.5">81.7%（629 题）</text>
+<rect x="108" y="129.0" width="438.2" height="18" rx="2" fill="#3b7dd8"/>
+<text x="553.2" y="144.0" fill="#626b75" font-size="13.5">66.4%</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108" y="170.0" width="530.6" height="18" rx="2" fill="#76b900"/>
+<text x="645.6" y="185.0" fill="#626b75" font-size="13.5">80.4%（619 题）</text>
+<rect x="108" y="193.0" width="379.5" height="18" rx="2" fill="#3b7dd8"/>
+<text x="494.5" y="208.0" fill="#626b75" font-size="13.5">57.5%</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="234.0" width="497.1" height="18" rx="2" fill="#76b900"/>
+<text x="612.1" y="249.0" fill="#626b75" font-size="13.5">75.3%（580 题）</text>
+<rect x="108" y="257.0" width="339.9" height="18" rx="2" fill="#3b7dd8"/>
+<text x="454.9" y="272.0" fill="#626b75" font-size="13.5">51.5%</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108" y="298.0" width="487.7" height="18" rx="2" fill="#76b900"/>
+<text x="602.7" y="313.0" fill="#626b75" font-size="13.5">73.9%（569 题）</text>
+<rect x="108" y="321.0" width="326.0" height="18" rx="2" fill="#3b7dd8"/>
+<text x="441.0" y="336.0" fill="#626b75" font-size="13.5">49.4%</text>
+<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108" y="362.0" width="313.7" height="18" rx="2" fill="#76b900"/>
+<text x="428.7" y="377.0" fill="#626b75" font-size="13.5">47.5%（366 题）</text>
+<rect x="108" y="385.0" width="178.9" height="18" rx="2" fill="#3b7dd8"/>
+<text x="293.9" y="400.0" fill="#626b75" font-size="13.5">27.1%</text>
+<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="426.0" width="142.3" height="18" rx="2" fill="#76b900"/>
+<text x="257.3" y="441.0" fill="#626b75" font-size="13.5">21.6%（166 题）</text>
+<rect x="108" y="449.0" width="56.1" height="18" rx="2" fill="#3b7dd8"/>
+<text x="171.1" y="464.0" fill="#626b75" font-size="13.5">8.5%</text>
+</svg>
+<figcaption>图 2.1　表 A 延迟轨：pass@4 与 pass@1</figcaption>
+</figure>
+
+<figure class="chart">
+<svg viewBox="0 0 900 496" role="img" aria-label="图 2.2　表 A 吞吐轨：pass@4 与 pass@1" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">pass@4</text>
+<rect x="226" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
+<text x="245" y="17" fill="#626b75" font-size="14">pass@1</text>
+<line x1="108.0" y1="36" x2="108.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0%</text>
+<line x1="273.0" y1="36" x2="273.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">25%</text>
+<line x1="438.0" y1="36" x2="438.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">50%</text>
+<line x1="603.0" y1="36" x2="603.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">75%</text>
+<line x1="768.0" y1="36" x2="768.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">100%</text>
+
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="42.0" width="622.0" height="18" rx="2" fill="#76b900"/>
+<text x="737.0" y="57.0" fill="#626b75" font-size="13.5">94.2%（131 题）</text>
+<rect x="108" y="65.0" width="580.1" height="18" rx="2" fill="#3b7dd8"/>
+<text x="695.1" y="80.0" fill="#626b75" font-size="13.5">87.9%</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="106.0" width="617.3" height="18" rx="2" fill="#76b900"/>
+<text x="732.3" y="121.0" fill="#626b75" font-size="13.5">93.5%（130 题）</text>
+<rect x="108" y="129.0" width="563.6" height="18" rx="2" fill="#3b7dd8"/>
+<text x="678.6" y="144.0" fill="#626b75" font-size="13.5">85.4%</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108" y="170.0" width="598.3" height="18" rx="2" fill="#76b900"/>
+<text x="713.3" y="185.0" fill="#626b75" font-size="13.5">90.6%（126 题）</text>
+<rect x="108" y="193.0" width="478.5" height="18" rx="2" fill="#3b7dd8"/>
+<text x="593.5" y="208.0" fill="#626b75" font-size="13.5">72.5%</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="234.0" width="584.0" height="18" rx="2" fill="#76b900"/>
+<text x="699.0" y="249.0" fill="#626b75" font-size="13.5">88.5%（123 题）</text>
+<rect x="108" y="257.0" width="454.7" height="18" rx="2" fill="#3b7dd8"/>
+<text x="569.7" y="272.0" fill="#626b75" font-size="13.5">68.9%</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108" y="298.0" width="588.8" height="18" rx="2" fill="#76b900"/>
+<text x="703.8" y="313.0" fill="#626b75" font-size="13.5">89.2%（124 题）</text>
+<rect x="108" y="321.0" width="468.6" height="18" rx="2" fill="#3b7dd8"/>
+<text x="583.6" y="336.0" fill="#626b75" font-size="13.5">71.0%</text>
+<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108" y="362.0" width="574.5" height="18" rx="2" fill="#76b900"/>
+<text x="689.5" y="377.0" fill="#626b75" font-size="13.5">87.1%（121 题）</text>
+<rect x="108" y="385.0" width="358.4" height="18" rx="2" fill="#3b7dd8"/>
+<text x="473.4" y="400.0" fill="#626b75" font-size="13.5">54.3%</text>
+<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="426.0" width="280.1" height="18" rx="2" fill="#76b900"/>
+<text x="395.1" y="441.0" fill="#626b75" font-size="13.5">42.4%（59 题）</text>
+<rect x="108" y="449.0" width="106.9" height="18" rx="2" fill="#3b7dd8"/>
+<text x="221.9" y="464.0" fill="#626b75" font-size="13.5">16.2%</text>
+</svg>
+<figcaption>图 2.2　表 A 吞吐轨：pass@4 与 pass@1</figcaption>
+</figure>
+
+    <p>
+      吞吐轨的通过率普遍高于延迟轨，<strong>不是因为大张量更容易</strong>，
+      而是因为这 139 道全部是 activation / elementwise——恰好是所有模型都最擅长的两族
+      （见 2.3）。所以吞吐轨的读数只适合模型之间横比，不能拿来代表整体能力。
+    </p>
+
+    <p>三件事值得单独指出来。</p>
+
+    <p>
+      <strong>公开模型之间的差距，小于「训没训过」的差距。</strong>
+      GL 580、G4t 569 挨得很近，Q38 366 掉一档；而同一个 Next 权重，训练前 166、训练后 634，
+      差了 <strong>3.8 倍</strong>。这说明这套题考的不是通用代码能力，是一个特定 DSL 的熟练度。
+    </p>
+    <p>
+      <strong>Next 这个基座在未训练时是最差的（166），训练后是最好的（634）。</strong>
+      它是唯一一个专门的代码模型，却在 cuTile 上垫底——
+      更说明 cuTile 不在任何一家的预训练语料里，代码能力不能自动迁移过来。
+    </p>
+    <p>
+      <strong>「解出」和 pass@1 的差距就是可用性的差距。</strong>
+      GL 解出 580 道，也就是四次里至少对一次的比例有 75.3%，但 pass@1 只有 51.5%：
+      它「会写」，但不稳定。真实使用是采一次就用，这 24 个百分点正是训练要收窄的东西。
+    </p>
+
+    <h3>2.3 能力沿算子族断层分布</h3>
+
+    <p>
+      按算子族拆开看，会发现模型不是「均匀地差」，而是<strong>在某几类上整体塌陷</strong>：
+    </p>
+
+    <figure class="chart">
+<svg viewBox="0 0 832 386" role="img" aria-label="图 2.3　按算子族的解出题数（颜色深浅 = 该族解出比例）" width="100%">
+<text x="198" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">Next</text>
+<text x="294" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">GL</text>
+<text x="390" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">G4t</text>
+<text x="486" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">Q38</text>
+<text x="582" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">Next-M</text>
+<text x="678" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">Next-Q</text>
+<text x="774" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">GL-A</text>
+<text x="140" y="34" fill="#626b75" font-size="13" text-anchor="end">族（题数）</text>
+<text x="140" y="81.0" fill="#1b1f24" font-size="15" text-anchor="end">conv (209)</text>
+<rect x="150" y="56" width="96" height="40" fill="rgb(232,243,213)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="198" y="81.0" fill="#1b1f24" font-size="15" text-anchor="middle">34</text>
+<rect x="246" y="56" width="96" height="40" fill="rgb(159,206,76)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="294" y="81.0" fill="#ffffff" font-size="15" text-anchor="middle">146</text>
+<rect x="342" y="56" width="96" height="40" fill="rgb(176,215,109)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="390" y="81.0" fill="#1b1f24" font-size="15" text-anchor="middle">119</text>
+<rect x="438" y="56" width="96" height="40" fill="rgb(239,247,226)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="486" y="81.0" fill="#1b1f24" font-size="15" text-anchor="middle">23</text>
+<rect x="534" y="56" width="96" height="40" fill="rgb(140,196,42)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="582" y="81.0" fill="#ffffff" font-size="15" text-anchor="middle">174</text>
+<rect x="630" y="56" width="96" height="40" fill="rgb(140,196,42)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="678" y="81.0" fill="#ffffff" font-size="15" text-anchor="middle">174</text>
+<rect x="726" y="56" width="96" height="40" fill="rgb(152,202,64)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774" y="81.0" fill="#ffffff" font-size="15" text-anchor="middle">156</text>
+<text x="140" y="121.0" fill="#1b1f24" font-size="15" text-anchor="end">activation (150)</text>
+<rect x="150" y="96" width="96" height="40" fill="rgb(204,229,161)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="198" y="121.0" fill="#1b1f24" font-size="15" text-anchor="middle">55</text>
+<rect x="246" y="96" width="96" height="40" fill="rgb(126,189,15)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="294" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">141</text>
+<rect x="342" y="96" width="96" height="40" fill="rgb(130,191,23)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="390" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">136</text>
+<rect x="438" y="96" width="96" height="40" fill="rgb(136,194,34)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="486" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">130</text>
+<rect x="534" y="96" width="96" height="40" fill="rgb(134,193,30)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="582" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">132</text>
+<rect x="630" y="96" width="96" height="40" fill="rgb(131,192,25)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="678" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">135</text>
+<rect x="726" y="96" width="96" height="40" fill="rgb(128,190,20)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">138</text>
+<text x="140" y="161.0" fill="#1b1f24" font-size="15" text-anchor="end">elementwise (105)</text>
+<rect x="150" y="136" width="96" height="40" fill="rgb(210,232,172)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="198" y="161.0" fill="#1b1f24" font-size="15" text-anchor="middle">34</text>
+<rect x="246" y="136" width="96" height="40" fill="rgb(138,195,38)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="294" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">89</text>
+<rect x="342" y="136" width="96" height="40" fill="rgb(136,194,34)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="390" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">91</text>
+<rect x="438" y="136" width="96" height="40" fill="rgb(142,197,46)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="486" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">86</text>
+<rect x="534" y="136" width="96" height="40" fill="rgb(129,191,21)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="582" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">96</text>
+<rect x="630" y="136" width="96" height="40" fill="rgb(127,189,17)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="678" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">98</text>
+<rect x="726" y="136" width="96" height="40" fill="rgb(131,191,24)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">95</text>
+<text x="140" y="201.0" fill="#1b1f24" font-size="15" text-anchor="end">matmul (102)</text>
+<rect x="150" y="176" width="96" height="40" fill="rgb(237,246,222)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="198" y="201.0" fill="#1b1f24" font-size="15" text-anchor="middle">13</text>
+<rect x="246" y="176" width="96" height="40" fill="rgb(181,217,117)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="294" y="201.0" fill="#1b1f24" font-size="15" text-anchor="middle">55</text>
+<rect x="342" y="176" width="96" height="40" fill="rgb(156,204,72)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="390" y="201.0" fill="#ffffff" font-size="15" text-anchor="middle">73</text>
+<rect x="438" y="176" width="96" height="40" fill="rgb(185,219,125)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="486" y="201.0" fill="#1b1f24" font-size="15" text-anchor="middle">52</text>
+<rect x="534" y="176" width="96" height="40" fill="rgb(158,205,75)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="582" y="201.0" fill="#ffffff" font-size="15" text-anchor="middle">72</text>
+<rect x="630" y="176" width="96" height="40" fill="rgb(162,207,82)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="678" y="201.0" fill="#ffffff" font-size="15" text-anchor="middle">69</text>
+<rect x="726" y="176" width="96" height="40" fill="rgb(170,211,97)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774" y="201.0" fill="#1b1f24" font-size="15" text-anchor="middle">63</text>
+<text x="140" y="241.0" fill="#1b1f24" font-size="15" text-anchor="end">norm (102)</text>
+<rect x="150" y="216" width="96" height="40" fill="rgb(224,239,197)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="198" y="241.0" fill="#1b1f24" font-size="15" text-anchor="middle">23</text>
+<rect x="246" y="216" width="96" height="40" fill="rgb(150,201,60)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="294" y="241.0" fill="#ffffff" font-size="15" text-anchor="middle">78</text>
+<rect x="342" y="216" width="96" height="40" fill="rgb(140,196,42)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="390" y="241.0" fill="#ffffff" font-size="15" text-anchor="middle">85</text>
+<rect x="438" y="216" width="96" height="40" fill="rgb(205,229,162)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="486" y="241.0" fill="#1b1f24" font-size="15" text-anchor="middle">37</text>
+<rect x="534" y="216" width="96" height="40" fill="rgb(159,206,77)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="582" y="241.0" fill="#ffffff" font-size="15" text-anchor="middle">71</text>
+<rect x="630" y="216" width="96" height="40" fill="rgb(154,203,67)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="678" y="241.0" fill="#ffffff" font-size="15" text-anchor="middle">75</text>
+<rect x="726" y="216" width="96" height="40" fill="rgb(138,195,37)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774" y="241.0" fill="#ffffff" font-size="15" text-anchor="middle">87</text>
+<text x="140" y="281.0" fill="#1b1f24" font-size="15" text-anchor="end">pool (75)</text>
+<rect x="150" y="256" width="96" height="40" fill="rgb(251,253,248)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="198" y="281.0" fill="#1b1f24" font-size="15" text-anchor="middle">2</text>
+<rect x="246" y="256" width="96" height="40" fill="rgb(165,209,88)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="294" y="281.0" fill="#ffffff" font-size="15" text-anchor="middle">49</text>
+<rect x="342" y="256" width="96" height="40" fill="rgb(181,217,119)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="390" y="281.0" fill="#1b1f24" font-size="15" text-anchor="middle">40</text>
+<rect x="438" y="256" width="96" height="40" fill="rgb(220,237,190)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="486" y="281.0" fill="#1b1f24" font-size="15" text-anchor="middle">19</text>
+<rect x="534" y="256" width="96" height="40" fill="rgb(138,195,37)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="582" y="281.0" fill="#ffffff" font-size="15" text-anchor="middle">64</text>
+<rect x="630" y="256" width="96" height="40" fill="rgb(139,196,40)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="678" y="281.0" fill="#ffffff" font-size="15" text-anchor="middle">63</text>
+<rect x="726" y="256" width="96" height="40" fill="rgb(150,201,61)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774" y="281.0" fill="#ffffff" font-size="15" text-anchor="middle">57</text>
+<text x="140" y="321.0" fill="#1b1f24" font-size="15" text-anchor="end">reduction (22)</text>
+<rect x="150" y="296" width="96" height="40" fill="rgb(236,245,220)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="198" y="321.0" fill="#1b1f24" font-size="15" text-anchor="middle">3</text>
+<rect x="246" y="296" width="96" height="40" fill="rgb(142,197,46)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="294" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">18</text>
+<rect x="342" y="296" width="96" height="40" fill="rgb(130,191,23)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="390" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">20</text>
+<rect x="438" y="296" width="96" height="40" fill="rgb(167,210,92)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="486" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">14</text>
+<rect x="534" y="296" width="96" height="40" fill="rgb(149,200,57)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="582" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">17</text>
+<rect x="630" y="296" width="96" height="40" fill="rgb(149,200,57)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="678" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">17</text>
+<rect x="726" y="296" width="96" height="40" fill="rgb(142,197,46)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">18</text>
+<text x="140" y="361.0" fill="#1b1f24" font-size="15" text-anchor="end">loss (5)</text>
+<rect x="150" y="336" width="96" height="40" fill="rgb(200,227,153)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="198" y="361.0" fill="#1b1f24" font-size="15" text-anchor="middle">2</text>
+<rect x="246" y="336" width="96" height="40" fill="rgb(145,199,51)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="294" y="361.0" fill="#ffffff" font-size="15" text-anchor="middle">4</text>
+<rect x="342" y="336" width="96" height="40" fill="rgb(118,185,0)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="390" y="361.0" fill="#ffffff" font-size="15" text-anchor="middle">5</text>
+<rect x="438" y="336" width="96" height="40" fill="rgb(118,185,0)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="486" y="361.0" fill="#ffffff" font-size="15" text-anchor="middle">5</text>
+<rect x="534" y="336" width="96" height="40" fill="rgb(172,213,102)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="582" y="361.0" fill="#1b1f24" font-size="15" text-anchor="middle">3</text>
+<rect x="630" y="336" width="96" height="40" fill="rgb(172,213,102)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="678" y="361.0" fill="#1b1f24" font-size="15" text-anchor="middle">3</text>
+<rect x="726" y="336" width="96" height="40" fill="rgb(118,185,0)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774" y="361.0" fill="#ffffff" font-size="15" text-anchor="middle">5</text>
+</svg>
+<figcaption>图 2.3　按算子族的解出题数（颜色深浅 = 该族解出比例）</figcaption>
+</figure>
+
+    <p>
+      <strong>逐点算子人人都会，卷积和池化才是分水岭。</strong>
+      activation 这一族最好和最差只差 11 道（141 对 130），
+      而 conv 从 23 到 174、pool 从 2 到 64。原因不在算法难度，在能不能跳出
+      「一个 block 管一维 tile」这个最简单的映射：激活函数可以，
+      卷积、池化要处理多维索引、跨 tile 归约和边界，模型就塌了。
+    </p>
+    <p>
+      Q38 的 conv 只有 23/209，几乎全军覆没，这也是它总分掉一档的主要来源。
+      未训练的 Next 在 pool 上只解出 <strong>2 / 75</strong>。
+    </p>
+
+    <h3>2.4 失败形态：一半以上不是「算错」</h3>
+
+    <p>
+      每个模型采 3636 个样本（909 × 4）。把没通过的样本按失败阶段拆开，能看出问题出在哪一层。
+      下图是训练前后的同一个基座（G4t 通过 1917 个样本，未做阶段拆分）：
+    </p>
+
+    <figure class="chart">
+<svg viewBox="0 0 900 154" role="img" aria-label="图 2.4　3636 个样本的去向" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">通过</text>
+<rect x="188" y="5" width="13" height="13" rx="2" fill="#e0a33e"/>
+<text x="207" y="17" fill="#626b75" font-size="14">纯度失败</text>
+<rect x="286" y="5" width="13" height="13" rx="2" fill="#d0563f"/>
+<text x="305" y="17" fill="#626b75" font-size="14">跑不起来</text>
+<rect x="384" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
+<text x="403" y="17" fill="#626b75" font-size="14">超时</text>
+<text x="96" y="62" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108.0" y="42" width="404.2" height="28" fill="#76b900"/>
+<text x="310.1" y="61" fill="#ffffff" font-size="14" text-anchor="middle">1970</text>
+<rect x="512.2" y="42" width="199.0" height="28" fill="#e0a33e"/>
+<text x="611.7" y="61" fill="#ffffff" font-size="14" text-anchor="middle">970</text>
+<rect x="711.2" y="42" width="134.8" height="28" fill="#d0563f"/>
+<text x="778.6" y="61" fill="#ffffff" font-size="14" text-anchor="middle">657</text>
+<rect x="846.0" y="42" width="8.0" height="28" fill="#9aa4ae"/>
+<text x="96" y="114" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108.0" y="94" width="446.2" height="28" fill="#76b900"/>
+<text x="331.1" y="113" fill="#ffffff" font-size="14" text-anchor="middle">2175</text>
+<rect x="554.2" y="94" width="162.3" height="28" fill="#e0a33e"/>
+<text x="635.4" y="113" fill="#ffffff" font-size="14" text-anchor="middle">791</text>
+<rect x="716.5" y="94" width="131.7" height="28" fill="#d0563f"/>
+<text x="782.4" y="113" fill="#ffffff" font-size="14" text-anchor="middle">642</text>
+<rect x="848.3" y="94" width="5.7" height="28" fill="#9aa4ae"/>
+</svg>
+<figcaption>图 2.4　3636 个样本的去向</figcaption>
+</figure>
+
+    <div class="callout warn">
+    <p>
+      <strong>纯度失败是最大的单一失败类别</strong>：GL 有 970 个样本数值算对了、却因为把活留给 torch 而不算通过
+      （1.7 里那份 <code>F.gelu</code> 的代码就是典型）。
+      这意味着按标准 pass@k 报，这些模型的分数会明显虚高。
+    </p>
+    </div>
+    <p>
+      还有一类失败与 cuTile 无关：<strong>Q38 有约一半样本在 32K 上限内没能写完 thinking</strong>，
+      根本没输出代码。这也是它 tile 统计不能和别人横比的原因。
+    </p>
+
+    <h3>2.5 不规则形状：没有出现整片崩塌</h3>
+
+    <figure class="chart">
+<svg viewBox="0 0 900 496" role="img" aria-label="图 2.5　常见形状与不规则形状的解出率" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">常见（583 道）</text>
+<rect x="256" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
+<text x="275" y="17" fill="#626b75" font-size="14">不规则（187 道）</text>
+<line x1="108.0" y1="36" x2="108.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0%</text>
+<line x1="273.0" y1="36" x2="273.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">25%</text>
+<line x1="438.0" y1="36" x2="438.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">50%</text>
+<line x1="603.0" y1="36" x2="603.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">75%</text>
+<line x1="768.0" y1="36" x2="768.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">100%</text>
+
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="42.0" width="554.7" height="18" rx="2" fill="#76b900"/>
+<text x="669.7" y="57.0" fill="#626b75" font-size="13.5">84%</text>
+<rect x="108" y="65.0" width="508.2" height="18" rx="2" fill="#3b7dd8"/>
+<text x="623.2" y="80.0" fill="#626b75" font-size="13.5">77%</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="106.0" width="545.7" height="18" rx="2" fill="#76b900"/>
+<text x="660.7" y="121.0" fill="#626b75" font-size="13.5">83%</text>
+<rect x="108" y="129.0" width="518.8" height="18" rx="2" fill="#3b7dd8"/>
+<text x="633.8" y="144.0" fill="#626b75" font-size="13.5">79%</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108" y="170.0" width="537.7" height="18" rx="2" fill="#76b900"/>
+<text x="652.7" y="185.0" fill="#626b75" font-size="13.5">81%</text>
+<rect x="108" y="193.0" width="508.2" height="18" rx="2" fill="#3b7dd8"/>
+<text x="623.2" y="208.0" fill="#626b75" font-size="13.5">77%</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="234.0" width="507.2" height="18" rx="2" fill="#76b900"/>
+<text x="622.2" y="249.0" fill="#626b75" font-size="13.5">77%</text>
+<rect x="108" y="257.0" width="465.9" height="18" rx="2" fill="#3b7dd8"/>
+<text x="580.9" y="272.0" fill="#626b75" font-size="13.5">71%</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108" y="298.0" width="497.0" height="18" rx="2" fill="#76b900"/>
+<text x="612.0" y="313.0" fill="#626b75" font-size="13.5">75%</text>
+<rect x="108" y="321.0" width="458.8" height="18" rx="2" fill="#3b7dd8"/>
+<text x="573.8" y="336.0" fill="#626b75" font-size="13.5">70%</text>
+<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108" y="362.0" width="315.8" height="18" rx="2" fill="#76b900"/>
+<text x="430.8" y="377.0" fill="#626b75" font-size="13.5">48%</text>
+<rect x="108" y="385.0" width="307.1" height="18" rx="2" fill="#3b7dd8"/>
+<text x="422.1" y="400.0" fill="#626b75" font-size="13.5">47%</text>
+<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="426.0" width="146.0" height="18" rx="2" fill="#76b900"/>
+<text x="261.0" y="441.0" fill="#626b75" font-size="13.5">22%</text>
+<rect x="108" y="449.0" width="130.6" height="18" rx="2" fill="#3b7dd8"/>
+<text x="245.6" y="464.0" fill="#626b75" font-size="13.5">20%</text>
+</svg>
+<figcaption>图 2.5　常见形状与不规则形状的解出率</figcaption>
+</figure>
+
+    <p>
+      不规则档的解出率普遍只比常见档低几个百分点，
+      没有出现「整除就会、不整除就崩」的断崖。
+      这说明 <code>PaddingMode.ZERO</code> 加越界写丢弃这个写法，模型基本吃进去了——
+      1.7 那个 3073×6144 的例子就是证据。<strong>这一档是设来抓问题的，这次没抓到，是好消息。</strong>
+    </p>
+
+    <h3>2.6 性能</h3>
+
+    <p>
+      性能必须分轨读：<strong>延迟轨（770 道小张量）和吞吐轨（139 道大张量）量的是两件事</strong>，
+      折进同一个中位数就没法解释了。参考实现一律是 <code>torch.compile</code>，
+      加速比 = 参考的 <code>ref_ms</code> ÷ 生成 kernel 的 <code>kernel_ms</code>，
+      每道题取该模型通过样本里最快的一个。
+    </p>
+
+    <h4>延迟轨：题目太小，这一档量的主要是调度开销</h4>
+
+    <figure class="chart">
+<svg viewBox="0 0 900 496" role="img" aria-label="图 2.6　延迟轨中位加速比：同一批 kernel，换个统计集合就差一倍" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
+<text x="127" y="17" fill="#626b75" font-size="14">自己解出集</text>
+<rect x="216" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="235" y="17" fill="#626b75" font-size="14">七模型共同 101 题</text>
+<line x1="108.0" y1="36" x2="108.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0x</text>
+<line x1="228.0" y1="36" x2="228.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="228.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">1x</text>
+<line x1="348.0" y1="36" x2="348.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="348.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">2x</text>
+<line x1="468.0" y1="36" x2="468.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="468.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">3x</text>
+<line x1="588.0" y1="36" x2="588.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="588.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">4x</text>
+<line x1="708.0" y1="36" x2="708.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="708.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">5x</text>
+
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="42.0" width="291.6" height="18" rx="2" fill="#9aa4ae"/>
+<text x="406.6" y="57.0" fill="#626b75" font-size="13.5">2.43x</text>
+<rect x="108" y="65.0" width="530.4" height="18" rx="2" fill="#76b900"/>
+<text x="645.4" y="80.0" fill="#626b75" font-size="13.5">4.42x</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="106.0" width="279.6" height="18" rx="2" fill="#9aa4ae"/>
+<text x="394.6" y="121.0" fill="#626b75" font-size="13.5">2.33x</text>
+<rect x="108" y="129.0" width="618.0" height="18" rx="2" fill="#76b900"/>
+<text x="733.0" y="144.0" fill="#626b75" font-size="13.5">5.15x</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108" y="170.0" width="266.4" height="18" rx="2" fill="#9aa4ae"/>
+<text x="381.4" y="185.0" fill="#626b75" font-size="13.5">2.22x</text>
+<rect x="108" y="193.0" width="621.6" height="18" rx="2" fill="#76b900"/>
+<text x="736.6" y="208.0" fill="#626b75" font-size="13.5">5.18x</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108" y="234.0" width="385.2" height="18" rx="2" fill="#9aa4ae"/>
+<text x="500.2" y="249.0" fill="#626b75" font-size="13.5">3.21x</text>
+<rect x="108" y="257.0" width="522.0" height="18" rx="2" fill="#76b900"/>
+<text x="637.0" y="272.0" fill="#626b75" font-size="13.5">4.35x</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="298.0" width="282.0" height="18" rx="2" fill="#9aa4ae"/>
+<text x="397.0" y="313.0" fill="#626b75" font-size="13.5">2.35x</text>
+<rect x="108" y="321.0" width="570.0" height="18" rx="2" fill="#76b900"/>
+<text x="685.0" y="336.0" fill="#626b75" font-size="13.5">4.75x</text>
+<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="362.0" width="289.2" height="18" rx="2" fill="#9aa4ae"/>
+<text x="404.2" y="377.0" fill="#626b75" font-size="13.5">2.41x</text>
+<rect x="108" y="385.0" width="565.2" height="18" rx="2" fill="#76b900"/>
+<text x="680.2" y="400.0" fill="#626b75" font-size="13.5">4.71x</text>
+<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108" y="426.0" width="276.0" height="18" rx="2" fill="#9aa4ae"/>
+<text x="391.0" y="441.0" fill="#626b75" font-size="13.5">2.30x</text>
+<rect x="108" y="449.0" width="559.2" height="18" rx="2" fill="#76b900"/>
+<text x="674.2" y="464.0" fill="#626b75" font-size="13.5">4.66x</text>
+</svg>
+<figcaption>图 2.6　延迟轨中位加速比：同一批 kernel，换个统计集合就差一倍</figcaption>
+</figure>
+
+<figure class="chart">
+<svg viewBox="0 0 900 288" role="img" aria-label="图 2.7　延迟轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">快过 compile</text>
+<rect x="260" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
+<text x="279" y="17" fill="#626b75" font-size="14">±5% 以内</text>
+<rect x="376" y="5" width="13" height="13" rx="2" fill="#d0563f"/>
+<text x="395" y="17" fill="#626b75" font-size="14">慢于 compile</text>
+<text x="96" y="62" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108.0" y="42" width="642.3" height="28" fill="#76b900"/>
+<text x="429.2" y="61" fill="#ffffff" font-size="14" text-anchor="middle">86.1</text>
+<rect x="750.3" y="42" width="23.1" height="28" fill="#9aa4ae"/>
+<rect x="773.4" y="42" width="80.6" height="28" fill="#d0563f"/>
+<text x="813.7" y="61" fill="#ffffff" font-size="14" text-anchor="middle">10.8</text>
+<text x="96" y="96" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108.0" y="76" width="617.7" height="28" fill="#76b900"/>
+<text x="416.8" y="95" fill="#ffffff" font-size="14" text-anchor="middle">82.8</text>
+<rect x="725.7" y="76" width="23.9" height="28" fill="#9aa4ae"/>
+<rect x="749.6" y="76" width="104.4" height="28" fill="#d0563f"/>
+<text x="801.8" y="95" fill="#ffffff" font-size="14" text-anchor="middle">14</text>
+<text x="96" y="130" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108.0" y="110" width="629.6" height="28" fill="#76b900"/>
+<text x="422.8" y="129" fill="#ffffff" font-size="14" text-anchor="middle">84.4</text>
+<rect x="737.6" y="110" width="19.4" height="28" fill="#9aa4ae"/>
+<rect x="757.0" y="110" width="97.0" height="28" fill="#d0563f"/>
+<text x="805.5" y="129" fill="#ffffff" font-size="14" text-anchor="middle">13</text>
+<text x="96" y="164" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108.0" y="144" width="693.0" height="28" fill="#76b900"/>
+<text x="454.5" y="163" fill="#ffffff" font-size="14" text-anchor="middle">92.9</text>
+<rect x="801.0" y="144" width="6.0" height="28" fill="#9aa4ae"/>
+<rect x="807.0" y="144" width="47.0" height="28" fill="#d0563f"/>
+<text x="96" y="198" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108.0" y="178" width="637.8" height="28" fill="#76b900"/>
+<text x="426.9" y="197" fill="#ffffff" font-size="14" text-anchor="middle">85.5</text>
+<rect x="745.8" y="178" width="29.8" height="28" fill="#9aa4ae"/>
+<rect x="775.7" y="178" width="78.3" height="28" fill="#d0563f"/>
+<text x="814.8" y="197" fill="#ffffff" font-size="14" text-anchor="middle">10.5</text>
+<text x="96" y="232" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108.0" y="212" width="650.5" height="28" fill="#76b900"/>
+<text x="433.3" y="231" fill="#ffffff" font-size="14" text-anchor="middle">87.2</text>
+<rect x="758.5" y="212" width="27.6" height="28" fill="#9aa4ae"/>
+<rect x="786.1" y="212" width="67.9" height="28" fill="#d0563f"/>
+<text x="820.1" y="231" fill="#ffffff" font-size="14" text-anchor="middle">9.1</text>
+<text x="96" y="266" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108.0" y="246" width="572.2" height="28" fill="#76b900"/>
+<text x="394.1" y="265" fill="#ffffff" font-size="14" text-anchor="middle">76.7</text>
+<rect x="680.2" y="246" width="26.9" height="28" fill="#9aa4ae"/>
+<rect x="707.0" y="246" width="147.0" height="28" fill="#d0563f"/>
+<text x="780.5" y="265" fill="#ffffff" font-size="14" text-anchor="middle">19.7</text>
+</svg>
+<figcaption>图 2.7　延迟轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比</figcaption>
+</figure>
+
+    <p>
+      这些倍数看着很漂亮，但<strong>不能当作「我们比 inductor 快两倍」来读</strong>。
+      延迟轨的题按正确性量级出，中位只有约 3.2e6 个元素（12.6 MB）：
+      生成 kernel 的中位耗时约 <strong>34 µs</strong>，参考约 <strong>75 µs</strong>。
+      在这个尺度上，差距主要来自参考实现启动了几个 kernel、有多少调度开销，
+      而不是算得多好。这正是本项目<strong>不把延迟轨的绝对加速比当头条</strong>的原因。
+    </p>
+    <p>
+      注意图 2.6 里两组柱的反差：<strong>「自己解出集」和「共同 101 题」差了一倍</strong>
+      （例如 GL 是 2.33x 对 5.15x）。同一批 kernel、同一次计时，只因为统计的题目集合不同，
+      读数就能差这么多——<strong>这就是为什么绝不能拿各模型自己集合上的中位数互相排名。</strong>
+      共同 101 题那一组才是同题同比，而它显示七个模型挤在 4.35x–5.18x，
+      未训练的 Next 也在其中：<strong>这一档拉不开差距。</strong>
+    </p>
+
+    <h4>吞吐轨：这一档才是真实的带宽比较</h4>
+
+    <p>
+      139 道副本每道约 1.2e9 个元素（单个张量 4.7 GB），完全是带宽受限，
+      调度开销可以忽略。这一档七个模型的中位加速比挤在 1.13x–1.19x（共同 47 题），
+      彼此没有差别。换算成实际带宽更直观：
+    </p>
+
+    <figure class="chart">
+<svg viewBox="0 0 900 240" role="img" aria-label="图 2.8　吞吐轨达成带宽中位（GB200 单卡标称约 8000 GB/s）" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">生成的 cuTile kernel</text>
+<rect x="336" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
+<text x="355" y="17" fill="#626b75" font-size="14">torch.compile 参考</text>
+<line x1="108.0" y1="36" x2="108.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0</text>
+<line x1="273.0" y1="36" x2="273.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">2000</text>
+<line x1="438.0" y1="36" x2="438.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">4000</text>
+<line x1="603.0" y1="36" x2="603.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">6000</text>
+<line x1="768.0" y1="36" x2="768.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">8000</text>
+
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="42.0" width="480.5" height="18" rx="2" fill="#76b900"/>
+<text x="595.5" y="57.0" fill="#626b75" font-size="13.5">5824 GB/s</text>
+<rect x="108" y="65.0" width="392.2" height="18" rx="2" fill="#9aa4ae"/>
+<text x="507.2" y="80.0" fill="#626b75" font-size="13.5">4754 GB/s</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108" y="106.0" width="485.8" height="18" rx="2" fill="#76b900"/>
+<text x="600.8" y="121.0" fill="#626b75" font-size="13.5">5889 GB/s</text>
+<rect x="108" y="129.0" width="392.2" height="18" rx="2" fill="#9aa4ae"/>
+<text x="507.2" y="144.0" fill="#626b75" font-size="13.5">4754 GB/s</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="170.0" width="470.2" height="18" rx="2" fill="#76b900"/>
+<text x="585.2" y="185.0" fill="#626b75" font-size="13.5">5700 GB/s</text>
+<rect x="108" y="193.0" width="394.7" height="18" rx="2" fill="#9aa4ae"/>
+<text x="509.7" y="208.0" fill="#626b75" font-size="13.5">4784 GB/s</text>
+</svg>
+<figcaption>图 2.8　吞吐轨达成带宽中位（GB200 单卡标称约 8000 GB/s）</figcaption>
+</figure>
+
+<figure class="chart">
+<svg viewBox="0 0 900 288" role="img" aria-label="图 2.9　吞吐轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">快过 compile</text>
+<rect x="260" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
+<text x="279" y="17" fill="#626b75" font-size="14">±5% 以内</text>
+<rect x="376" y="5" width="13" height="13" rx="2" fill="#d0563f"/>
+<text x="395" y="17" fill="#626b75" font-size="14">慢于 compile</text>
+<text x="96" y="62" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108.0" y="42" width="467.7" height="28" fill="#76b900"/>
+<text x="341.9" y="61" fill="#ffffff" font-size="14" text-anchor="middle">62.7</text>
+<rect x="575.7" y="42" width="88.8" height="28" fill="#9aa4ae"/>
+<text x="620.1" y="61" fill="#ffffff" font-size="14" text-anchor="middle">11.9</text>
+<rect x="664.5" y="42" width="189.5" height="28" fill="#d0563f"/>
+<text x="759.3" y="61" fill="#ffffff" font-size="14" text-anchor="middle">25.4</text>
+<text x="96" y="96" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108.0" y="76" width="364.0" height="28" fill="#76b900"/>
+<text x="290.0" y="95" fill="#ffffff" font-size="14" text-anchor="middle">48.8</text>
+<rect x="472.0" y="76" width="157.4" height="28" fill="#9aa4ae"/>
+<text x="550.8" y="95" fill="#ffffff" font-size="14" text-anchor="middle">21.1</text>
+<rect x="629.5" y="76" width="224.5" height="28" fill="#d0563f"/>
+<text x="741.7" y="95" fill="#ffffff" font-size="14" text-anchor="middle">30.1</text>
+<text x="96" y="130" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108.0" y="110" width="475.2" height="28" fill="#76b900"/>
+<text x="345.6" y="129" fill="#ffffff" font-size="14" text-anchor="middle">63.7</text>
+<rect x="583.2" y="110" width="126.1" height="28" fill="#9aa4ae"/>
+<text x="646.2" y="129" fill="#ffffff" font-size="14" text-anchor="middle">16.9</text>
+<rect x="709.3" y="110" width="144.7" height="28" fill="#d0563f"/>
+<text x="781.6" y="129" fill="#ffffff" font-size="14" text-anchor="middle">19.4</text>
+<text x="96" y="164" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108.0" y="144" width="487.1" height="28" fill="#76b900"/>
+<text x="351.6" y="163" fill="#ffffff" font-size="14" text-anchor="middle">65.3</text>
+<rect x="595.1" y="144" width="73.9" height="28" fill="#9aa4ae"/>
+<text x="632.1" y="163" fill="#ffffff" font-size="14" text-anchor="middle">9.9</text>
+<rect x="669.0" y="144" width="185.0" height="28" fill="#d0563f"/>
+<text x="761.5" y="163" fill="#ffffff" font-size="14" text-anchor="middle">24.8</text>
+<text x="96" y="198" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108.0" y="178" width="470.7" height="28" fill="#76b900"/>
+<text x="343.4" y="197" fill="#ffffff" font-size="14" text-anchor="middle">63.1</text>
+<rect x="578.7" y="178" width="126.1" height="28" fill="#9aa4ae"/>
+<text x="641.8" y="197" fill="#ffffff" font-size="14" text-anchor="middle">16.9</text>
+<rect x="704.8" y="178" width="149.2" height="28" fill="#d0563f"/>
+<text x="779.4" y="197" fill="#ffffff" font-size="14" text-anchor="middle">20</text>
+<text x="96" y="232" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108.0" y="212" width="449.8" height="28" fill="#76b900"/>
+<text x="332.9" y="231" fill="#ffffff" font-size="14" text-anchor="middle">60.3</text>
+<rect x="557.8" y="212" width="148.5" height="28" fill="#9aa4ae"/>
+<text x="632.1" y="231" fill="#ffffff" font-size="14" text-anchor="middle">19.9</text>
+<rect x="706.3" y="212" width="147.7" height="28" fill="#d0563f"/>
+<text x="780.1" y="231" fill="#ffffff" font-size="14" text-anchor="middle">19.8</text>
+<text x="96" y="266" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108.0" y="246" width="473.7" height="28" fill="#76b900"/>
+<text x="344.9" y="265" fill="#ffffff" font-size="14" text-anchor="middle">63.5</text>
+<rect x="581.7" y="246" width="118.6" height="28" fill="#9aa4ae"/>
+<text x="641.0" y="265" fill="#ffffff" font-size="14" text-anchor="middle">15.9</text>
+<rect x="700.3" y="246" width="153.7" height="28" fill="#d0563f"/>
+<text x="777.2" y="265" fill="#ffffff" font-size="14" text-anchor="middle">20.6</text>
+</svg>
+<figcaption>图 2.9　吞吐轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比</figcaption>
+</figure>
+
+    <p>
+      GB200 单卡 HBM 标称带宽约 8 TB/s，所以生成的 kernel 跑在约<strong>七成峰值</strong>上，
+      比 inductor 高约 22%。GL 是 5700 / 4784 GB/s，GL-A 是 5889 / 4754 GB/s，
+      三个模型几乎一样。
+    </p>
+    <div class="callout">
+    <p>
+      <strong>这是一个真实但不属于模型的优势。</strong> 大张量逐点算子只要写成
+      「一维展平 + 大 tile + padding」这一种形态就能拿到这个带宽，
+      而这个形态在 prompt 的 one-shot 示例里就给了。所以连未训练的 Next 都在同一档——
+      <strong>快的是 cuTile，不是哪个模型更会调优。</strong>
+      图 2.9 还显示，即便如此仍有约两成的题慢于 <code>torch.compile</code>，
+      GL 更是有三成：这些是逐点之外、或写法退化的样本。
+    </p>
+    </div>
+
+    <h4>成对比较：训练买到了正确性，没买到性能</h4>
+
+    <p>只在两个模型<strong>都解出</strong>的题上逐题比，阈值 1.05x：</p>
+
+    <table>
+      <thead>
+        <tr><th>轨</th><th>对比</th><th class="num">共同解出</th><th class="num">中位比值</th><th class="num">更快</th><th class="num">更慢</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>延迟</td><td>GL-A vs GL（全部）</td><td class="num">547</td><td class="num">0.972x</td><td class="num">186</td><td class="num">243</td></tr>
+        <tr><td>延迟</td><td>GL-A vs GL（常见形状）</td><td class="num">421</td><td class="num">0.964x</td><td class="num">138</td><td class="num">195</td></tr>
+        <tr><td>延迟</td><td>GL-A vs GL（不规则）</td><td class="num">126</td><td class="num">0.994x</td><td class="num">48</td><td class="num">48</td></tr>
+        <tr><td>延迟</td><td>Next-Q vs Next-M（全部）</td><td class="num">601</td><td class="num">0.999x</td><td class="num">170</td><td class="num">180</td></tr>
+        <tr><td>吞吐</td><td>GL-A vs GL（全部）</td><td class="num">119</td><td class="num">0.996x</td><td class="num">33</td><td class="num">16</td></tr>
+        <tr><td>吞吐</td><td>Next-Q vs Next-M（全部）</td><td class="num">130</td><td class="num">0.998x</td><td class="num">6</td><td class="num">12</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      <strong>一轮 SFT 让 GL 多解出 39 道题，却没让它写的 kernel 变快</strong>，方向甚至略微朝慢。
+      两条轨、四组对比都在噪声量级。这和 Next 那条线的结论一致：
+      <strong>正确性训练不搬动性能，性能必须单独立项。</strong>
+      本项目为此专门做过性能奖励和性能数据筛选，两次都没过自己设的门（原因在第 3 章）。
+    </p>
+    <p class="caption">
+      完整的成对矩阵（延迟 24 组、吞吐 20 组，各自再拆常见 / 不规则）在
+      <code>results/REPORT_EVAL_SUITE.md</code> 的 A.2 与 A.3 节。
+      本节的绝对值表由 <code>runs/*_l60_verified.jsonl</code> 重新统计得到。
+    </p>
+
+    <h3>2.7 表 B：关掉 thinking 的场景</h3>
+
+    <p>
+      表 A 允许模型思考到 32K token。但很多实际部署不会给这个预算，
+      所以另有一张关 thinking、8K 上限的表。<strong>两张表不能横比。</strong>
+    </p>
+
+    <figure class="chart">
+<svg viewBox="0 0 900 368" role="img" aria-label="图 2.10　表 B 延迟轨（关 thinking，8K）：pass@4 与 pass@1" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">pass@4</text>
+<rect x="226" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
+<text x="245" y="17" fill="#626b75" font-size="14">pass@1</text>
+<line x1="108.0" y1="36" x2="108.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0%</text>
+<line x1="273.0" y1="36" x2="273.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">25%</text>
+<line x1="438.0" y1="36" x2="438.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">50%</text>
+<line x1="603.0" y1="36" x2="603.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">75%</text>
+<line x1="768.0" y1="36" x2="768.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">100%</text>
+
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="42.0" width="543.4" height="18" rx="2" fill="#76b900"/>
+<text x="658.4" y="57.0" fill="#626b75" font-size="13.5">82.3%（634 题）</text>
+<rect x="108" y="65.0" width="457.4" height="18" rx="2" fill="#3b7dd8"/>
+<text x="572.4" y="80.0" fill="#626b75" font-size="13.5">69.3%</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="106.0" width="541.7" height="18" rx="2" fill="#76b900"/>
+<text x="656.7" y="121.0" fill="#626b75" font-size="13.5">82.1%（632 题）</text>
+<rect x="108" y="129.0" width="439.6" height="18" rx="2" fill="#3b7dd8"/>
+<text x="554.6" y="144.0" fill="#626b75" font-size="13.5">66.6%</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38nt</text>
+<rect x="108" y="170.0" width="341.1" height="18" rx="2" fill="#76b900"/>
+<text x="456.1" y="185.0" fill="#626b75" font-size="13.5">51.7%（398 题）</text>
+<rect x="108" y="193.0" width="160.4" height="18" rx="2" fill="#3b7dd8"/>
+<text x="275.4" y="208.0" fill="#626b75" font-size="13.5">24.3%</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">G4</text>
+<rect x="108" y="234.0" width="303.4" height="18" rx="2" fill="#76b900"/>
+<text x="418.4" y="249.0" fill="#626b75" font-size="13.5">46.0%（354 题）</text>
+<rect x="108" y="257.0" width="192.7" height="18" rx="2" fill="#3b7dd8"/>
+<text x="307.7" y="272.0" fill="#626b75" font-size="13.5">29.2%</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="298.0" width="156.0" height="18" rx="2" fill="#76b900"/>
+<text x="271.0" y="313.0" fill="#626b75" font-size="13.5">23.6%（182 题）</text>
+<rect x="108" y="321.0" width="62.0" height="18" rx="2" fill="#3b7dd8"/>
+<text x="177.0" y="336.0" fill="#626b75" font-size="13.5">9.4%</text>
+</svg>
+<figcaption>图 2.10　表 B 延迟轨（关 thinking，8K）：pass@4 与 pass@1</figcaption>
+</figure>
+
+<figure class="chart">
+<svg viewBox="0 0 900 368" role="img" aria-label="图 2.11　表 B 吞吐轨：pass@4 与 pass@1" width="100%">
+<rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="127" y="17" fill="#626b75" font-size="14">pass@4</text>
+<rect x="226" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
+<text x="245" y="17" fill="#626b75" font-size="14">pass@1</text>
+<line x1="108.0" y1="36" x2="108.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0%</text>
+<line x1="273.0" y1="36" x2="273.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">25%</text>
+<line x1="438.0" y1="36" x2="438.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">50%</text>
+<line x1="603.0" y1="36" x2="603.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">75%</text>
+<line x1="768.0" y1="36" x2="768.0" y2="356" stroke="#e3e7ec" stroke-width="1"/>
+<text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">100%</text>
+
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="42.0" width="617.3" height="18" rx="2" fill="#76b900"/>
+<text x="732.3" y="57.0" fill="#626b75" font-size="13.5">93.5%（130 题）</text>
+<rect x="108" y="65.0" width="576.8" height="18" rx="2" fill="#3b7dd8"/>
+<text x="691.8" y="80.0" fill="#626b75" font-size="13.5">87.4%</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="106.0" width="617.3" height="18" rx="2" fill="#76b900"/>
+<text x="732.3" y="121.0" fill="#626b75" font-size="13.5">93.5%（130 题）</text>
+<rect x="108" y="129.0" width="579.5" height="18" rx="2" fill="#3b7dd8"/>
+<text x="694.5" y="144.0" fill="#626b75" font-size="13.5">87.8%</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38nt</text>
+<rect x="108" y="170.0" width="522.3" height="18" rx="2" fill="#76b900"/>
+<text x="637.3" y="185.0" fill="#626b75" font-size="13.5">79.1%（110 题）</text>
+<rect x="108" y="193.0" width="300.3" height="18" rx="2" fill="#3b7dd8"/>
+<text x="415.3" y="208.0" fill="#626b75" font-size="13.5">45.5%</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">G4</text>
+<rect x="108" y="234.0" width="451.1" height="18" rx="2" fill="#76b900"/>
+<text x="566.1" y="249.0" fill="#626b75" font-size="13.5">68.3%（95 题）</text>
+<rect x="108" y="257.0" width="327.4" height="18" rx="2" fill="#3b7dd8"/>
+<text x="442.4" y="272.0" fill="#626b75" font-size="13.5">49.6%</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="298.0" width="299.1" height="18" rx="2" fill="#76b900"/>
+<text x="414.1" y="313.0" fill="#626b75" font-size="13.5">45.3%（63 题）</text>
+<rect x="108" y="321.0" width="129.4" height="18" rx="2" fill="#3b7dd8"/>
+<text x="244.4" y="336.0" fill="#626b75" font-size="13.5">19.6%</text>
+</svg>
+<figcaption>图 2.11　表 B 吞吐轨：pass@4 与 pass@1</figcaption>
+</figure>
+
+    <p>
+      <strong>训练出来的模型不依赖 thinking。</strong> Next-Q 在 8K 无思考下仍是 634 道，
+      与它在 32K 开思考时完全一致；而公开模型掉得很明显。
+      对部署来说这是个实际优势：同样的质量，token 预算少一个数量级。
+    </p>
+    <p>
+      G4 与 G4t 是同一个权重的两种配置，但分属两张表，<strong>不能相互比较</strong>。
+    </p>
+
+    <h3>2.8 小结</h3>
+
+    <p>
+      把这一章压成三句话：
+    </p>
+    <p>
+      <strong>一、cuTile 不是「换个语法的 CUDA」，公开模型不会写。</strong>
+      最强的公开模型 pass@1 51.5%，专门的代码模型未训练时只有 8.5%。
+    </p>
+    <p>
+      <strong>二、缺口是可以补上的，而且补得动。</strong> 同一权重 166 → 634，
+      在 conv、pool 这些整族塌陷的地方涨得最多。
+    </p>
+    <p>
+      <strong>三、涨的是正确性，不是性能。</strong> 生成的 cuTile kernel 在大张量上确实比
+      <code>torch.compile</code> 快约两成（5824 对 4754 GB/s），但七个模型不分伯仲——
+      <strong>那是 cuTile 本身的优势，不是训练买来的</strong>。
+      让模型学会「写得更快」目前还没有拿到可信的提升，这是下一阶段要投入的地方。
+    </p>
+  </section>
+
+  <section id="recipe">
+    <h2><span class="n">3</span>配方：166 → 634 是怎么做到的</h2>
+
+    <p>
+      这一章讲方法。<strong>训练语料全部自产：程序化生成的任务 + 模型自己的通过解，
+      没有用任何人写的参考实现。</strong>官方文档只出现在 prompt 里。
+      唯一的裁判是验证器——cuTile 编译器加上与 PyTorch 的数值比对，
+      跟评测用的是同一份 <code>verify/worker.py</code>，所以训练里的「对」和评测里的「对」
+      不可能漂移。
+    </p>
+
+    <p class="caption">
+      读数说明：这一章的解出数是当年的尺子（KernelBench Level 1+2 共 200 道），
+      因为每一关的对照都是在那上面做的。第 2 章的 909 道题是后来才建的，
+      两套数不能互相换算。
+    </p>
+
+    <h3>3.1 链条与每一关的增量</h3>
+
+    <p>
+      十九轮下来一共改过十几次权重，下面是留在主线上的九个 checkpoint。
+      <strong>颜色是干预类型</strong>：能看出 SFT 类的两跳最大，RL 类的连续但递减。
+    </p>
+
+<figure class="chart">
+<svg viewBox="0 0 900 450" role="img" aria-label="图 3.1　配方链条：KernelBench 200 题上的 k=4 解出数（当时的尺子）" width="100%">
+<rect x="210" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
+<text x="229" y="17" fill="#626b75" font-size="14">基座</text>
+<rect x="284" y="5" width="13" height="13" rx="2" fill="#76b900"/>
+<text x="303" y="17" fill="#626b75" font-size="14">SFT</text>
+<rect x="368" y="5" width="13" height="13" rx="2" fill="#2f8f7d"/>
+<text x="387" y="17" fill="#626b75" font-size="14">自蒸馏</text>
+<rect x="452" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
+<text x="471" y="17" fill="#626b75" font-size="14">GRPO</text>
+<text x="198" y="61.0" fill="#1b1f24" font-size="15" text-anchor="end">Next（基座）</text>
+<rect x="210" y="42.0" width="158.6" height="22" rx="2" fill="#9aa4ae"/>
+<text x="376.6" y="59.0" fill="#1b1f24" font-size="14">47</text>
+<text x="198" y="101.0" fill="#1b1f24" font-size="15" text-anchor="end">B　拒绝采样 SFT ×2</text>
+<rect x="210" y="82.0" width="175.5" height="22" rx="2" fill="#76b900"/>
+<text x="393.5" y="99.0" fill="#1b1f24" font-size="14">52  +5</text>
+<text x="463.5" y="99.0" fill="#626b75" font-size="12.5">第二、四阶段</text>
+<text x="198" y="141.0" fill="#1b1f24" font-size="15" text-anchor="end">E　第一次 GRPO</text>
+<rect x="210" y="122.0" width="172.1" height="22" rx="2" fill="#3b7dd8"/>
+<text x="390.1" y="139.0" fill="#1b1f24" font-size="14">51  -1</text>
+<text x="460.1" y="139.0" fill="#626b75" font-size="12.5">6.7 GPU 小时，零提升</text>
+<text x="198" y="181.0" fill="#1b1f24" font-size="15" text-anchor="end">F　训练时撤掉文档包</text>
+<rect x="210" y="162.0" width="283.5" height="22" rx="2" fill="#76b900"/>
+<text x="501.5" y="179.0" fill="#1b1f24" font-size="14">84  +33</text>
+<text x="571.5" y="179.0" fill="#626b75" font-size="12.5">prompt 14.9k → 2.4k token</text>
+<text x="198" y="221.0" fill="#1b1f24" font-size="15" text-anchor="end">H　自蒸馏</text>
+<rect x="210" y="202.0" width="364.5" height="22" rx="2" fill="#2f8f7d"/>
+<text x="582.5" y="219.0" fill="#1b1f24" font-size="14">108  +24</text>
+<text x="652.5" y="219.0" fill="#626b75" font-size="12.5">三个口径同时涨</text>
+<text x="198" y="261.0" fill="#1b1f24" font-size="15" text-anchor="end">J　在自蒸馏之上叠 GRPO</text>
+<rect x="210" y="242.0" width="428.6" height="22" rx="2" fill="#3b7dd8"/>
+<text x="646.6" y="259.0" fill="#1b1f24" font-size="14">127  +19</text>
+<text x="716.6" y="259.0" fill="#626b75" font-size="12.5">增益没被吃掉</text>
+<text x="198" y="301.0" fill="#1b1f24" font-size="15" text-anchor="end">K　frontier 类别配额</text>
+<rect x="210" y="282.0" width="452.2" height="22" rx="2" fill="#3b7dd8"/>
+<text x="670.2" y="299.0" fill="#1b1f24" font-size="14">134  +7</text>
+<text x="740.2" y="299.0" fill="#626b75" font-size="12.5">补上缺失的算子族</text>
+<text x="198" y="341.0" fill="#1b1f24" font-size="15" text-anchor="end">L　数值错分级 reward</text>
+<rect x="210" y="322.0" width="486.0" height="22" rx="2" fill="#3b7dd8"/>
+<text x="704.0" y="339.0" fill="#1b1f24" font-size="14">144  +10</text>
+<text x="774.0" y="339.0" fill="#626b75" font-size="12.5">策略漂移降到 1/54</text>
+<text x="198" y="381.0" fill="#1b1f24" font-size="15" text-anchor="end">M　纯度分级 + 链尾任务</text>
+<rect x="210" y="362.0" width="506.2" height="22" rx="2" fill="#3b7dd8"/>
+<text x="724.2" y="379.0" fill="#1b1f24" font-size="14">150  +6</text>
+<text x="794.2" y="379.0" fill="#626b75" font-size="12.5">pass@1 首次过半</text>
+<text x="198" y="421.0" fill="#1b1f24" font-size="15" text-anchor="end">Q　第二次自蒸馏</text>
+<rect x="210" y="402.0" width="475.9" height="22" rx="2" fill="#2f8f7d"/>
+<text x="693.9" y="419.0" fill="#1b1f24" font-size="14">141  -9</text>
+<text x="763.9" y="419.0" fill="#626b75" font-size="12.5">pass@1 最高，覆盖面变窄</text>
+</svg>
+<figcaption>图 3.1　配方链条：KernelBench 200 题上的 k=4 解出数（当时的尺子）</figcaption>
+</figure>
+
+    <p>
+      有几件事这张图直接说明了：
+    </p>
+    <p>
+      <strong>第一次 GRPO 是空转。</strong> E 那一轮花了 6.7 GPU 小时，解出从 52 掉到 51，
+      而同期一轮 SFT 约 35 分钟换来 +1pp。事后归因有四条：可训练参数只有 34M（0.04%）、
+      prompt 长达 14.9k token 让一步训练占掉每轮 954 秒里的 745 秒、学习率 1e-6、
+      以及最致命的一条——<strong>采样器从不刷新</strong>，rollout 一直来自最初服务的模型，
+      而 old logprob 取的是当前模型，重要性比值恒等于 1，修正从未真正发生。
+    </p>
+    <p>
+      <strong>同样的 GRPO，修好之后连续四轮有效</strong>（108 → 127 → 134 → 144 → 150），
+      而且<strong>叠在自蒸馏之上增益没有被吃掉</strong>：F→I 是 +19，H→J 也是 +19。
+    </p>
+    <p>
+      <strong>但边际收益在衰减</strong>：+19 → +7 → +10 → +6，之后转负。
+      M 的 150 道连续四轮没有被超过。
+    </p>
+
+    <h3>3.2 最大的单项不是算法，是 prompt 预算</h3>
+
+    <p>
+      解出数从 51 跳到 84 的那一关（图 3.1 里的 F），改动只有一件事：
+      <strong>训练时不再把 14.9k token 的完整 API 参考塞进 prompt，换成 2.4k token 的概念导读。</strong>
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>训练时的文档档位</th><th class="num">prompt token</th><th class="num">pass@1</th><th class="num">解出</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>完整 API 参考（E）</td><td class="num">14,891</td><td class="num">14.2%</td><td class="num">51 / 200</td></tr>
+        <tr class="highlight"><td>概念导读（F）</td><td class="num">2,393</td><td class="num">22.0%</td><td class="num"><strong>84 / 200</strong></td></tr>
+        <tr><td>不给文档（F 评测时）</td><td class="num">939</td><td class="num">20.2%</td><td class="num">77 / 200</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+    <p>
+      原因很朴素：<strong>文档占了每条训练序列的 91%，梯度预算几乎全花在复现一段所有样本都一样的前缀上。</strong>
+      换成短档之后，同样的显存能训 7 倍的样本量。
+    </p>
+    <p>
+      最后一行值得单独看：<strong>完全不给文档，F 仍能解出 77 道，而基座捧着完整手册只有 47 道。</strong>
+      模型是<strong>会</strong> cuTile，不是在查 cuTile。
+    </p>
+    </div>
+
+    <h3>3.3 自蒸馏：把「偶尔做对」变成「稳定做对」</h3>
+
+    <p>
+      第十阶段并排跑了两条臂，起点同为 F，预算相当：一条是 GRPO，一条是自蒸馏
+      （把模型自己答对的解收回去做 SFT）。
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>臂</th><th class="num">pass@1</th><th class="num">pass@4</th><th class="num">解出</th><th class="num">快过参考</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>F（起点）</td><td class="num">21.4%</td><td class="num">39.5%</td><td class="num">79 / 200</td><td class="num">21</td></tr>
+        <tr><td>I（GRPO）</td><td class="num">24.6%</td><td class="num">49.0%</td><td class="num">98 / 200</td><td class="num">31</td></tr>
+        <tr class="highlight"><td>H（自蒸馏）</td><td class="num"><strong>28.5%</strong></td><td class="num"><strong>54.0%</strong></td><td class="num"><strong>108 / 200</strong></td><td class="num"><strong>38</strong></td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      自蒸馏更便宜（1534 条样本、24 分钟训练）也更有效，而且
+      <strong>pass@1 / pass@4 / pass@16 三个口径同时涨</strong>——没有拿覆盖面换可靠性。
+    </p>
+    <p>
+      <strong>最值钱的发现是两条臂互补。</strong> 自蒸馏把卷积从 31 推到 50，
+      但池化、归约、损失一道都没多解；GRPO 卷积只 +7，却把池化 1→3、归约 3→5 推动了。
+      机理清楚：自蒸馏的数据分布由「模型已经能答对什么」决定，弱类别没有正样本可蒸；
+      GRPO 的 frontier 按「有时对」筛，弱类别偶尔蒙对一次就进训练集。
+    </p>
+
+    <h3>3.4 让 RL 真正生效的三处修正</h3>
+
+    <p>三轮 GRPO 各自解决了一个具体缺陷，都不是调超参：</p>
+
+    <table>
+      <thead>
+        <tr><th>轮次</th><th>发现的问题</th><th>改动</th><th class="num">增量</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>K（十一）</td>
+          <td>frontier 表里<strong>根本没有 activation 和 loss</strong>——任务生成器没有这两族的 builder，而它们占基准 17.5%</td>
+          <td>按 torch API 面枚举补 24 个激活 + 7 个损失；<code>select_frontier.py</code> 加类别配额</td>
+          <td class="num">+7</td>
+        </tr>
+        <tr>
+          <td>L（十二）</td>
+          <td>「数值错」是一个笼统的 0 分档，编译不过和差 1e-3 同分</td>
+          <td>按误差量级分级给分</td>
+          <td class="num">+10</td>
+        </tr>
+        <tr>
+          <td>M（十四）</td>
+          <td>剩余未解题里 52% 是<strong>数值正确但链尾留了个 torch 激活</strong></td>
+          <td>纯度失败从恒定 0 改成按剩余算子数在 0.18→0.04 插值（严格低于「编译不过」的 0.20，保证甩回 PyTorch 永远不划算）；任务生成加「锚 + 链尾激活」形态</td>
+          <td class="num">+6</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      M 这一关把 pass@1 首次推过一半（44.6% → 51.6%）。
+      注意第三行的设计：<strong>奖励刻度的上下界是构造出来的，不是调出来的</strong>——
+      任何「纯的尝试」得分都不低于任何「不纯的尝试」。
+    </p>
+
+    <h3>3.5 四个否定结果</h3>
+
+    <p>
+      这些占了大约三分之一的机时，写在这里是因为<strong>它们决定了下一步不该往哪投</strong>。
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>做过的事</th><th>结果</th><th>为什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>把纯度失败的奖励上限从 0.18 提到 0.30（十五）</td>
+          <td>解出 150 → 147</td>
+          <td>训练侧纯度率早已 0.971 顶到天花板，合成任务的链太短，那个诱惑在训练分布上根本不存在</td>
+        </tr>
+        <tr>
+          <td>性能专项 RL（十六）</td>
+          <td>共同题上逐题比 1.000x</td>
+          <td>发现并修好了真缺陷（奖励在 1.0x 以下无梯度），但训练分布选错：七成 rollout 已经赢了参考，在「已经赢很多」的区间教它赢更多</td>
+        </tr>
+        <tr>
+          <td>按修正后条件重筛性能训练集</td>
+          <td>训前停止</td>
+          <td>筛出的 147 道里 122 道是 matmul 对 cuBLAS，中位 0.100x，全落在奖励钳位区——<strong>合成任务池里没有需要的区间</strong></td>
+        </tr>
+        <tr>
+          <td>把修复循环当推理时手段（三、七）</td>
+          <td>撤回</td>
+          <td>它每题最多 16 次尝试，对照只有 4 次；补上等预算对照后，<strong>什么反馈都不给的重采更好</strong>（129 对 107）</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      修复循环后来以另一种身份回来了：<strong>当数据采集器</strong>。
+      给它「计算是对的，只把剩下的算子搬进 kernel」这样的定向提示后，
+      单次修复成功率从 2.2–2.9% 涨到 12.1–18.8%，产出 317 个一次生成拿不到的 kernel，
+      并且把 Level 2 的纯度失败占比从 71% 压到 50%（三轮来第一次真正推动）。
+    </p>
+
+    <h3>3.6 训练配置：注意力 LoRA 就够</h3>
+
+    <p>
+      前七轮每轮训 6.88B 参数，其中 4.83B 是<strong>误打误撞的 MoE 专家全量微调</strong>——
+      peft 通过 <code>ParamWrapper</code> 把融合的专家张量也算进了目标。
+      后来做了对照：
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>配置</th><th class="num">可训练参数</th><th class="num">相对速度</th><th class="num">存档大小</th><th>效果</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>默认（含专家全量微调）</td><td class="num">6.88 B</td><td class="num">1.0x</td><td class="num">26 GB</td><td>基准</td></tr>
+        <tr class="highlight"><td>仅注意力 LoRA</td><td class="num">137 M</td><td class="num"><strong>2.8x</strong></td><td class="num"><strong>537 MB</strong></td><td>打平</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      另一条同样省钱的发现：<strong>LoRA 上的 KL 锚是免费的</strong>。
+      adapter 挂在已合并的监督权重上时，<code>disable_adapter()</code> 得到的就是 SFT 策略本身，
+      不需要第二份参考模型。没有这个锚，策略会崩到 99.2% 不输出代码。
+    </p>
+
+    <h3>3.7 一轮完整迭代的机时</h3>
+
+    <p>
+      下面是本周在 Muse Glimmer 上跑的一轮实测（4×GB200 一台机器），
+      可以直接当作后续每一轮的预算单位：
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>步骤</th><th class="num">规模</th><th class="num">耗时</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>采样训练数据（3 个 level，k=8）</td><td class="num">10,800 样本</td><td class="num">约 4.5 h</td></tr>
+        <tr><td>验证器筛正确性</td><td class="num">10,800 候选</td><td class="num">约 1.7 h</td></tr>
+        <tr><td>建 SFT 数据集（去重、配额、渲染 prompt）</td><td class="num">2,440 条</td><td class="num">数分钟（CPU）</td></tr>
+        <tr><td>LoRA SFT（1 epoch，r=128，仅注意力）</td><td class="num">301 步</td><td class="num">2.4 h</td></tr>
+        <tr><td>合并权重</td><td class="num">56 GB</td><td class="num">约 3 min</td></tr>
+        <tr><td>表 A 评测（909 × k=4，含计时）</td><td class="num">3,636 样本</td><td class="num">约 3 h</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      合计<strong>约 12 GPU·小时/轮（单机 4 卡约 3 小时墙钟）</strong>，其中真正的训练只占五分之一，
+      大头在采样和验证。自蒸馏轮的训练翻倍（2 epoch，4.5 h），其余不变。
+    </p>
+
+    <h3>3.8 五个能骗自己的旋钮</h3>
+
+    <p>
+      这一节是全项目最值得留下的部分：每一条都是<strong>一次自我欺骗被当场抓住</strong>，
+      而且都已经变成了代码里的防呆。
+    </p>
+
+    <p>
+      <strong>一、基线。</strong> 十二轮没人质疑过 eager PyTorch，而它恰好在我们最爱宣称胜绩的
+      融合链上最弱。换成 <code>torch.compile</code> 后「中位追平 PyTorch」变成 0.92x，
+      两个模型的排序还翻转了。
+    </p>
+    <p>
+      <strong>二、等预算对照。</strong> 多轮方法必须和同等采样预算的单轮比，
+      否则「反馈有用」和「多采几次」分不开。
+    </p>
+    <p>
+      <strong>三、判据本身可能有 bug。</strong> 曾用 <code>compiled and not correct</code> 判定
+      「能跑但数值错」，报出 92%。但 <code>compiled</code> 只表示模块导入成功，
+      而 cuTile 是首次 launch 才 JIT——<strong>所有编译错误都被算成了数值错</strong>。
+      真实的最大项是纯度失败（52%），完全是另一回事，靶子因此瞄错了一轮。
+    </p>
+    <p>
+      <strong>四、贴着天花板的训练指标不能用来排除失败模式。</strong>
+      训练侧纯度率 0.971 纹丝不动，被我读成「没有风险」，基准上却丢了 9 道。
+    </p>
+    <p>
+      <strong>五、构成效应。</strong> 两个模型解出的题不是同一批，
+      拿各自集合上的中位数比较，涨跌全是构成变化（2.6 里图 2.6 就是这个现象的直接证据）。
+      现在的纪律是：<strong>性能一律在共同题集上逐题比。</strong>
+    </p>
+
+    <div class="callout warn">
+    <p>
+      贯穿全程的一条观察：<strong>后期每一轮的失败都不是方法不对，而是训练分布和基准分布对不上</strong>——
+      类别构成（十一）、失败形态（十四）、性能区间（十六）、发出的 tile 尺寸（二十），
+      四次都是同一个形状的问题。自产语料的代价就在这里：任务是我们造的，
+      它的分布就是我们对「什么是难的」的假设，而那个假设一直偏乐观。
+    </p>
+    </div>
+  </section>
+
+  <section id="closing">
+    <h2>结语：这项工作留下了什么</h2>
+
+    <p>
+      cuTile 是一个新 DSL。<strong>新 DSL 的采用成本里，很大一块是「没人会写、也没有语料可学」</strong>——
+      模型帮不上忙，工程师就得手写；手写的人少，语料就更少。这项工作针对的正是这个循环。
+      三章看下来，留下的东西可以分成四份。
+    </p>
+
+    <h3>一把可信的尺子</h3>
+
+    <p>
+      909 道题、冻结协议、判据是「数值对且完全用 cuTile」。它的价值不在题目本身，
+      而在于<strong>此后任何一个模型、任何一次权重改动，都能用同一把尺子在约 3 小时内量出可比的读数</strong>，
+      而且这个读数经得起追问：题目从未公开、与十三个已用题库逐一哈希比对无交集、
+      性能一律对 <code>torch.compile</code> 而不是对更弱的 eager、只在共同题集上做成对比较。
+    </p>
+    <p>
+      这套东西本身就是可复用资产。第 2 章里七个模型的横向读数，是它上线后的第一批产出。
+    </p>
+
+    <h3>一条被两个基座验证过的配方</h3>
+
+    <p>
+      同一份权重从解出 166 道到 634 道，pass@1 从 8.5% 到 69.4%。更重要的是它<strong>不是一次性的</strong>：
+      同一条配方搬到另一个完全不同的基座（Muse Glimmer，dense 30B）上，
+      一轮就把 580 推到 619，pass@1、pass@4、吞吐三个口径同时涨。
+    </p>
+
+    <div class="callout">
+      <p>
+        <strong>整条配方不依赖任何人写的 cuTile 参考实现。</strong>
+        训练数据是程序化生成的任务加上模型自己的通过解，裁判是编译器和数值比对。
+        这意味着<strong>它可以随 cuTile 的演进自动续期</strong>——DSL 增加了新算子面，
+        补上任务生成器就能再跑一轮，不需要先攒一批人写的示例。
+      </p>
+    </div>
+
+    <p>
+      成本也是清楚的：一轮完整迭代约 12 GPU·小时，单机 4 卡约 3 小时墙钟，其中训练只占五分之一。
+    </p>
+
+    <h3>一批负面结果</h3>
+
+    <p>
+      四个否定结论（纯度上限、性能专项 RL、性能训练集重筛、修复循环当推理手段）
+      加上五个「能骗自己的旋钮」，大约花掉三分之一的机时。
+      <strong>它们的价值是让下一笔投入不必重复购买同样的教训</strong>：
+      基线选 eager 会让排序翻转、多轮方法必须和等预算单轮比、
+      贴着天花板的训练指标不能用来排除失败模式、涨跌可能只是题目构成变了。
+      这些现在都已经变成代码里的防呆，而不是留在某个人的记忆里。
+    </p>
+
+    <h3>对 cuTile 本身的一个读数</h3>
+
+    <p>
+      顺带量到一件与模型无关的事：在 139 道十亿元素的逐点算子上，
+      <strong>生成的 cuTile kernel 中位达到 5824 GB/s，而 <code>torch.compile</code> 是 4754 GB/s</strong>，
+      约为 GB200 标称带宽的七成。这个差距七个模型几乎一样——
+      说明它来自 cuTile 这条路径本身，而不是某个模型更会调优。
+      对「cuTile 值不值得推」这个问题，这是一个独立于本项目的正面证据。
+    </p>
+
+    <h3>还欠着的</h3>
+
+    <p>
+      报告标题里那句「还没解决的问题」不是修辞。<strong>性能这条线目前是空的</strong>：
+      正确性训练不搬动性能，专项尝试两次都没过自己设的门，而诊断已经很具体——
+      合成任务池里缺「稳定解出、比参考慢、还追得上」的那段区间，这是任务生成的问题，
+      不是奖励函数的问题。此外池化和卷积仍有明显缺口，cuTile API 面的泛化还没有题集能量。
+    </p>
+
+    <div class="callout warn">
+      <p>
+        换句话说：<strong>「能不能写对」这个问题已经基本回答了，「能不能写得快」还没有开始回答。</strong>
+        前者证明了这套方法体系走得通，后者知道卡在哪、也知道该从任务生成而不是训练算法入手。
+        这是下一阶段值得投入的位置。
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="inner">cuTileForge · 内部技术报告草稿</div>
+</footer>
+
+</body>
+</html>

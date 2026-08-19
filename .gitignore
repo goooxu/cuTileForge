@@ -10,6 +10,10 @@
 # artifacts needed to check the report are committed, under results/.
 /runs/
 
+# Intermediate output of results/report/make_charts.py; the figures it holds are
+# inlined into index.html by refresh_charts.py.
+/results/report/charts.html
+
 __pycache__/
 *.py[cod]
 .venv/
