@@ -2385,6 +2385,27 @@ activation −3。纯度失败 970 → 791。
 
 ---
 
+# 自蒸馏成 GL-B
+
+用 GL-A 自己的通过解再训一轮，对应 Next 第十阶段。数据只有训练层（92 + conv 重的 93），
+禁用 84/88/99 与 97/98。k=8、温度 1.2、xhigh、32768，关 reasoning parser、保留特殊
+token。level 92 通过 **5165/7029（73.5%）**，level 93 **1461/2000（73.0%）**——基座
+同层只有 38% / 36%。蒸馏集 2572 条 / 1090 题，全部带推理通道；norm 压到 400，
+activation/elementwise 不另压。conv 25%、matmul 22%、pool 19%。
+
+从合并后的 GL-A 挂新 adapter（attention-only r=128，2 epoch，lr 5e-5，max-len
+20480，梯度检查点）。630 步，约 4.3 小时，损失 0.96 → 0.88。非有限损失丢
+**171/5038（3.4%）**，按族分散（conv 4.6% 最高）。峰值 74.8 GB。
+
+**结论**：GL-A 619 → GL-B **668/770**，p@1 57.5% → 63.1%，p@4 80.4% → **86.8%**，
+三个延迟口径同时涨，解出和 pass@4 超过 Next-Q（634 / 82.3%）。pass@1 仍落后
+（Next-Q 69.4%）。速度没动（相对 GL-A 共同 594 道中位 0.993x）。吞吐解出 126→127，
+但 139 道上 pass@1 72.5% → 55.4%：同一批题，四发全对从 64 变成 21，多出来的失败是
+exec。蒸馏集没喂大 activation / elementwise。读数在
+[results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+
+---
+
 # 对外技术报告（HTML）
 
 `results/report/index.html`，单文件、无外部依赖、能从 `file://` 打开。三章加结语：

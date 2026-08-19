@@ -22,6 +22,7 @@
 # GL = Muse Glimmer always-think, reasoning_strength=xhigh, 32768 (table A).
 # GLA = the same, on Glimmer after one round of rejection SFT.
 # GLB = the same, after self-distillation on GLA's own passing solutions.
+# GLC = the same, after a second SFT on GLB that restocks activation / elementwise.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -90,9 +91,9 @@ for spec in "$@"; do
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser gemma4"
         export VLLM_IMAGE=vllm/vllm-openai:nightly-aarch64
-    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" ]]; then
+    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" || "$tag" == "GLC" ]]; then
         # Muse Glimmer: thinking cannot be turned off. Table A, xhigh.
-        # GLA / GLB must be sampled identically to GL so the comparison holds.
+        # GLA / GLB / GLC must be sampled identically to GL so the comparison holds.
         export REASONING_STRENGTH=xhigh
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser muse_glimmer --generation-config auto"
