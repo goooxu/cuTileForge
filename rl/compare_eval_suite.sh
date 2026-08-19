@@ -20,7 +20,8 @@
 # G4t = Gemma 4 thinking on, 32768, same image (table A). No effort slider.
 # Official v0.27.1-aarch64 cannot serve Gemma 4 (head_dim per-layer).
 # GL = Muse Glimmer always-think, reasoning_strength=xhigh, 32768 (table A).
-# GLA = the same, on Glimmer after cuTile SFT.
+# GLA = the same, on Glimmer after one round of rejection SFT.
+# GLB = the same, after self-distillation on GLA's own passing solutions.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -89,9 +90,9 @@ for spec in "$@"; do
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser gemma4"
         export VLLM_IMAGE=vllm/vllm-openai:nightly-aarch64
-    elif [[ "$tag" == "GL" || "$tag" == "GLA" ]]; then
+    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" ]]; then
         # Muse Glimmer: thinking cannot be turned off. Table A, xhigh.
-        # GLA is GL after cuTile SFT and must be sampled identically to compare.
+        # GLA / GLB must be sampled identically to GL so the comparison holds.
         export REASONING_STRENGTH=xhigh
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser muse_glimmer --generation-config auto"

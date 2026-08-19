@@ -63,6 +63,16 @@ fi
 echo "=== stop vLLM, verify correctness ==="
 docker rm -f qwen-vllm >/dev/null 2>&1 || true
 
+KERNEL_DIR="$WS/runs/$RUN_NAME"
+n_kern=0
+if [[ -d "$KERNEL_DIR" ]]; then
+    n_kern="$(ls "$KERNEL_DIR" | grep -c _kernel.py || true)"
+fi
+if [[ "$n_kern" -eq 0 ]]; then
+    echo "no kernels in $KERNEL_DIR; skipping verify"
+    exit 1
+fi
+
 OUT="$WS/runs/${RUN_NAME}_verified.jsonl"
 FV="fv_$RUN_NAME"
 docker rm -f "$FV" >/dev/null 2>&1 || true

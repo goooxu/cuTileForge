@@ -57,16 +57,28 @@ trap cleanup EXIT INT TERM
 cleanup
 
 start_server() {
-    echo "[restart] (re)starting vLLM"
-    docker rm -f qwen-vllm >/dev/null 2>&1 || true
-    "$KB/scripts/serve_qwen.sh" >/dev/null 2>&1
-    for _ in $(seq 1 180); do
-        server_up && { echo "[restart] server up"; return 0; }
-        docker ps --filter name=qwen-vllm --format '{{.Names}}' | grep -q qwen-vllm || {
-            echo "[restart] container died during startup"; return 1; }
-        sleep 10
+    # Muse Glimmer (and the GB200 vLLM builds in general) sometimes die once
+    # during engine init and come up on the next launch. Giving up on the first
+    # death used to skip a whole harvest and then verify an empty directory.
+    local attempt
+    for attempt in 1 2 3; do
+        echo "[restart] (re)starting vLLM (attempt $attempt)"
+        docker rm -f qwen-vllm >/dev/null 2>&1 || true
+        if ! "$KB/scripts/serve_qwen.sh"; then
+            echo "[restart] serve_qwen.sh failed"
+            continue
+        fi
+        for _ in $(seq 1 180); do
+            server_up && { echo "[restart] server up"; return 0; }
+            if ! docker ps --filter name=qwen-vllm --format '{{.Names}}' | grep -q qwen-vllm; then
+                echo "[restart] container died during startup; last logs:"
+                docker logs qwen-vllm 2>&1 | tail -40 || true
+                break
+            fi
+            sleep 10
+        done
     done
-    echo "[restart] server did not come up in time"
+    echo "[restart] could not start server"
     return 1
 }
 
