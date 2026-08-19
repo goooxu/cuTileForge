@@ -2440,3 +2440,11 @@ exec。蒸馏集没喂大 activation / elementwise。读数在
 `python3 -m http.server` 是单线程的，浏览器一个 keep-alive 连接就能把它堵死，
 表现为页面加载不出来。临时预览请用 `ThreadingMixIn`（本机 Python 3.6，没有
 `ThreadingHTTPServer`）。用完即删，不入库。
+
+## 评测看门狗
+
+训练结束之后如果没人接着合权重 / 开评测，GPU 会空转。`compare_eval_suite.sh`
+本身可续（磁盘上已有 kernel、verified jsonl 存在就跳过），但父进程死了没有人再
+拉起来。`rl/keep_eval_alive.sh` 在开发机上循环：没跑完且没在跑就重启；生成容器
+超过 `STALL_SEC` 还不写新 kernel 就 `docker rm -f` 点名容器（不用 `pkill -f`）。
+`run_eval_suite.sh` 的 vLLM 启动改成三次重试，一轮生成零进展就重启服务。

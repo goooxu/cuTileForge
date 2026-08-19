@@ -82,14 +82,25 @@ PY
 server_up() { curl -s --max-time 5 http://localhost:8000/v1/models >/dev/null 2>&1; }
 
 start_server() {
-    echo "[evalsuite] (re)starting vLLM"
-    docker rm -f qwen-vllm >/dev/null 2>&1 || true
-    "$KB/scripts/serve_qwen.sh" >/dev/null 2>&1
-    for _ in $(seq 1 180); do
-        server_up && { echo "[evalsuite] server up"; return 0; }
-        docker ps --filter name=qwen-vllm --format '{{.Names}}' | grep -q qwen-vllm || {
-            echo "[evalsuite] container died during startup"; return 1; }
-        sleep 10
+    # Muse Glimmer sometimes dies once during engine init. Giving up on the
+    # first death used to skip a whole harvest; eval has the same failure.
+    local attempt
+    for attempt in 1 2 3; do
+        echo "[evalsuite] (re)starting vLLM (attempt $attempt)"
+        docker rm -f qwen-vllm >/dev/null 2>&1 || true
+        if ! "$KB/scripts/serve_qwen.sh" >/dev/null 2>&1; then
+            echo "[evalsuite] serve_qwen.sh failed"
+            continue
+        fi
+        for _ in $(seq 1 180); do
+            server_up && { echo "[evalsuite] server up"; return 0; }
+            docker ps --filter name=qwen-vllm --format '{{.Names}}' | grep -q qwen-vllm || {
+                echo "[evalsuite] container died during startup; last logs:"
+                docker logs qwen-vllm 2>&1 | tail -40 || true
+                break
+            }
+            sleep 10
+        done
     done
     echo "[evalsuite] server did not come up in time"
     return 1
@@ -130,6 +141,7 @@ generate_level() {
         fi
         # Detached: a foreground docker run --rm dies with this bash tree
         # (that is how the Q38 6h generate stopped at 22:59 with no OOM).
+        got_before="$(have "$run_dir")"
         NAME="gen-$run_name" DETACH=1 "$KB/scripts/run_generate.sh" \
             "$run_name" "$level" "$K" \
             "${extra[@]}" log_raw_response=True >/dev/null
@@ -139,6 +151,12 @@ generate_level() {
         done
         docker logs "gen-$run_name" 2>&1 | tail -5 || true
         docker rm -f "gen-$run_name" >/dev/null 2>&1 || true
+        got_after="$(have "$run_dir")"
+        if [[ "$got_after" -le "$got_before" ]]; then
+            echo "[evalsuite] no progress this round; restarting vLLM"
+            docker rm -f qwen-vllm >/dev/null 2>&1 || true
+            fresh_server=1
+        fi
     done
     got="$(have "$run_dir")"
     [[ "$got" -ge "$expected" ]]
