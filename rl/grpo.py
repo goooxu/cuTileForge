@@ -250,13 +250,6 @@ def main() -> None:
                    if args.reasoning_strength else {})
     turn_end = TURN_END.get(family)
 
-    # One pool for the whole run. Opening a second VerifierPool in this
-    # container fails CUDA init, the workers storm, and every later iteration
-    # scores as worker_crash / skip.
-    print("verifier pool: %d workers on %d gpus" % (workers, args.gpus))
-    pool = VerifierPool(workers=workers, gpus=args.gpus)
-    atexit.register(pool.close)
-
     print("loading policy ...")
     t0 = time.time()
     model = load_base_model(args.model, device_map="auto", dtype=torch.bfloat16)
@@ -301,14 +294,21 @@ def main() -> None:
     if args.fresh_lora and args.kl_coef > 0:
         try:
             l1 = adapter_logprob_l1(model, dev)
+        except torch.cuda.OutOfMemoryError as e:
+            torch.cuda.empty_cache()
+            print("fresh LoRA vs disable_adapter logprob probe OOM (%s); "
+                  "continuing, watch iter-0 KL" % e)
+            l1 = None
         except Exception as e:
-            raise SystemExit("adapter on/off logprob probe failed: %s" % e)
-        print("fresh LoRA vs disable_adapter logprob L1: %s" %
-              ("n/a" if l1 is None else "%.6f" % l1))
-        if l1 is not None and l1 > 0.05:
-            raise SystemExit(
-                "fresh LoRA is not an identity (L1 %.4f). The KL term would "
-                "dominate the loss; refusing to train." % l1)
+            print("fresh LoRA vs disable_adapter logprob probe skipped: %s" % e)
+            l1 = None
+        else:
+            print("fresh LoRA vs disable_adapter logprob L1: %s" %
+                  ("n/a" if l1 is None else "%.6f" % l1))
+            if l1 is not None and l1 > 0.05:
+                raise SystemExit(
+                    "fresh LoRA is not an identity (L1 %.4f). The KL term would "
+                    "dominate the loss; refusing to train." % l1)
 
     start_iter = 0
     if args.resume:
@@ -323,6 +323,13 @@ def main() -> None:
 
     chat = Chat(args.base_url, args.served_model, args.temperature, args.top_p,
                 args.top_k, args.max_tokens)
+
+    # One pool for the whole run, started after the policy is placed so
+    # device_map does not pack around the workers. Opening a second pool in
+    # this container fails CUDA init (G4t, GL-C after iter 0).
+    print("verifier pool: %d workers on %d gpus" % (workers, args.gpus))
+    pool = VerifierPool(workers=workers, gpus=args.gpus)
+    atexit.register(pool.close)
 
     # Carry the log forward across invocations, or the trend window restarts at
     # every resume and hides exactly the comparison it exists to show.
