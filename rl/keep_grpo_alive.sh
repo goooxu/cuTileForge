@@ -132,16 +132,15 @@ unstick() {
 }
 
 start_grpo() {
-    echo "[keep-grpo] starting run_gl_grpo.sh on $TRAIN_HOST"
+    echo "[keep-grpo] starting run_gl_grpo.sh on $TRAIN_HOST out=$OUT_NAME seed=${RL_SEED:-0}"
     # Double-fork on the remote so this SSH returns. `cmd & echo $!` inside
     # bash -c without job control waits for the child, which glued the first
     # watchdog to the whole GRPO run.
+    # The remote python starts with a login env, not this watchdog's exports,
+    # so OUT_NAME / RL_SEED / MODEL have to go on argv.
     remote "python3 -c $(printf %q "
 import os, sys
-ws = sys.argv[1]
-script = sys.argv[2]
-log = sys.argv[3]
-total = sys.argv[4]
+ws, script, log, total, out_name, rl_seed, model = sys.argv[1:8]
 if os.fork():
     sys.exit(0)
 os.setsid()
@@ -151,6 +150,9 @@ os.chdir(ws)
 env = os.environ.copy()
 env['CUTILE_WS'] = ws
 env['TOTAL'] = total
+env['OUT_NAME'] = out_name
+env['RL_SEED'] = rl_seed
+env['MODEL'] = model
 out = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
 os.dup2(out, 1)
 os.dup2(out, 2)
@@ -159,7 +161,7 @@ devnull = os.open('/dev/null', os.O_RDONLY)
 os.dup2(devnull, 0)
 os.close(devnull)
 os.execve('/bin/bash', ['bash', script], env)
-") $(printf %q "$WS") $(printf %q "$FORGE/rl/run_gl_grpo.sh") $(printf %q "$LOG") $(printf %q "$TOTAL")"
+") $(printf %q "$WS") $(printf %q "$FORGE/rl/run_gl_grpo.sh") $(printf %q "$LOG") $(printf %q "$TOTAL") $(printf %q "$OUT_NAME") $(printf %q "${RL_SEED:-0}") $(printf %q "$MODEL")"
     local rpid="" i
     for i in 1 2 3 4 5 6 7 8; do
         rpid="$(remote_cmd_pid "run_gl_grpo.sh" || true)"
