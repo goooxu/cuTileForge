@@ -46,6 +46,7 @@ Usage:
 """
 
 import argparse
+import atexit
 import json
 import math
 import os
@@ -58,6 +59,7 @@ import torch
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "train"))
 sys.path.insert(0, os.path.join(HERE, "..", "repair"))
+sys.path.insert(0, os.path.join(HERE, "..", "verify"))
 sys.path.insert(0, HERE)
 
 from lora_config import (family_of, freeze_experts,  # noqa: E402
@@ -67,6 +69,7 @@ from repair_loop import Chat, extract_code, sample_batch  # noqa: E402
 from reward import score_rollouts, summarise  # noqa: E402
 from rollout_tokens import build_sequence  # noqa: E402
 from train_lora import TURN_END, unwrap  # noqa: E402
+from worker import VerifierPool  # noqa: E402
 
 
 # Eval suite and the two held-out tracks. Training on these would leak the
@@ -117,6 +120,25 @@ def group_advantages(rewards):
     if std < 1e-6:
         return [0.0] * len(rewards)
     return [0.0 if r is None else (r - mean) / std for r in rewards]
+
+
+def adapter_logprob_l1(model, dev):
+    """Mean |logp_on - logp_off| on a short dummy sequence.
+
+    A fresh LoRA is B=0, so this must be ~0. If it is not, the KL term is
+    measuring a broken disable_adapter path rather than drift from SFT, and
+    it will dominate the loss (GL-C iter 0 reported kl 180 vs ~0.001 on Qwen).
+    """
+    ids = torch.arange(8, 24, device=dev, dtype=torch.long).unsqueeze(0)
+    mask = torch.ones_like(ids)
+    mask[:, :4] = 0
+    with torch.no_grad():
+        on = completion_logprobs(model, ids, mask, grad=False)
+        with model.disable_adapter():
+            off = completion_logprobs(model, ids, mask, grad=False)
+    if on is None or off is None:
+        return None
+    return float((on - off).abs().mean())
 
 
 def main() -> None:
@@ -228,6 +250,13 @@ def main() -> None:
                    if args.reasoning_strength else {})
     turn_end = TURN_END.get(family)
 
+    # One pool for the whole run. Opening a second VerifierPool in this
+    # container fails CUDA init, the workers storm, and every later iteration
+    # scores as worker_crash / skip.
+    print("verifier pool: %d workers on %d gpus" % (workers, args.gpus))
+    pool = VerifierPool(workers=workers, gpus=args.gpus)
+    atexit.register(pool.close)
+
     print("loading policy ...")
     t0 = time.time()
     model = load_base_model(args.model, device_map="auto", dtype=torch.bfloat16)
@@ -258,12 +287,28 @@ def main() -> None:
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
-    model.train()
+    # Dropout in the logprob path would make the KL estimator compare two
+    # different stochastic forwards, not adapter on vs off. LoRA dropout is
+    # already 0; eval() also freezes any base-model dropout.
+    model.eval()
     model.config.use_cache = False
 
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0,
                             betas=(0.9, 0.95), foreach=False)
+    dev = next(model.parameters()).device
+
+    if args.fresh_lora and args.kl_coef > 0:
+        try:
+            l1 = adapter_logprob_l1(model, dev)
+        except Exception as e:
+            raise SystemExit("adapter on/off logprob probe failed: %s" % e)
+        print("fresh LoRA vs disable_adapter logprob L1: %s" %
+              ("n/a" if l1 is None else "%.6f" % l1))
+        if l1 is not None and l1 > 0.05:
+            raise SystemExit(
+                "fresh LoRA is not an identity (L1 %.4f). The KL term would "
+                "dominate the loss; refusing to train." % l1)
 
     start_iter = 0
     if args.resume:
@@ -278,7 +323,6 @@ def main() -> None:
 
     chat = Chat(args.base_url, args.served_model, args.temperature, args.top_p,
                 args.top_k, args.max_tokens)
-    dev = next(model.parameters()).device
 
     # Carry the log forward across invocations, or the trend window restarts at
     # every resume and hides exactly the comparison it exists to show.
@@ -314,7 +358,7 @@ def main() -> None:
             items.append(("%d" % j, code, refs[key]))
         t0 = time.time()
         scored = score_rollouts(items, gpus=args.gpus, workers=workers,
-                                measure_speed=not args.no_speed)
+                                measure_speed=not args.no_speed, pool=pool)
         t_reward = time.time() - t0
         stats = summarise(scored)
 
@@ -520,6 +564,7 @@ def main() -> None:
 
     print("\ndone. checkpoint in %s/ck; merge with train/merge_lora.py after "
           "applying the deltas to the starting adapter" % args.out)
+    pool.close()
 
 
 if __name__ == "__main__":

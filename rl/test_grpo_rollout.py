@@ -118,6 +118,30 @@ def main() -> None:
     grpo_src = open(os.path.join(HERE, "grpo.py")).read()
     check("HELDOUT_LEVELS = frozenset({60, 84, 88, 97, 98, 99})" in grpo_src,
           "grpo.py uses the same held-out set", fails)
+    check("pool=pool" in grpo_src and "VerifierPool" in grpo_src,
+          "grpo.py keeps one VerifierPool for the whole run", fails)
+
+    print("\nscore_rollouts pool reuse:")
+    from reward import score_rollouts  # noqa: E402
+
+    class FakePool:
+        def __init__(self):
+            self.n = 0
+
+        def verify_batch(self, items):
+            self.n += 1
+            return {k: {"passed": True, "stage": "pass", "speedup": None}
+                    for k, _, _ in items}
+
+    fake = FakePool()
+    scored = score_rollouts(
+        [("0", "code", "ref"), ("1", None, "ref")],
+        measure_speed=False, pool=fake)
+    check(fake.n == 1, "uses the passed pool instead of opening another", fails)
+    check(scored["0"][0] == 1.0, "passed kernel scores 1.0", fails)
+    check(scored["1"][0] == 0.0, "missing code scores 0 without the verifier", fails)
+    score_rollouts([("2", "code", "ref")], measure_speed=False, pool=fake)
+    check(fake.n == 2, "the same pool can score a later iteration", fails)
 
     print("\n%s" % ("all checks passed" if not fails else "%d FAILED" % len(fails)))
     raise SystemExit(1 if fails else 0)

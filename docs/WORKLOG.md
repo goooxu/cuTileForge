@@ -2573,3 +2573,20 @@ Frontier 筛不能让 vLLM 和 verifier 各占一个 `--gpus all` 的容器：86
 - 三条经验：配比会跟着好采的族走（GL 不压 norm 会到 31.9%）；自蒸馏补不了弱类别
   （H 那轮 pool/reduction/loss 一道没多解）；蒸馏集偏了的代价能量出来——GL-B twin
   p@1 掉到 55.4%，GL-C 只换采样层就回到 83.6%。
+
+---
+
+# GL-C frontier 齐了；GRPO 不能每轮新开验证池
+
+86/87/92/93 筛完，合成 `runs/rl_frontier_glc.json`：1401 道（86: 415，87: 380，
+92: 480，93: 126）。评测盒空闲。
+
+GRPO 第 0 轮验证是好的，从第 1 轮起 `VerifierPool` 的 spawn worker 报
+`No CUDA GPUs are available`，和 G4t 计时同一个容器里开第二个池一样。worker
+死了就立刻再 spawn，驱动被打满，GPU 利用率掉到 0。`grpo.py` 改成整场共用一个
+池；worker 连续 CUDA-init 失败就停 spawn，不再空转。`refresh_loop.sh` 按
+`history.jsonl` 计数，容器中途退出不再把整个 window 当成跑完。
+
+第 0 轮 KL 是 180（Qwen 同配置约 0.001），loss 几乎等于 `kl_coef * KL`。fresh
+LoRA 在进循环前先测 on/off logprob，不是恒等变换就拒训。那一次的 adapter 不接着
+用。

@@ -36,6 +36,18 @@ GPU_UTIL="${GPU_UTIL:-0.55}"
 TRAIN_IMAGE="cutile-train:latest"
 TRAIN_MOUNTS="-v $SCRATCH:$SCRATCH"
 
+count_done() {
+    local hist="$WS/runs/$(basename "$OUT")/history.jsonl"
+    [ -f "$hist" ] || { echo 0; return; }
+    python3 - "$hist" <<'PY'
+import json, sys
+try:
+    print(max(json.loads(l)["iteration"] for l in open(sys.argv[1]) if l.strip()) + 1)
+except Exception:
+    print(0)
+PY
+}
+
 serve() {
     local model="$1"
     docker rm -f qwen-vllm >/dev/null 2>&1
@@ -64,17 +76,8 @@ slot=0
 # Pick up where a previous invocation stopped. Containers on this machine get
 # reaped out from under long runs, so this script has to be safe to just run
 # again rather than needing the iteration count passed in by hand.
-done_iters=0
-if [ -f "$WS/runs/$(basename "$OUT")/history.jsonl" ]; then
-    done_iters=$(python3 - "$WS/runs/$(basename "$OUT")/history.jsonl" <<'PY'
-import json, sys
-try:
-    n = max(json.loads(l)["iteration"] for l in open(sys.argv[1]) if l.strip()) + 1
-except Exception:
-    n = 0
-print(n)
-PY
-)
+done_iters=$(count_done)
+if [ "$done_iters" -gt 0 ]; then
     echo "resuming after $done_iters completed iterations"
     # The adapter from the last checkpoint is the current policy, so serve that
     # rather than the base -- otherwise the restart silently reverts the sampler
@@ -107,7 +110,13 @@ while [ "$done_iters" -lt "$TOTAL" ]; do
     done
     docker logs grpo 2>&1 | grep -E "^iter|training .* parameters" | tail -"$n"
 
-    done_iters=$(( done_iters + n ))
+    prev=$done_iters
+    done_iters=$(count_done)
+    if [ "$done_iters" -le "$prev" ]; then
+        echo "ERROR: GRPO window made no progress ($prev -> $done_iters)" >&2
+        docker logs grpo 2>&1 | tail -40
+        exit 1
+    fi
     [ "$done_iters" -ge "$TOTAL" ] && break
 
     # --- refresh the sampler -------------------------------------------------

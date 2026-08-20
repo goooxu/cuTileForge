@@ -179,11 +179,15 @@ def reward_for(rec: dict) -> float:
 
 
 def score_rollouts(items, gpus: int = 4, workers: int = 16,
-                   measure_speed: bool = True, progress=None) -> dict:
+                   measure_speed: bool = True, progress=None, pool=None) -> dict:
     """Verify (key, code, ref_src) triples and return {key: (reward, record)}.
 
     Candidates whose code could not be extracted should be passed with code=None
     and are scored zero without reaching the verifier.
+
+    Pass a live VerifierPool as `pool` to reuse CUDA workers across GRPO
+    iterations. A second pool in the same container often cannot CUDA-init
+    (G4t timing, GL-C GRPO after iter 0).
     """
     verifiable = [(k, c, r) for k, c, r in items if c]
     out = {k: (0.0, {"stage": "no_code", "passed": False})
@@ -193,10 +197,12 @@ def score_rollouts(items, gpus: int = 4, workers: int = 16,
         if measure_speed:
             recs = verify_and_time(verifiable, workers=workers, gpus=gpus,
                                    progress=progress)
+        elif pool is not None:
+            recs = pool.verify_batch(verifiable)
         else:
             from worker import VerifierPool
-            with VerifierPool(workers=workers, gpus=gpus) as pool:
-                recs = pool.verify_batch(verifiable)
+            with VerifierPool(workers=workers, gpus=gpus) as owned:
+                recs = owned.verify_batch(verifiable)
         for key, rec in recs.items():
             out[key] = (reward_for(rec), rec)
     return out

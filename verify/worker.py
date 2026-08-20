@@ -563,10 +563,20 @@ class VerifierPool:
         self.task_q = self.ctx.Queue()
         self.result_q = self.ctx.Queue()
         self.procs = [None] * workers
+        # New CUDA contexts in this container can fail after the first pool
+        # (G4t, GL-C GRPO). Stop respawning rather than storming the driver.
+        self._can_spawn = True
+        self._spawn_failures = 0
         for i in range(workers):
             self._spawn(i)
 
-    def _spawn(self, i: int) -> None:
+    def _live(self):
+        return [p for p in self.procs if p is not None and p.is_alive()]
+
+    def _spawn(self, i: int) -> bool:
+        if not self._can_spawn:
+            self.procs[i] = None
+            return False
         p = self.ctx.Process(target=_worker,
                              args=(self.task_q, self.result_q, i % self.gpus,
                                    self.num_correct_trials, self.timeout_s,
@@ -575,13 +585,31 @@ class VerifierPool:
                              daemon=True)
         p.start()
         self.procs[i] = p
+        return True
+
+    def _give_up_spawning(self, why: str) -> None:
+        if not self._can_spawn:
+            return
+        self._can_spawn = False
+        print("verifier pool: %s; not respawning" % why, flush=True)
 
     def _respawn_dead(self) -> int:
         n = 0
         for i, p in enumerate(self.procs):
-            if p is not None and not p.is_alive():
-                p.join(timeout=1)
-                self._spawn(i)
+            if p is None or p.is_alive():
+                continue
+            p.join(timeout=1)
+            self._spawn_failures += 1
+            # A healthy pool replaces the odd poisoned worker. A CUDA-init
+            # failure kills every replacement immediately; 2× workers is
+            # already more retries than a real crash needs.
+            if self._spawn_failures >= max(4, 2 * self.workers):
+                self._give_up_spawning(
+                    "workers keep dying at CUDA init (%d failures)"
+                    % self._spawn_failures)
+                self.procs[i] = None
+                continue
+            if self._spawn(i):
                 n += 1
         return n
 
@@ -590,11 +618,16 @@ class VerifierPool:
 
         Resetting from inside a live worker hangs siblings that are mid-call.
         The device error is sticky, so new workers must start after a reset.
+        If this container can no longer CUDA-init new processes, skip the
+        reset spawns and leave the slots empty.
         """
         for p in self.procs:
             _stop_proc(p)
         _drain(self.task_q)
         _drain(self.result_q)
+        if not self._can_spawn:
+            self.procs = [None] * self.workers
+            return
         resets = []
         for gpu in range(self.gpus):
             p = self.ctx.Process(target=_reset_gpu_proc, args=(gpu,), daemon=True)
@@ -625,12 +658,15 @@ class VerifierPool:
                 # not released). Spawn a replacement immediately; waiting for
                 # the stall timer would idle that GPU for timeout+60s.
                 self._respawn_dead()
+                if not self._live() and not self._can_spawn:
+                    break
                 if time.time() - last > stall_s:
                     break
                 continue
             if rec.get("key") not in pending:
                 continue
             out[rec["key"]] = rec
+            self._spawn_failures = 0
             last = time.time()
             if on_result is not None:
                 on_result(rec)
@@ -691,6 +727,10 @@ class VerifierPool:
         return out
 
     def close(self) -> None:
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        self._can_spawn = False
         # put(STOP) with no timeout deadlocks if a worker died holding the
         # queue feeder (G4t timing: CUDA init crash, parent stuck on futex).
         for _ in self.procs:
