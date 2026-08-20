@@ -121,12 +121,20 @@ for lv in "${lv_arr[@]}"; do
         continue
     fi
     rm -f "$piece"
+    claim="$WS/runs/.glc_claim_${lv}"
+    if ! mkdir "$claim" 2>/dev/null; then
+        echo "level $lv already claimed by another screen; skip"
+        continue
+    fi
 
     # Sample against vLLM, then stop it before verify. A second docker with
     # --gpus all cannot CUDA-init while the server is holding the cards
     # (level 86 wrote an empty frontier: 600 tasks, 0 counted).
+    # After a verifier container exits, the next vLLM can hit
+    # cudaErrorNotPermitted on warmup; give the driver a moment.
     if [ ! -s "$rollouts" ]; then
-        serve_glc || exit 1
+        sleep 20
+        serve_glc || { rmdir "$claim" 2>/dev/null; exit 1; }
         echo "=== sampling level $lv k=$SAMPLES ==="
         run_named "glc_front_${lv}" \
             "cd /ws/cuTileForge && python3 -u rl/select_frontier.py \
@@ -137,6 +145,7 @@ for lv in "${lv_arr[@]}"; do
         if [ ! -s "$rollouts" ]; then
             echo "sampling level $lv produced no rollouts" >&2
             docker logs "glc_front_${lv}" 2>&1 | tail -40 || true
+            rmdir "$claim" 2>/dev/null || true
             exit 1
         fi
     else
@@ -154,8 +163,10 @@ for lv in "${lv_arr[@]}"; do
     if ! json_list_nonempty "$piece"; then
         echo "verify level $lv produced no frontier" >&2
         docker logs "glc_front_${lv}" 2>&1 | tail -40 || true
+        rmdir "$claim" 2>/dev/null || true
         exit 1
     fi
+    rmdir "$claim" 2>/dev/null || true
 done
 
 docker rm -f qwen-vllm >/dev/null 2>&1 || true
