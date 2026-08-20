@@ -51,6 +51,9 @@ PY
 serve() {
     local model="$1"
     docker rm -f qwen-vllm >/dev/null 2>&1
+    # After a verifier container exits, the next vLLM can see 0 CUDA devices
+    # (cudaErrorNotPermitted). The frontier screen waits 20s; do the same.
+    sleep 20
     CUTILE_WS="$WS" MODEL="$model" MOUNTS="-v $SCRATCH:$SCRATCH:ro" \
         GPU_UTIL="$GPU_UTIL" \
         VLLM_IMAGE="${VLLM_IMAGE:-}" EXTRA_ARGS="${EXTRA_ARGS:-}" \
