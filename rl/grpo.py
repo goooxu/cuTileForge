@@ -291,6 +291,13 @@ def main() -> None:
                             betas=(0.9, 0.95), foreach=False)
     dev = next(model.parameters()).device
 
+    # Spawn workers before any parent forward. A completion_logprobs probe
+    # first was enough to make the next CUDA process see 0 devices, and
+    # every iteration then skipped.
+    print("verifier pool: %d workers on %d gpus" % (workers, args.gpus))
+    pool = VerifierPool(workers=workers, gpus=args.gpus)
+    atexit.register(pool.close)
+
     if args.fresh_lora and args.kl_coef > 0:
         try:
             l1 = adapter_logprob_l1(model, dev)
@@ -323,13 +330,6 @@ def main() -> None:
 
     chat = Chat(args.base_url, args.served_model, args.temperature, args.top_p,
                 args.top_k, args.max_tokens)
-
-    # One pool for the whole run, started after the policy is placed so
-    # device_map does not pack around the workers. Opening a second pool in
-    # this container fails CUDA init (G4t, GL-C after iter 0).
-    print("verifier pool: %d workers on %d gpus" % (workers, args.gpus))
-    pool = VerifierPool(workers=workers, gpus=args.gpus)
-    atexit.register(pool.close)
 
     # Carry the log forward across invocations, or the trend window restarts at
     # every resume and hides exactly the comparison it exists to show.
@@ -368,6 +368,14 @@ def main() -> None:
                                 measure_speed=not args.no_speed, pool=pool)
         t_reward = time.time() - t0
         stats = summarise(scored)
+        n_inconclusive = sum(1 for r, rec in scored.values()
+                             if r is None or rec.get("stage") in
+                             ("oom", "cuda_poison", "worker_crash"))
+        if scored and n_inconclusive == len(scored):
+            raise SystemExit(
+                "iter %d: all %d rollouts were inconclusive (verifier CUDA "
+                "init failed). Not writing skip records that would look like "
+                "finished iterations." % (it, len(scored)))
 
         # --- advantages ---------------------------------------------------
         by_group = {}

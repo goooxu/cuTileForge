@@ -61,8 +61,15 @@ done_grpo() {
     [ -f "$HIST" ] || return 1
     python3 - "$HIST" "$TOTAL" <<'PY'
 import json, sys
+n = 0
 try:
-    n = max(json.loads(l)["iteration"] for l in open(sys.argv[1]) if l.strip()) + 1
+    for line in open(sys.argv[1]):
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        if rec.get("skipped"):
+            continue
+        n = max(n, rec["iteration"] + 1)
 except Exception:
     n = 0
 sys.exit(0 if n >= int(sys.argv[2]) else 1)

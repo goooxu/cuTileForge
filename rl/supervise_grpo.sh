@@ -21,10 +21,18 @@ count() {
     [ -f "$HIST" ] || { echo 0; return; }
     python3 - "$HIST" <<'PY'
 import json, sys
+n = 0
 try:
-    print(max(json.loads(l)["iteration"] for l in open(sys.argv[1]) if l.strip()) + 1)
+    for line in open(sys.argv[1]):
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        if rec.get("skipped"):
+            continue
+        n = max(n, rec["iteration"] + 1)
 except Exception:
-    print(0)
+    n = 0
+print(n)
 PY
 }
 

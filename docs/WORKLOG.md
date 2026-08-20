@@ -2594,3 +2594,7 @@ LoRA 在进循环前先测 on/off logprob，不是恒等变换就拒训。那一
 评测盒空着。同一份 frontier、同一套配方，在评测盒上另开一条 seed=1 的 GRPO
 （`runs/grpo_glc_s1`），训练盒那条 seed=0 不停。看门狗按 `OUT_NAME` 分 lock /
 history，两台不会抢同一把 flock。结束后表 A 评更好的那条，记成 GL-D。
+
+训练盒第一窗 10 轮全是 skip：父进程先跑了 on/off logprob 探测，再 spawn
+验证 worker，新进程看不到 GPU。探测挪到池起来之后；全是 inconclusive 就退出，
+不把 skip 记成完成轮次。
