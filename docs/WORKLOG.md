@@ -2482,7 +2482,8 @@ GL-C 吞吐 twin 计时大面积 OOM：不是单条 kernel 要 180 GB，是每�
 
 - worker 每条样本编一次参考解，编完就扔；`empty_cache` 之后若仍占用 >8 GB 就
   退出，让池子换新进程。计时 OOM 和 `cuda_poison` 一样整池重建。
-- `--timing-from` 跳过已有 `speedup` 的 key，每 16 条换一池并落盘。
+- `--timing-from` 跳过已有 `speedup` 的 key，每 16 条落盘。同一容器只开一个
+  计时进程池：第二池会 CUDA 起不来（正确性和计时本来就是因此拆成两个容器的）。
 - `compare_eval_suite.sh` / `keep_eval_alive.sh` 不再把「jsonl 存在且有任意一条
   speedup」当成完成；通过样本里缺计时超过约 1%（或 8 条）就续跑计时。正确性
   jsonl 已齐时不重做正确性，避免把已有 speedup 写掉。

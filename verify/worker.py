@@ -45,10 +45,6 @@ INCONCLUSIVE_STAGES = ("oom", "cuda_poison", "worker_crash")
 _RETRY_STAGES = ("oom", "cuda_poison")
 # Instant failures are contagion. A real launch+fault is a few hundred ms.
 _POISON_RETRY_SECONDS = 0.05
-# After a timed candidate, reserved memory above this means a compile graph or
-# cuTile module was not released. Die so the pool starts a clean process.
-# Latency leftovers are tens of MB; a throughput twin tensor is ~5 GB.
-_RESERVED_RECYCLE_BYTES = 8 * 1024 ** 3
 
 
 def is_cuda_context_error(exc_or_msg):
@@ -521,11 +517,8 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
                 os._exit(1)
             try:
                 torch.cuda.empty_cache()
-                reserved = torch.cuda.memory_reserved()
             except Exception:
                 os._exit(1)
-            if measure_time and reserved > _RESERVED_RECYCLE_BYTES:
-                os._exit(0)
 
 
 class VerifierPool:
@@ -587,6 +580,7 @@ class VerifierPool:
         n = 0
         for i, p in enumerate(self.procs):
             if p is not None and not p.is_alive():
+                p.join(timeout=1)
                 self._spawn(i)
                 n += 1
         return n
@@ -613,7 +607,7 @@ class VerifierPool:
         for i in range(self.workers):
             self._spawn(i)
 
-    def _run_once(self, pending: dict) -> dict:
+    def _run_once(self, pending: dict, on_result=None) -> dict:
         """Dispatch pending {key: item} and collect what comes back."""
         for it in pending.values():
             self.task_q.put(it)
@@ -638,9 +632,11 @@ class VerifierPool:
                 continue
             out[rec["key"]] = rec
             last = time.time()
+            if on_result is not None:
+                on_result(rec)
         return out
 
-    def verify_batch(self, items, max_retries: int = 2) -> dict:
+    def verify_batch(self, items, max_retries: int = 2, on_result=None) -> dict:
         """Verify (key, code, ref_src) triples; return {key: result}.
 
         Results come back out of order, so they are keyed rather than listed.
@@ -654,7 +650,7 @@ class VerifierPool:
         for attempt in range(max_retries + 1):
             if not pending:
                 break
-            got = self._run_once(pending)
+            got = self._run_once(pending, on_result=on_result)
             out.update(got)
 
             crashed = {k: v for k, v in pending.items() if k not in got}

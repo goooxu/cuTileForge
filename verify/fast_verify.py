@@ -76,11 +76,6 @@ def timing_complete(path, need=0, max_untimed_frac=0.01, max_untimed_abs=8):
     return untimed <= cap
 
 
-# Fresh pool every this many timed candidates so a leak cannot accumulate
-# across the whole suite, and so the jsonl is checkpointed mid-pass.
-TIMING_CHUNK = 16
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel-dir", required=True,
@@ -141,23 +136,30 @@ def main() -> None:
         if not passed:
             print("no passed candidates to time")
         else:
-            for i in range(0, len(passed), TIMING_CHUNK):
-                chunk = passed[i:i + TIMING_CHUNK]
-                print("timing chunk %d-%d / %d"
-                      % (i + 1, i + len(chunk), len(passed)))
-                # New pool per chunk: CUDA context restart is cheap next to
-                # a twin, and bounds any compile-graph leak the worker did
-                # not already drop.
-                with VerifierPool(workers=args.gpus, gpus=args.gpus,
-                                  num_correct_trials=args.num_correct_trials,
-                                  timeout_s=args.timeout, measure_time=True,
-                                  num_perf_trials=args.num_perf_trials,
-                                  ref_mode=args.ref_mode) as pool:
-                    timed = pool.verify_batch(chunk)
-                for key, rec in timed.items():
-                    if rec.get("passed"):
-                        results[key] = rec
-                write_out(results)
+            n_got = [0]
+
+            def on_result(rec):
+                if rec.get("passed"):
+                    results[rec["key"]] = rec
+                    n_got[0] += 1
+                    if n_got[0] % 16 == 0:
+                        write_out(results)
+                        print("timing checkpoint %d / %d"
+                              % (n_got[0], len(passed)))
+
+            # One pool for the whole pass. A second VerifierPool in the same
+            # container can fail to re-init CUDA (that is why correctness and
+            # timing are separate containers). Checkpoint jsonl from on_result.
+            with VerifierPool(workers=args.gpus, gpus=args.gpus,
+                              num_correct_trials=args.num_correct_trials,
+                              timeout_s=args.timeout, measure_time=True,
+                              num_perf_trials=args.num_perf_trials,
+                              ref_mode=args.ref_mode) as pool:
+                timed = pool.verify_batch(passed, on_result=on_result)
+            for key, rec in timed.items():
+                if rec.get("passed"):
+                    results[key] = rec
+            write_out(results)
     elif args.measure_time:
         results = verify_and_time(
             tasks, workers=args.workers, gpus=args.gpus,
