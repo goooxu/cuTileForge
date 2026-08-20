@@ -102,27 +102,55 @@ print(int(time.time() - max(mt)) if mt else 10 ** 9)
 PY
 }
 
-# Prints running / leftover / idle / down. running = eval parent or gen/fv.
+# True if a remote process cmdline contains $1. Reads /proc directly:
+# pgrep -f is a regex, and leftover detection must not miss the parent
+# during the generate→verify handoff (gen gone, fv not started yet).
+remote_has_cmd() {
+    remote "python3 -c $(printf %q "import os,sys
+needle=sys.argv[1]
+for pid in os.listdir('/proc'):
+    if not pid.isdigit():
+        continue
+    try:
+        cmd=open('/proc/%s/cmdline'%pid,'rb').read().replace(b'\\0',b' ').decode()
+    except OSError:
+        continue
+    if needle in cmd:
+        sys.exit(0)
+sys.exit(1)") $(printf %q "$1")" >/dev/null 2>&1
+}
+
+# Prints running / leftover / idle / down.
 remote_state() {
-    remote "TAG=$(printf %q "$TAG") bash -s" <<'EOS' 2>/dev/null || { echo down; return 0; }
-names=$(docker ps --format '{{.Names}}' 2>/dev/null || true)
-has() { echo "$names" | grep -qx "$1"; }
-if has "gen-${TAG}_l60" || has "fv_${TAG}_l60"; then
-    echo running
-    exit 0
-fi
-if pgrep -f "compare_eval_suite.sh ${TAG}:" >/dev/null 2>&1 \
-        || pgrep -f "run_eval_suite.sh ${TAG}$" >/dev/null 2>&1 \
-        || pgrep -f "run_eval_suite.sh ${TAG} " >/dev/null 2>&1; then
-    echo running
-    exit 0
-fi
-if has qwen-vllm; then
-    echo leftover
-    exit 0
-fi
-echo idle
-EOS
+    if ! host_up; then
+        echo down
+        return 0
+    fi
+    local names pidfile rpid
+    names="$(remote "docker ps --format '{{.Names}}'" 2>/dev/null || true)"
+    has() { echo "$names" | grep -qx "$1"; }
+    if has "gen-${TAG}_l60" || has "fv_${TAG}_l60"; then
+        echo running
+        return 0
+    fi
+    pidfile="$WS/runs/.eval_${TAG}.remote_pid"
+    if [[ -f "$pidfile" ]]; then
+        rpid="$(cat "$pidfile")"
+        if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "test -d /proc/$rpid"; then
+            echo running
+            return 0
+        fi
+    fi
+    if remote_has_cmd "compare_eval_suite.sh ${TAG}:" \
+            || remote_has_cmd "run_eval_suite.sh ${TAG}"; then
+        echo running
+        return 0
+    fi
+    if has qwen-vllm; then
+        echo leftover
+        return 0
+    fi
+    echo idle
 }
 
 docker_up() {
@@ -170,9 +198,12 @@ start_eval() {
         skip=1
     fi
     echo "[keep] starting compare_eval_suite.sh $SPEC on $EVAL_HOST skip_install=$skip"
-    remote "cd $(printf %q "$WS") && setsid nohup env SKIP_INSTALL=$skip CUTILE_WS=$(printf %q "$WS") \
+    local rpid
+    rpid="$(remote "cd $(printf %q "$WS") && setsid nohup env SKIP_INSTALL=$skip CUTILE_WS=$(printf %q "$WS") \
         bash $(printf %q "$FORGE/rl/compare_eval_suite.sh") $(printf %q "$SPEC") \
-        >> $(printf %q "$LOG") 2>&1 < /dev/null & echo started \$!"
+        >> $(printf %q "$LOG") 2>&1 < /dev/null & echo \$!")"
+    echo "[keep] remote pid $rpid"
+    [[ "$rpid" =~ ^[0-9]+$ ]] && echo "$rpid" > "$WS/runs/.eval_${TAG}.remote_pid"
 }
 
 echo "[keep] local watchdog TAG=$TAG host=$EVAL_HOST model=$MODEL stall=${STALL_SEC}s"
