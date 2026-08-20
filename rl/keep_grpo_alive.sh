@@ -62,12 +62,50 @@ sys.exit(0 if n >= int(sys.argv[2]) else 1)
 PY
 }
 
+# True if a remote process cmdline contains $1. Skips the checker itself:
+# the needle is also on this python's argv, so matching every /proc would
+# always succeed. Do not pkill -f.
+remote_has_cmd() {
+    remote "python3 -c $(printf %q "import os,sys
+needle=sys.argv[1]
+me=str(os.getpid())
+for pid in os.listdir('/proc'):
+    if pid == me or not pid.isdigit():
+        continue
+    try:
+        cmd=open('/proc/%s/cmdline'%pid,'rb').read().replace(b'\\0',b' ').decode()
+    except OSError:
+        continue
+    if needle in cmd:
+        sys.exit(0)
+sys.exit(1)") $(printf %q "$1")" >/dev/null 2>&1
+}
+
+remote_cmd_pid() {
+    remote "python3 -c $(printf %q "import os,sys
+needle=sys.argv[1]
+me=str(os.getpid())
+for pid in os.listdir('/proc'):
+    if pid == me or not pid.isdigit():
+        continue
+    try:
+        cmd=open('/proc/%s/cmdline'%pid,'rb').read().replace(b'\\0',b' ').decode()
+    except OSError:
+        continue
+    if needle in cmd:
+        print(pid)
+        sys.exit(0)
+sys.exit(1)") $(printf %q "$1")" 2>/dev/null
+}
+
 job_running() {
     local names rpid
     names="$(remote "docker ps --format '{{.Names}}'" 2>/dev/null || true)"
     echo "$names" | grep -q '^glc_front_' && return 0
     echo "$names" | grep -qx grpo && return 0
     echo "$names" | grep -qx rlmerge && return 0
+    remote_has_cmd "run_gl_grpo.sh" && return 0
+    remote_has_cmd "supervise_grpo.sh" && return 0
     if [[ -f "$REMOTE_PIDFILE" ]]; then
         rpid="$(cat "$REMOTE_PIDFILE")"
         if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "test -d /proc/$rpid"; then
@@ -88,11 +126,40 @@ unstick() {
 
 start_grpo() {
     echo "[keep-grpo] starting run_gl_grpo.sh on $TRAIN_HOST"
-    local rpid
-    rpid="$(remote "cd $(printf %q "$WS") && setsid env CUTILE_WS=$(printf %q "$WS") TOTAL=$(printf %q "$TOTAL") \
-        bash $(printf %q "$FORGE/rl/run_gl_grpo.sh") \
-        >> $(printf %q "$LOG") 2>&1 < /dev/null & echo \$!")"
-    echo "[keep-grpo] remote pid $rpid"
+    # Double-fork on the remote so this SSH returns. `cmd & echo $!` inside
+    # bash -c without job control waits for the child, which glued the first
+    # watchdog to the whole GRPO run.
+    remote "python3 -c $(printf %q "
+import os, sys
+ws = sys.argv[1]
+script = sys.argv[2]
+log = sys.argv[3]
+total = sys.argv[4]
+if os.fork():
+    sys.exit(0)
+os.setsid()
+if os.fork():
+    sys.exit(0)
+os.chdir(ws)
+env = os.environ.copy()
+env['CUTILE_WS'] = ws
+env['TOTAL'] = total
+out = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+os.dup2(out, 1)
+os.dup2(out, 2)
+os.close(out)
+devnull = os.open('/dev/null', os.O_RDONLY)
+os.dup2(devnull, 0)
+os.close(devnull)
+os.execve('/bin/bash', ['bash', script], env)
+") $(printf %q "$WS") $(printf %q "$FORGE/rl/run_gl_grpo.sh") $(printf %q "$LOG") $(printf %q "$TOTAL")"
+    local rpid="" i
+    for i in 1 2 3 4 5 6 7 8; do
+        rpid="$(remote_cmd_pid "run_gl_grpo.sh" || true)"
+        [[ "$rpid" =~ ^[0-9]+$ ]] && break
+        sleep 1
+    done
+    echo "[keep-grpo] remote pid ${rpid:-unknown}"
     [[ "$rpid" =~ ^[0-9]+$ ]] && echo "$rpid" > "$REMOTE_PIDFILE"
 }
 
