@@ -2517,3 +2517,8 @@ turn end `<|eot|>`。服务端用 `muse-glimmer` 镜像、`--generation-config a
 `rl/run_gl_grpo.sh` 按层筛 frontier 再 `supervise_grpo.sh`；看门狗
 `rl/keep_grpo_alive.sh` 跑在工作区这台机器上。GL-C 计时仍在另一台评测盒上，
 互不碰。
+
+Frontier 筛不能让 vLLM 和 verifier 各占一个 `--gpus all` 的容器：86 层采样
+完了，验证进程 `No CUDA GPUs are available`，600 题全是 inconclusive，写出
+空 `[]`。改成先 `--no-verify` 把 rollout 落到 jsonl，停掉 vLLM，再
+`--from-rollouts` 独占 GPU 验证。空 frontier 不再当成「已经筛过」。

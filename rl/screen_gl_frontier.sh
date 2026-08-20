@@ -93,6 +93,20 @@ serve_glc() {
     return 1
 }
 
+json_list_nonempty() {
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d else 1)' "$1" 2>/dev/null
+}
+
+run_named() {
+    local name="$1" cmd="$2"
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    CUTILE_WS="$WS" IMAGE=cutile-eval:latest MOUNTS="-v $SCRATCH:$SCRATCH:ro" \
+        GPUS=all DETACH=1 NAME="$name" "$KB/scripts/in_container.sh" "$cmd"
+    while docker ps --filter name="$name" --format '{{.Names}}' | grep -qx "$name"; do
+        sleep 60
+    done
+}
+
 IFS=',' read -r -a lv_arr <<< "$LEVELS"
 for lv in "${lv_arr[@]}"; do
     lv="${lv// /}"
@@ -101,26 +115,45 @@ for lv in "${lv_arr[@]}"; do
         *" $lv "*) echo "refusing held-out level $lv" >&2; exit 1 ;;
     esac
     piece="$WS/runs/rl_frontier_glc_${lv}.json"
-    if [ -f "$piece" ]; then
+    rollouts="$WS/runs/rl_rollouts_glc_${lv}.jsonl"
+    if [ -f "$piece" ] && json_list_nonempty "$piece"; then
         echo "frontier level $lv already at $piece"
         continue
     fi
-    serve_glc || exit 1
-    name="glc_front_${lv}"
-    docker rm -f "$name" >/dev/null 2>&1 || true
-    echo "=== screening level $lv k=$SAMPLES ==="
-    CUTILE_WS="$WS" IMAGE=cutile-eval:latest MOUNTS="-v $SCRATCH:$SCRATCH:ro" \
-        GPUS=all DETACH=1 NAME="$name" "$KB/scripts/in_container.sh" \
+    rm -f "$piece"
+
+    # Sample against vLLM, then stop it before verify. A second docker with
+    # --gpus all cannot CUDA-init while the server is holding the cards
+    # (level 86 wrote an empty frontier: 600 tasks, 0 counted).
+    if [ ! -s "$rollouts" ]; then
+        serve_glc || exit 1
+        echo "=== sampling level $lv k=$SAMPLES ==="
+        run_named "glc_front_${lv}" \
+            "cd /ws/cuTileForge && python3 -u rl/select_frontier.py \
+                --levels $lv --samples $SAMPLES --prompt-tier $PROMPT_TIER \
+                --max-tokens 32768 --concurrency 32 --no-verify \
+                --rollouts-out /ws/runs/rl_rollouts_glc_${lv}.jsonl \
+                --out /ws/runs/rl_frontier_glc_${lv}.json"
+        if [ ! -s "$rollouts" ]; then
+            echo "sampling level $lv produced no rollouts" >&2
+            docker logs "glc_front_${lv}" 2>&1 | tail -40 || true
+            exit 1
+        fi
+    else
+        echo "reusing rollouts $rollouts ($(wc -l < "$rollouts") lines)"
+    fi
+    docker rm -f qwen-vllm "glc_front_${lv}" >/dev/null 2>&1 || true
+
+    echo "=== verifying level $lv ==="
+    run_named "glc_front_${lv}" \
         "cd /ws/cuTileForge && python3 -u rl/select_frontier.py \
             --levels $lv --samples $SAMPLES --prompt-tier $PROMPT_TIER \
-            --max-tokens 32768 --concurrency 32 --verify-workers 8 --gpus 4 \
+            --from-rollouts /ws/runs/rl_rollouts_glc_${lv}.jsonl \
+            --verify-workers 8 --gpus 4 \
             --out /ws/runs/rl_frontier_glc_${lv}.json"
-    while docker ps --filter name="$name" --format '{{.Names}}' | grep -qx "$name"; do
-        sleep 60
-    done
-    if ! [ -f "$piece" ]; then
-        echo "select_frontier level $lv produced no file" >&2
-        docker logs "$name" 2>&1 | tail -40 || true
+    if ! json_list_nonempty "$piece"; then
+        echo "verify level $lv produced no frontier" >&2
+        docker logs "glc_front_${lv}" 2>&1 | tail -40 || true
         exit 1
     fi
 done

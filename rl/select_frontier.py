@@ -127,7 +127,23 @@ def main() -> None:
                          "verified run (JSONL from verify/fast_verify.py). A "
                          "k=16 harvest already measures each task's pass rate "
                          "far better than a k=6 screen would.")
+    ap.add_argument("--rollouts-out", default=None,
+                    help="Write sampled texts here (JSONL) before verifying.")
+    ap.add_argument("--from-rollouts", default=None,
+                    help="Skip sampling; verify texts previously written by "
+                         "--rollouts-out. The verifier cannot share a GPU with "
+                         "a second docker that is already serving vLLM.")
+    ap.add_argument("--no-verify", action="store_true",
+                    help="Sample only. Pair with --rollouts-out, then stop vLLM "
+                         "and re-run with --from-rollouts.")
     args = ap.parse_args()
+    if args.no_verify and not args.rollouts_out:
+        raise SystemExit("--no-verify needs --rollouts-out")
+    if args.from_rollouts and args.no_verify:
+        raise SystemExit("--from-rollouts cannot be combined with --no-verify")
+    n_src = sum(bool(x) for x in (args.from_run, args.from_rollouts))
+    if n_src > 1:
+        raise SystemExit("pick at most one of --from-run / --from-rollouts")
 
     levels = [int(x) for x in args.levels.split(",")]
     leaked = [lv for lv in levels if lv in HELDOUT_LEVELS]
@@ -135,7 +151,7 @@ def main() -> None:
         raise SystemExit("refusing held-out levels %s" % leaked)
 
     if ((args.max_speedup is not None or args.min_speedup is not None)
-            and not args.from_run):
+            and not args.from_run and not args.from_rollouts):
         raise SystemExit(
             "--min-speedup/--max-speedup need --from-run of a harvest verified "
             "with --measure-time. Live screening does not time candidates.")
@@ -195,21 +211,46 @@ def main() -> None:
     else:
         print("screening %d tasks x %d rollouts" % (len(tasks), args.samples))
 
-        chat = Chat(args.base_url, args.model, args.temperature, args.top_p,
-                    args.top_k, args.max_tokens)
-        messages, index = [], []
-        for i, t in enumerate(tasks):
-            for _ in range(args.samples):
-                messages.append([{"role": "user", "content": t["prompt"]}])
-                index.append(i)
+        if args.from_rollouts:
+            index, texts = [], []
+            for line in open(args.from_rollouts):
+                rec = json.loads(line)
+                index.append(int(rec["i"]))
+                texts.append(rec["text"])
+            print("loaded %d rollouts from %s" % (len(texts), args.from_rollouts))
+        else:
+            chat = Chat(args.base_url, args.model, args.temperature, args.top_p,
+                        args.top_k, args.max_tokens)
+            messages, index = [], []
+            for i, t in enumerate(tasks):
+                for _ in range(args.samples):
+                    messages.append([{"role": "user", "content": t["prompt"]}])
+                    index.append(i)
 
-        texts = sample_batch(chat, messages, args.concurrency)
+            texts = sample_batch(chat, messages, args.concurrency)
+            if args.rollouts_out:
+                os.makedirs(os.path.dirname(args.rollouts_out) or ".", exist_ok=True)
+                tmp = args.rollouts_out + ".tmp"
+                with open(tmp, "w") as f:
+                    for i, text in zip(index, texts):
+                        f.write(json.dumps({"i": i, "text": text}) + "\n")
+                os.replace(tmp, args.rollouts_out)
+                print("wrote %d rollouts to %s" % (len(texts), args.rollouts_out))
 
+        n_err = sum(1 for t in texts if t.startswith("__ERROR__"))
+        n_code = 0
         items = []
         for j, (i, text) in enumerate(zip(index, texts)):
             code = extract_code(text) if not text.startswith("__ERROR__") else None
             if code:
+                n_code += 1
                 items.append(("%d" % j, code, tasks[i]["ref_src"]))
+        print("extracted code from %d/%d rollouts (%d transport errors)"
+              % (n_code, len(texts), n_err))
+
+        if args.no_verify:
+            print("skipping verify (--no-verify)")
+            return
 
         with VerifierPool(workers=args.verify_workers, gpus=args.gpus) as pool:
             results = pool.verify_batch(items)

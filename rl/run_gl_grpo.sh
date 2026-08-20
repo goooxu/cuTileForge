@@ -101,26 +101,20 @@ for lv in "${lv_arr[@]}"; do
     esac
     piece="$WS/runs/rl_frontier_glc_${lv}.json"
     pieces+=("$piece")
+    n_keep=0
     if [ -f "$piece" ]; then
-        echo "frontier level $lv already at $piece ($(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$piece") tasks)"
+        n_keep="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$piece" 2>/dev/null || echo 0)"
+    fi
+    if [ "${n_keep:-0}" -gt 0 ]; then
+        echo "frontier level $lv already at $piece ($n_keep tasks)"
         continue
     fi
-    serve_glc || exit 1
-    name="glc_front_${lv}"
-    docker rm -f "$name" >/dev/null 2>&1 || true
-    echo "=== screening level $lv k=$SAMPLES ==="
-    CUTILE_WS="$WS" IMAGE=cutile-eval:latest MOUNTS="-v $SCRATCH:$SCRATCH:ro" \
-        GPUS=all DETACH=1 NAME="$name" "$KB/scripts/in_container.sh" \
-        "cd /ws/cuTileForge && python3 -u rl/select_frontier.py \
-            --levels $lv --samples $SAMPLES --prompt-tier $PROMPT_TIER \
-            --max-tokens 32768 --concurrency 32 --verify-workers 8 --gpus 4 \
-            --out /ws/runs/rl_frontier_glc_${lv}.json"
-    while docker ps --filter name="$name" --format '{{.Names}}' | grep -qx "$name"; do
-        sleep 60
-    done
-    if ! [ -f "$piece" ]; then
-        echo "select_frontier level $lv produced no file" >&2
-        docker logs "$name" 2>&1 | tail -40 || true
+    rm -f "$piece"
+    echo "=== screening level $lv k=$SAMPLES (sample, then verify without vLLM) ==="
+    LEVELS="$lv" SAMPLES="$SAMPLES" CUTILE_WS="$WS" MODEL="$MODEL" \
+        bash "$FORGE/rl/screen_gl_frontier.sh" || exit 1
+    if ! python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) else 1)' "$piece"; then
+        echo "select_frontier level $lv produced an empty frontier" >&2
         exit 1
     fi
 done
