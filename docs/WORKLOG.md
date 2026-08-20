@@ -2445,6 +2445,9 @@ exec。蒸馏集没喂大 activation / elementwise。读数在
 
 训练结束之后如果没人接着合权重 / 开评测，GPU 会空转。`compare_eval_suite.sh`
 本身可续（磁盘上已有 kernel、verified jsonl 存在就跳过），但父进程死了没有人再
-拉起来。`rl/keep_eval_alive.sh` 在开发机上循环：没跑完且没在跑就重启；生成容器
-超过 `STALL_SEC` 还不写新 kernel 就 `docker rm -f` 点名容器（不用 `pkill -f`）。
+拉起来。看门狗必须跑在**工作区这台机器**上，通过 SSH 去管 GPU 盒：看门狗如果
+跑在开发机上，开发机一重启它自己也没了。`rl/keep_eval_alive.sh` 读 `EVAL_HOST`
+（或 `runs/eval_host`，不入库）；机器暂时连不上就等；回来之后若 merged 权重丢了
+就按 `MERGE_BASE` / `MERGE_ADAPTER` 再合一次，然后续评测。生成容器超过
+`STALL_SEC` 还不写新 kernel 就 `docker rm -f` 点名容器（不用 `pkill -f`）。
 `run_eval_suite.sh` 的 vLLM 启动改成三次重试，一轮生成零进展就重启服务。

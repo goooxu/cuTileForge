@@ -4,8 +4,9 @@
 # Each model is one run_eval_suite.sh invocation. A tag whose verified
 # jsonl already exists is skipped, so a restart after an ssh drop is
 # cheap. Run this detached: an attached ssh session dying takes vLLM with it.
-# For a job that must survive the parent dying too, wrap it in
-# keep_eval_alive.sh — that loop relaunches this script until the jsonl exists.
+# For a job that must survive the GPU box rebooting, run keep_eval_alive.sh
+# on the workspace host (EVAL_HOST=...): it SSHs here and relaunches this
+# script until the jsonl exists. Do not run that watchdog on the GPU box.
 #
 # Usage:
 #   CUTILE_WS=... rl/compare_eval_suite.sh \
