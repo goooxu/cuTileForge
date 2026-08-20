@@ -1963,7 +1963,182 @@ class ModelNew(nn.Module):
       M 的 150 道连续四轮没有被超过。
     </p>
 
-    <h3>3.2 最大的单项不是算法，是 prompt 预算</h3>
+    <h3>3.2 每一关的数据是从哪来的</h3>
+
+    <p>
+      每一关用的都是同一条流水线，只有四步。<strong>各关的差别不在算法，在「谁来采」和「保留哪些」</strong>——
+      所以先把流水线说清楚，再逐关列数据。
+    </p>
+
+    <table>
+      <thead>
+        <tr><th class="num">步</th><th>做什么</th><th>关键约束</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="num">1</td>
+          <td><strong>造题</strong>：<code>taskgen/</code> 生成 KernelBench 格式任务，写进专用 level 号
+              （训练池是 85–87、89–96）</td>
+          <td>生成时实际执行一遍 <code>get_inputs()</code> 和 <code>forward()</code>，跑不通就丢，
+              免得把题目 bug 混进模型失败率</td>
+        </tr>
+        <tr>
+          <td class="num">2</td>
+          <td><strong>采样</strong>：用当前 checkpoint 对训练题采 k 个解（历史上 k=4 到 k=16，温度偏高取多样性）</td>
+          <td>评测 level 和 held-out level 在代码里被硬性拒绝
+              （<code>HELDOUT_LEVELS = {60, 84, 88, 97, 98, 99}</code>），不靠人记得</td>
+        </tr>
+        <tr>
+          <td class="num">3</td>
+          <td><strong>验证</strong>：编译 + 数值 + 纯度，只有通过的样本能进语料</td>
+          <td>用的是评测那一份 <code>verify/worker.py</code>，所以训练里的「对」不可能和评测的「对」漂移</td>
+        </tr>
+        <tr>
+          <td class="num">4</td>
+          <td><strong>组装</strong>：规范化哈希去重、每题限若干解、按类别配额截断，再用与评测同一套组装渲染 prompt</td>
+          <td>配额是 round-robin 取题，<strong>被砍的族先丢同题重复解、后丢覆盖</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>同一条流水线有三种用法，这就是图 3.1 里三种颜色的实际区别：</p>
+
+    <p>
+      <strong>拒绝采样 SFT</strong>——用上一代（或基座）采样，留下通过解当监督数据。
+      <strong>自蒸馏</strong>——同一件事，但采样的就是当前最好的那个 checkpoint，
+      所以<strong>数据分布由「它已经会什么」决定</strong>。
+      <strong>GRPO frontier</strong>——不留解，留<strong>题</strong>：按当前策略的通过率
+      严格落在 0 和 1 之间筛（「有时对」），因为组内 advantage 对「恒对」和「恒错」的题
+      都精确等于零，把 rollout 花在那两类上等于白花。
+    </p>
+
+    <h4>Next 线：每一关的数据</h4>
+
+    <table>
+      <thead>
+        <tr><th>关卡</th><th>谁采的</th><th>题目出处</th><th class="num">采样 → 通过</th><th>进训练的是什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>B（拒绝采样 SFT ×2）</td><td>基座，第二轮改用上一版 adapter</td>
+          <td><code>level 90 / 91 / 92</code>（极小、降秩、T0–T5 课程）</td>
+          <td class="num">3041 → 721</td>
+          <td>409 条 / 163 题，每题最多 3 个解。第二轮把重验回来的正样本加上修复循环的 427 条凑成
+              1224 条池子，并排跑两条臂：从基座重训 642 条 / 381 题、在 adapter 上续训 374 条 / 183 题
+              （只用修复循环的新数据）——<strong>续训胜出</strong></td>
+        </tr>
+        <tr class="highlight">
+          <td>F（撤掉文档包）</td><td>E</td>
+          <td>同上，另加新形态：模板从 29 个扩到 651 种（补齐 <code>torch.nn</code> API 面、2–4 算子组合链、让模型自己出题）</td>
+          <td class="num">—</td>
+          <td>2443 条、306 步。<strong>其中约 15% 用「不给文档」档渲染</strong>——那一档单独训太弱（pass@1 5.5%），
+              但纯度反而最高，混进去是为了不让模型依赖手册</td>
+        </tr>
+        <tr>
+          <td>H（自蒸馏）+ I / J（GRPO）</td><td>F</td>
+          <td>训练题随机 1000 道，k=16</td>
+          <td class="num">15,757 样本，逐样本通过率 46.7%</td>
+          <td><strong>一次采集喂两条臂</strong>：自蒸馏取通过解 1534 条 / 826 题；
+              GRPO 取「有时对」的 654 道题（从没对的 174 道、次次对的 172 道全部丢掉）</td>
+        </tr>
+        <tr>
+          <td>K（frontier 类别配额）</td><td>H</td>
+          <td>frontier 再加两族新 builder：按 torch API 面枚举 24 个逐点激活 + 7 个两输入损失，且在 2D/3D/4D 都出</td>
+          <td class="num">—</td>
+          <td>frontier 575 道，第一次带类别配额（matmul 从 10 道提回 35 道）</td>
+        </tr>
+        <tr>
+          <td>M（纯度分级 + 链尾）</td><td>L</td>
+          <td>新增 <code>anchor_with_tail</code> 形态（Gemm / Conv / LayerNorm 锚 + 1–2 个激活尾），
+              逐点尾从 5 个扩到 13 个、另加 5 个归约尾</td>
+          <td class="num">—</td>
+          <td>frontier；conv 配额 200 → 180，主动让位给激活</td>
+        </tr>
+        <tr>
+          <td>Q（第二次自蒸馏）</td><td>M</td>
+          <td>2300 道训练题，k=8，带计时</td>
+          <td class="num">18,385 样本，各层通过 75–82%</td>
+          <td>4220 条 / 2145 题，是第十阶段那次（1534 / 826）的近三倍，类别也均衡多了
+              （<strong>池化 609 条，当时只有 181</strong>）</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="caption">
+      K 与 M 之间还有一关 L（给「数值错」分级给分），它只改奖励函数、没换数据来源，所以没单列。
+      图 3.1 也只画留在主线上的 checkpoint：第五阶段那个速度课程（C）没留下来——
+      它按 ≥1.0x 筛出 103 条「证明比 torch 快」的解，中位 2.21x，但 85% 是逐元素，
+      只好再配 246 条正确性数据压舱。结果能力迁移到了数据指向的地方，而不是我们瞄准的地方。
+      性能数据后来又筛过两次，两次都没过自己设的门，见 3.6。
+    </p>
+
+    <h4>Glimmer 线：同一条流水线换个基座</h4>
+
+    <p>
+      第 2 章里的 GL-A / GL-B / GL-C 是同一条流水线在另一个基座上跑出来的，
+      读数用的是第 2 章那把 909 道题的尺子（不是本章的 200 道）：
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>关卡</th><th>采样层</th><th class="num">采样 → 通过</th><th>SFT 集</th><th>配额</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>GL-A（拒绝采样 SFT）</td><td><code>92 / 93 / 94</code>，k=8、温度 1.2</td>
+          <td class="num">10,800 → 3889（36.0%）</td>
+          <td>2440 条 / 1184 题，全部带推理通道</td>
+          <td>norm 压到 500、matmul 压到 600</td>
+        </tr>
+        <tr>
+          <td>GL-B（自蒸馏）</td><td><code>92</code> + conv 重的 <code>93</code></td>
+          <td class="num">5165/7029 与 1461/2000（约 73%）</td>
+          <td>2572 条 / 1090 题</td>
+          <td>norm 压到 400；conv 25%、matmul 22%、pool 19%</td>
+        </tr>
+        <tr class="highlight">
+          <td>GL-C（定向恢复）</td>
+          <td><code>87</code>（偏 activation / elementwise / pool）+ <code>86</code>（偏 conv）</td>
+          <td class="num">3686/5600 与 2659/4800</td>
+          <td>3232 条 / 1178 题</td>
+          <td><strong>activation / elementwise 不压</strong>，只压 norm=400、loss=200</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      基座通过率的对比顺带说明了自蒸馏为什么划算：同样这两层，GL-A 的通过率是 73.5% / 73.0%，
+      而未训练的 GL 只有 38% / 36%。<strong>模型越强，同样的采样预算换回来的监督数据越多。</strong>
+    </p>
+
+    <h4>关于数据来源的三条经验</h4>
+
+    <p>
+      <strong>一、配比会自动跟着「好采的族」走，必须显式配额。</strong>
+      GL-A 那一轮如果不压，norm 会占到 31.9%——因为 GL 在 norm 上 407 道题能解 396 道，
+      采什么都通过。Next 线上是 matmul 和 elementwise：通过率 80–100%，不压就能吃掉一半以上的数据集，
+      而这两族早就到了天花板（有一轮喂了约 170 条 matmul，基准上动了 −0.6pp）。
+    </p>
+    <p>
+      <strong>二、自蒸馏的分布 = 模型已经会什么，所以它天生补不了弱类别。</strong>
+      H 那一轮 conv 占 SFT 集 29.7%，卷积从 31 道推到 50 道；
+      而池化、归约、损失<strong>一道都没多解</strong>——弱类别没有正样本可蒸。
+      GRPO 的 frontier 按「有时对」筛，弱类别蒙对一次就能进训练集，
+      于是池化 1→3、归约 3→5。<strong>3.4 那个「两条臂互补」的结论，根子就在这两种数据的取法不同。</strong>
+    </p>
+    <div class="callout warn">
+    <p>
+      <strong>三、蒸馏集偏了是有代价的，而且这个代价能被量出来。</strong>
+      GL-B 的数据全来自 conv / matmul / pool 偏重的训练层，
+      139 道大张量 activation / elementwise 几乎没喂到——结果覆盖涨到 668/770，
+      吞吐轨 pass@1 却从 72.5% 掉到 55.4%（四发全对从 64 道变成 21 道）。
+      GL-C 只改了数据这一件事：采样层换成 activation / elementwise 偏重的 87，并且不压这两族，
+      pass@1 就回到 <strong>83.6%</strong>，同时 conv 174→182、matmul 79→82，覆盖没有拿去换。
+      <strong>这一对照是本章「数据构成决定能力落点」最干净的一次验证。</strong>
+    </p>
+    </div>
+
+    <h3>3.3 最大的单项不是算法，是 prompt 预算</h3>
 
     <p>
       解出数从 51 跳到 84 的那一关（图 3.1 里的 F），改动只有一件事：
@@ -1992,7 +2167,7 @@ class ModelNew(nn.Module):
     </p>
     </div>
 
-    <h3>3.3 自蒸馏：把「偶尔做对」变成「稳定做对」</h3>
+    <h3>3.4 自蒸馏：把「偶尔做对」变成「稳定做对」</h3>
 
     <p>
       第十阶段并排跑了两条臂，起点同为 F，预算相当：一条是 GRPO，一条是自蒸馏
@@ -2021,7 +2196,7 @@ class ModelNew(nn.Module):
       GRPO 的 frontier 按「有时对」筛，弱类别偶尔蒙对一次就进训练集。
     </p>
 
-    <h3>3.4 让 RL 真正生效的三处修正</h3>
+    <h3>3.5 让 RL 真正生效的三处修正</h3>
 
     <p>三轮 GRPO 各自解决了一个具体缺陷，都不是调超参：</p>
 
@@ -2057,7 +2232,7 @@ class ModelNew(nn.Module):
       任何「纯的尝试」得分都不低于任何「不纯的尝试」。
     </p>
 
-    <h3>3.5 四个否定结果</h3>
+    <h3>3.6 四个否定结果</h3>
 
     <p>
       这些占了大约三分之一的机时，写在这里是因为<strong>它们决定了下一步不该往哪投</strong>。
@@ -2098,7 +2273,7 @@ class ModelNew(nn.Module):
       并且把 Level 2 的纯度失败占比从 71% 压到 50%（三轮来第一次真正推动）。
     </p>
 
-    <h3>3.6 训练配置：注意力 LoRA 就够</h3>
+    <h3>3.7 训练配置：注意力 LoRA 就够</h3>
 
     <p>
       前七轮每轮训 6.88B 参数，其中 4.83B 是<strong>误打误撞的 MoE 专家全量微调</strong>——
@@ -2122,7 +2297,7 @@ class ModelNew(nn.Module):
       不需要第二份参考模型。没有这个锚，策略会崩到 99.2% 不输出代码。
     </p>
 
-    <h3>3.7 一轮完整迭代的机时</h3>
+    <h3>3.8 一轮完整迭代的机时</h3>
 
     <p>
       下面是本周在 Muse Glimmer 上跑的一轮实测（4×GB200 一台机器），
@@ -2148,7 +2323,7 @@ class ModelNew(nn.Module):
       大头在采样和验证。自蒸馏轮的训练翻倍（2 epoch，4.5 h），其余不变。
     </p>
 
-    <h3>3.8 五个能骗自己的旋钮</h3>
+    <h3>3.9 五个能骗自己的旋钮</h3>
 
     <p>
       这一节是全项目最值得留下的部分：每一条都是<strong>一次自我欺骗被当场抓住</strong>，
