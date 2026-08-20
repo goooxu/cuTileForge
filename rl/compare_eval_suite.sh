@@ -2,8 +2,10 @@
 # Queue base / M / Q (or any TAG:PATH list) on the standalone eval suite.
 #
 # Each model is one run_eval_suite.sh invocation. A tag whose verified
-# jsonl already exists is skipped, so a restart after an ssh drop is
-# cheap. Run this detached: an attached ssh session dying takes vLLM with it.
+# jsonl already exists *and whose passed samples are almost all timed* is
+# skipped. A jsonl that still has a missing twin pass is not done: restart
+# after an ssh drop re-enters timing-from, which skips keys that already
+# have a speedup.
 # For a job that must survive the GPU box rebooting, run keep_eval_alive.sh
 # on the workspace host (EVAL_HOST=...): it SSHs here and relaunches this
 # script until the jsonl exists. Do not run that watchdog on the GPU box.
@@ -41,7 +43,14 @@ fi
 
 done_tag() {
     local tag="$1"
-    [[ -f "$WS/runs/${tag}_l60_verified.jsonl" ]]
+    local f="$WS/runs/${tag}_l60_verified.jsonl"
+    [[ -f "$f" ]] || return 1
+    python3 - "$f" "$FORGE/verify" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[2])
+from fast_verify import timing_complete
+sys.exit(0 if timing_complete(sys.argv[1]) else 1)
+PY
 }
 
 # SKIP_INSTALL=1 when another host is already verifying from this

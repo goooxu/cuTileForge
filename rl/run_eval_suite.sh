@@ -169,29 +169,50 @@ verify_level() {
     # Two containers: after the screening pool exits, CUDA in that container
     # can fail to re-init (G4t: timing workers hit "No CUDA GPUs are available"
     # and the parent wedged). Timing always starts clean.
-    echo "=== verify $run_name correctness ==="
-    docker rm -f "fv_$run_name" >/dev/null 2>&1 || true
-    CUTILE_WS="$WS" DETACH=1 NAME="fv_$run_name" "$KB/scripts/in_container.sh" \
-        "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
-            --kernel-dir /ws/runs/$run_name --level $level \
-            --workers 16 --gpus 4 --out /ws/runs/${run_name}_verified.jsonl \
-            --timeout 180"
-    while docker ps --filter name="fv_$run_name" --format '{{.Names}}' \
-            | grep -q "fv_$run_name"; do
-        sleep 30
-    done
-    echo "=== verify $run_name timing (fresh container) ==="
-    docker rm -f "fv_$run_name" >/dev/null 2>&1 || true
-    CUTILE_WS="$WS" DETACH=1 NAME="fv_$run_name" "$KB/scripts/in_container.sh" \
-        "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
-            --kernel-dir /ws/runs/$run_name --level $level \
-            --workers 4 --gpus 4 --out /ws/runs/${run_name}_verified.jsonl \
-            --measure-time --timing-from /ws/runs/${run_name}_verified.jsonl \
-            --ref-mode compile --timeout 180"
-    while docker ps --filter name="fv_$run_name" --format '{{.Names}}' \
-            | grep -q "fv_$run_name"; do
-        sleep 30
-    done
+    local njson=0
+    [[ -f "$out" ]] && njson="$(wc -l < "$out")"
+    local nkern
+    nkern="$(have "$WS/runs/$run_name")"
+    # Re-running correctness would rewrite the jsonl and drop speedups already
+    # measured. Skip when every kernel already has a record; timing-from then
+    # fills in the ones that passed without a speedup.
+    if [[ "$njson" -gt 0 && "$njson" -ge "$nkern" ]]; then
+        echo "=== verify $run_name correctness skipped ($njson jsonl lines) ==="
+    else
+        echo "=== verify $run_name correctness ==="
+        docker rm -f "fv_$run_name" >/dev/null 2>&1 || true
+        CUTILE_WS="$WS" DETACH=1 NAME="fv_$run_name" "$KB/scripts/in_container.sh" \
+            "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
+                --kernel-dir /ws/runs/$run_name --level $level \
+                --workers 16 --gpus 4 --out /ws/runs/${run_name}_verified.jsonl \
+                --timeout 180"
+        while docker ps --filter name="fv_$run_name" --format '{{.Names}}' \
+                | grep -q "fv_$run_name"; do
+            sleep 30
+        done
+    fi
+    if python3 - "$out" "$FORGE/verify" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[2])
+from fast_verify import timing_complete
+sys.exit(0 if timing_complete(sys.argv[1]) else 1)
+PY
+    then
+        echo "=== verify $run_name timing skipped (already timed) ==="
+    else
+        echo "=== verify $run_name timing (fresh container) ==="
+        docker rm -f "fv_$run_name" >/dev/null 2>&1 || true
+        CUTILE_WS="$WS" DETACH=1 NAME="fv_$run_name" "$KB/scripts/in_container.sh" \
+            "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
+                --kernel-dir /ws/runs/$run_name --level $level \
+                --workers 4 --gpus 4 --out /ws/runs/${run_name}_verified.jsonl \
+                --measure-time --timing-from /ws/runs/${run_name}_verified.jsonl \
+                --ref-mode compile --timeout 180"
+        while docker ps --filter name="fv_$run_name" --format '{{.Names}}' \
+                | grep -q "fv_$run_name"; do
+            sleep 30
+        done
+    fi
     echo "verify done: $out"
 }
 

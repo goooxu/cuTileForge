@@ -2466,3 +2466,25 @@ matmul 79→82，没有拿覆盖去换 twin。`kernel_ms` 中位 1.015x。读数
 就按 `MERGE_BASE` / `MERGE_ADAPTER` 再合一次，然后续评测。生成容器超过
 `STALL_SEC` 还不写新 kernel 就 `docker rm -f` 点名容器（不用 `pkill -f`）。
 `run_eval_suite.sh` 的 vLLM 启动改成三次重试，一轮生成零进展就重启服务。
+
+---
+
+# 计时 worker 不再跨题缓存 torch.compile
+
+GL-C 吞吐 twin 计时大面积 OOM：不是单条 kernel 要 180 GB，是每个计时进程把编过
+的 `torch.compile` 图留到进程结束。评测是 1 worker / 1 GPU、k=4，四个样本会分到
+四张卡，这个缓存几乎从来不会命中，却把 680 道延迟图加上几十道 ~5 GB twin 全钉在
+同一块卡上。申请下一张 twin 输入（4–5 GB）时卡上已经约 180/189 GB。OOM 重试也不
+重建 worker，所以重试打在同一个胀满的进程上。别的模型能量完，是中途 poison 重启
+把缓存清掉了，不是「再跑一次就好」。
+
+改动：
+
+- worker 每条样本编一次参考解，编完就扔；`empty_cache` 之后若仍占用 >8 GB 就
+  退出，让池子换新进程。计时 OOM 和 `cuda_poison` 一样整池重建。
+- `--timing-from` 跳过已有 `speedup` 的 key，每 16 条换一池并落盘。
+- `compare_eval_suite.sh` / `keep_eval_alive.sh` 不再把「jsonl 存在且有任意一条
+  speedup」当成完成；通过样本里缺计时超过约 1%（或 8 条）就续跑计时。正确性
+  jsonl 已齐时不重做正确性，避免把已有 speedup 写掉。
+
+正确性数字不动。GL-C 缺的 twin 计时按这个 harness 续。

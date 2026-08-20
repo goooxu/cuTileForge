@@ -13,6 +13,7 @@ Typical use:
         results = pool.verify_batch([(key, code, ref_src), ...])
 """
 
+import gc
 import multiprocessing as mp
 import os
 import queue
@@ -30,8 +31,8 @@ STOP = None
 # A generated kernel can leave the GPU in a sticky error state. Later
 # candidates on the same device then fail in a millisecond without running.
 # empty_cache does not clear that; the worker has to reset the device and die
-# so the pool can retry on a fresh context. OOM is already inconclusive; these
-# are the same class of harness failure.
+# so the pool can retry on a fresh context. Timing OOM is the same class of
+# harness failure (leftover compile graphs), not a verdict on the kernel.
 _CUDA_CONTEXT_MARKERS = (
     "illegal memory access",
     "illegal instruction",
@@ -44,6 +45,10 @@ INCONCLUSIVE_STAGES = ("oom", "cuda_poison", "worker_crash")
 _RETRY_STAGES = ("oom", "cuda_poison")
 # Instant failures are contagion. A real launch+fault is a few hundred ms.
 _POISON_RETRY_SECONDS = 0.05
+# After a timed candidate, reserved memory above this means a compile graph or
+# cuTile module was not released. Die so the pool starts a clean process.
+# Latency leftovers are tens of MB; a throughput twin tensor is ~5 GB.
+_RESERVED_RECYCLE_BYTES = 8 * 1024 ** 3
 
 
 def is_cuda_context_error(exc_or_msg):
@@ -240,33 +245,34 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
         kill_stray_compilers(temp_dir)
         raise Timeout("exceeded %.0fs" % timeout_s)
 
-    # Compiling the reference costs a couple of seconds, and every candidate for
-    # a given task shares the same reference -- so compile once per task and
-    # reuse it for the rest of this worker's life. Keyed on the reference source,
-    # since that is what defines the model.
-    _ref_cache = {}
-
+    # Compile once per candidate, then drop it. A process-lifetime cache was
+    # meant to reuse the reference across k samples of the same task, but with
+    # one timing worker per GPU those samples go to different workers, so the
+    # cache was never hit and instead pinned every unique torch.compile graph
+    # until the card filled (GL-C: ~180/189 GB, then the next 4–5 GB twin
+    # input failed). Do not catch OOM here: it has to reach the outer handler
+    # so the worker dies and the pool resets the device.
     def _compiled_ref(ref_src: str, eager_model, make_inputs):
-        key = hash(ref_src)
-        if key not in _ref_cache:
-            try:
-                m = torch.compile(eager_model)
-                # Force the compile now, inside this task's alarm, so a model
-                # inductor cannot handle fails here rather than polluting the
-                # timing loop.
-                with torch.no_grad():
-                    set_seed(1)
-                    warm = [x.cuda() if hasattr(x, "cuda") else x
-                            for x in make_inputs()]
-                    m(*warm)
-                torch.cuda.synchronize()
-                _ref_cache[key] = (m, "compile")
-            except Exception:
-                # Some references do not compile. Falling back to eager is right,
-                # but the record has to say so: a speedup against eager and one
-                # against inductor are different numbers.
-                _ref_cache[key] = (eager_model, "eager_compile_failed")
-        return _ref_cache[key]
+        try:
+            m = torch.compile(eager_model)
+            # Force the compile now, inside this task's alarm, so a model
+            # inductor cannot handle fails here rather than polluting the
+            # timing loop.
+            with torch.no_grad():
+                set_seed(1)
+                warm = [x.cuda() if hasattr(x, "cuda") else x
+                        for x in make_inputs()]
+                m(*warm)
+            torch.cuda.synchronize()
+            del warm
+            return m, "compile"
+        except torch.cuda.OutOfMemoryError:
+            raise
+        except Exception:
+            # Some references do not compile. Falling back to eager is right,
+            # but the record has to say so: a speedup against eager and one
+            # against inductor are different numbers.
+            return eager_model, "eager_compile_failed"
 
     # A generated kernel can loop forever, which would otherwise wedge this
     # worker for the rest of the run.
@@ -375,6 +381,9 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
         rec = {"key": key, "passed": False, "stage": "", "error": ""}
         tmp_path = None
         poison = False
+        die_after = False
+        ref_model = new_model = timed_ref = None
+        inputs = expected = got = None
         t0 = time.perf_counter()
         signal.alarm(max(1, int(timeout_s)))
         # SIGALRM does not kill a ptxas that tileiras spawned. The timer does.
@@ -475,10 +484,13 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
             rec["stage"] = "timeout"
             rec["error"] = str(e)
         except torch.cuda.OutOfMemoryError as e:
-            # Several workers share each GPU, so OOM says nothing about the
-            # candidate. Flag it separately instead of counting it as a failure.
+            # Correctness workers share GPUs, so OOM says nothing about the
+            # candidate. Timing workers are exclusive: OOM is leftover graphs
+            # in this process. Flag it, then die so the pool resets the device.
             rec["stage"] = "oom"
             rec["error"] = str(e)[:200]
+            if measure_time:
+                die_after = True
         except Exception as e:
             rec["error"] = "%s: %s" % (type(e).__name__, str(e)[:400])
             if is_compiler_timeout(e):
@@ -499,15 +511,21 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
                 os.unlink(tmp_path)
             rec["seconds"] = round(time.perf_counter() - t0, 3)
             result_q.put(rec)
-            if poison:
+            ref_model = new_model = timed_ref = None
+            inputs = expected = got = None
+            gc.collect()
+            if poison or die_after:
                 # Do not reset here: sibling workers on this GPU are mid-call
                 # and would hang. The pool kills them, resets each device, then
                 # respawns.
                 os._exit(1)
             try:
                 torch.cuda.empty_cache()
+                reserved = torch.cuda.memory_reserved()
             except Exception:
                 os._exit(1)
+            if measure_time and reserved > _RESERVED_RECYCLE_BYTES:
+                os._exit(0)
 
 
 class VerifierPool:
@@ -526,7 +544,9 @@ class VerifierPool:
     A sticky illegal-memory-access is worse: the worker survives, but every
     later candidate on that GPU fails in a millisecond. Those are marked
     cuda_poison, the device is reset, every worker is recycled, and the
-    candidates are retried. A kernel that still faults after a fresh context
+    candidates are retried. Timing OOM is recycled the same way: retrying
+    inside the process that still holds the compile graphs cannot succeed.
+    A kernel that still faults after a fresh context
     is an exec failure.
     """
 
@@ -607,6 +627,10 @@ class VerifierPool:
             try:
                 rec = self.result_q.get(timeout=5)
             except queue.Empty:
+                # A timing worker may exit after a large tensor (compile graph
+                # not released). Spawn a replacement immediately; waiting for
+                # the stall timer would idle that GPU for timeout+60s.
+                self._respawn_dead()
                 if time.time() - last > stall_s:
                     break
                 continue
@@ -636,7 +660,10 @@ class VerifierPool:
             crashed = {k: v for k, v in pending.items() if k not in got}
             retry = {k: pending[k] for k, r in got.items()
                      if r["stage"] in _RETRY_STAGES}
-            if any(r["stage"] == "cuda_poison" for r in got.values()):
+            recycle = any(r["stage"] == "cuda_poison" for r in got.values())
+            if self.measure_time and any(r["stage"] == "oom" for r in got.values()):
+                recycle = True
+            if recycle:
                 self._recycle_all()
             else:
                 self._respawn_dead()

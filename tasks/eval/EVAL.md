@@ -64,8 +64,10 @@ python3 taskgen/test_eval_suite.py
 - 32768 的关 thinking 试跑归档在 `runs/archive_q38nt_32768/`，不单开第三张表
 - 通过：数值对 **且** 全是 cuTile
 - 计时：正确性筛完后，在新容器里 `--timing-from` 对通过的 kernel 量
-  `torch.compile`。`--timeout`（本套评测 180s）含 tileiras/ptxas 编译，超时记
-  `timeout`、算失败。通过但计时失败的样本保留通过、没有 `speedup`。
+  `torch.compile`。已有 `speedup` 的 key 会跳过，jsonl 每 16 条落盘。
+  worker 不跨题缓存 compile 图；计时 OOM 会重建进程。`--timeout`（本套评测
+  180s）含 tileiras/ptxas 编译，超时记 `timeout`、算失败。通过但计时失败的
+  样本保留通过、没有 `speedup`。
 - 头条顺序：延迟成对（再拆 common / awkward）→ 吞吐成对（同样拆）→ 770 张图
   pass@1 / pass@4（按族、按出处）
 - 两个模型比速度：只用两边都解出的题做成对比较，阈值 1.05x

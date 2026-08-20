@@ -68,21 +68,16 @@ host_up() {
 
 done_eval() {
     # Correctness writes one jsonl line per sample *before* timing. Line
-    # count alone would declare victory and walk away from the GPUs during
-    # the speed pass. Timing has finished when the suite logs "verify done"
-    # and the jsonl carries speedups.
+    # count plus "any speedup" would declare victory with most twins still
+    # untimed (GL-C). Timing is done when the suite logs "verify done" and
+    # almost every passed sample has a speedup.
     [[ -f "$verified" ]] || return 1
     grep -q '^verify done:' "$LOG" 2>/dev/null || return 1
-    python3 - "$verified" "$EXPECTED" <<'PY'
-import json, sys
-path, need = sys.argv[1], int(sys.argv[2])
-n = speed = 0
-for line in open(path):
-    rec = json.loads(line)
-    n += 1
-    if rec.get("speedup"):
-        speed += 1
-sys.exit(0 if n >= need and speed > 0 else 1)
+    python3 - "$verified" "$EXPECTED" "$FORGE/verify" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[3])
+from fast_verify import timing_complete
+sys.exit(0 if timing_complete(sys.argv[1], need=int(sys.argv[2])) else 1)
 PY
 }
 
