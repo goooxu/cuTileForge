@@ -104,6 +104,7 @@ while [ "$done_iters" -lt "$TOTAL" ]; do
             --prompt-tier $TIER --frontier $FRONTIER --out $OUT \
             --iterations $n --lr ${RL_LR:-3e-6} --kl-coef ${RL_KL:-0.05} \
             --temperature ${RL_TEMP:-1.0} --top-p ${RL_TOP_P:-0.95} \
+            --seed ${RL_SEED:-0} \
             ${resume[*]} ${GRPO_EXTRA:-}" >/dev/null || exit 1
     while docker ps --filter name=grpo --format '{{.Names}}' | grep -q grpo; do
         sleep 60

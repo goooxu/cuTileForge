@@ -34,8 +34,16 @@ TOTAL="${TOTAL:-60}"
 WINDOW="${WINDOW:-10}"
 HELD_OUT=" 60 84 88 97 98 99 "
 
-LOG="${GRPO_LOG:-$WS/runs/grpo_glc.log}"
-LOCK="$WS/runs/.run_gl_grpo.lock"
+LOG="${GRPO_LOG:-$WS/runs/${OUT_NAME}.log}"
+# Default lock name stays .run_gl_grpo.lock so a second box can run a
+# replica (different OUT_NAME) without waiting on the first job's flock.
+if [ -n "${GRPO_LOCK:-}" ]; then
+    LOCK="$GRPO_LOCK"
+elif [ "$OUT_NAME" = "grpo_glc" ]; then
+    LOCK="$WS/runs/.run_gl_grpo.lock"
+else
+    LOCK="$WS/runs/.run_${OUT_NAME}.lock"
+fi
 
 export CUTILE_WS="$WS"
 export MODEL

@@ -2590,3 +2590,7 @@ GRPO 第 0 轮验证是好的，从第 1 轮起 `VerifierPool` 的 spawn worker 
 第 0 轮 KL 是 180（Qwen 同配置约 0.001），loss 几乎等于 `kl_coef * KL`。fresh
 LoRA 在进循环前先测 on/off logprob，不是恒等变换就拒训。那一次的 adapter 不接着
 用。
+
+评测盒空着。同一份 frontier、同一套配方，在评测盒上另开一条 seed=1 的 GRPO
+（`runs/grpo_glc_s1`），训练盒那条 seed=0 不停。看门狗按 `OUT_NAME` 分 lock /
+history，两台不会抢同一把 flock。结束后表 A 评更好的那条，记成 GL-D。

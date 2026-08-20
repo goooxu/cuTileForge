@@ -14,14 +14,21 @@ set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WS="${CUTILE_WS:?CUTILE_WS must point at the workspace root}"
-LOG="${KEEP_GRPO_LOG:-$WS/runs/grpo_glc.log}"
-LOCK="$WS/runs/.keep_grpo.lock"
-PIDFILE="$WS/runs/.keep_grpo.pid"
+OUT_NAME="${OUT_NAME:-grpo_glc}"
+LOG="${KEEP_GRPO_LOG:-$WS/runs/${OUT_NAME}.log}"
+if [ -n "${KEEP_GRPO_LOCK:-}" ]; then
+    LOCK="$KEEP_GRPO_LOCK"
+elif [ "$OUT_NAME" = "grpo_glc" ]; then
+    LOCK="$WS/runs/.keep_grpo.lock"
+else
+    LOCK="$WS/runs/.keep_${OUT_NAME}.lock"
+fi
+PIDFILE="${KEEP_GRPO_PIDFILE:-$WS/runs/.keep_${OUT_NAME}.pid}"
 POLL_SEC="${POLL_SEC:-60}"
 TOTAL="${TOTAL:-60}"
 MODEL="${MODEL:-/raid/tmp/gemsg-cutile/model-GLC}"
-HIST="$WS/runs/grpo_glc/history.jsonl"
-REMOTE_PIDFILE="$WS/runs/.grpo_glc.remote_pid"
+HIST="$WS/runs/${OUT_NAME}/history.jsonl"
+REMOTE_PIDFILE="$WS/runs/.${OUT_NAME}.remote_pid"
 
 if [[ -z "${TRAIN_HOST:-}" && -f "$WS/runs/train_host" ]]; then
     TRAIN_HOST="$(sed -n '/[^[:space:]]/ {s/[[:space:]]*$//; p; q;}' "$WS/runs/train_host")"
