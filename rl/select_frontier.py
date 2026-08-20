@@ -285,8 +285,10 @@ def main() -> None:
         frontier = apply_category_quota(frontier, args.category_quota)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    with open(args.out, "w") as f:
+    tmp = args.out + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(frontier, f, indent=2)
+    os.replace(tmp, args.out)
 
     graded = sum(1 for e in frontier if e.get("graded_only"))
     solid = args.mode == "solid"
