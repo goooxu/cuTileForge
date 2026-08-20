@@ -204,6 +204,7 @@ def heatmap(title, col_labels, rows, totals):
 
 TABLE_A = [
     # model, latency solved, latency p@1, throughput solved, throughput p@1
+    ("GL-B",   668, 63.1, 127, 55.4),
     ("Next-Q", 634, 69.4, 131, 87.9),
     ("Next-M", 629, 66.4, 130, 85.4),
     ("GL-A",   619, 57.5, 126, 72.5),
@@ -221,31 +222,33 @@ TABLE_B = [
     ("Next",   182,  9.4,  63, 19.6),
 ]
 
-FAMILY = [  # family, n, [Next, GL, G4t, Q38, Next-M, Next-Q, GL-A]
-    ("conv",        209, [34, 146, 119, 23, 174, 174, 156]),
-    ("activation",  150, [55, 141, 136, 130, 132, 135, 138]),
-    ("elementwise", 105, [34, 89, 91, 86, 96, 98, 95]),
-    ("matmul",      102, [13, 55, 73, 52, 72, 69, 63]),
-    ("norm",        102, [23, 78, 85, 37, 71, 75, 87]),
-    ("pool",         75, [2, 49, 40, 19, 64, 63, 57]),
-    ("reduction",    22, [3, 18, 20, 14, 17, 17, 18]),
-    ("loss",          5, [2, 4, 5, 5, 3, 3, 5]),
+FAMILY = [  # family, n, [Next, GL, G4t, Q38, Next-M, Next-Q, GL-A, GL-B]
+    ("conv",        209, [34, 146, 119, 23, 174, 174, 156, 174]),
+    ("activation",  150, [55, 141, 136, 130, 132, 135, 138, 139]),
+    ("elementwise", 105, [34, 89, 91, 86, 96, 98, 95, 99]),
+    ("matmul",      102, [13, 55, 73, 52, 72, 69, 63, 79]),
+    ("norm",        102, [23, 78, 85, 37, 71, 75, 87, 90]),
+    ("pool",         75, [2, 49, 40, 19, 64, 63, 57, 61]),
+    ("reduction",    22, [3, 18, 20, 14, 17, 17, 18, 21]),
+    ("loss",          5, [2, 4, 5, 5, 3, 3, 5, 5]),
 ]
-FAMILY_COLS = ["Next", "GL", "G4t", "Q38", "Next-M", "Next-Q", "GL-A"]
+FAMILY_COLS = ["Next", "GL", "G4t", "Q38", "Next-M", "Next-Q", "GL-A", "GL-B"]
 
 SHAPE = [  # model, common solved, awkward solved
-    ("Next-Q", 490, 144), ("Next-M", 482, 147), ("GL-A", 475, 144),
-    ("GL", 448, 132), ("G4t", 439, 130), ("Q38", 279, 87), ("Next", 129, 37),
+    ("GL-B", 508, 160), ("Next-Q", 490, 144), ("Next-M", 482, 147),
+    ("GL-A", 475, 144), ("GL", 448, 132), ("G4t", 439, 130),
+    ("Q38", 279, 87), ("Next", 129, 37),
 ]
 
 LAT_SPEED = [  # model, own-set median, intersection median
     ("Next", 2.43, 4.42), ("GL", 2.33, 5.15), ("G4t", 2.22, 5.18),
     ("Q38", 3.21, 4.35), ("Next-M", 2.35, 4.75), ("Next-Q", 2.41, 4.71),
-    ("GL-A", 2.30, 4.66),
+    ("GL-A", 2.30, 4.66), ("GL-B", 2.20, 4.53),
 ]
 
 BANDWIDTH = [  # model, cutile GB/s, torch.compile GB/s
-    ("Next-Q", 5824, 4754), ("GL-A", 5889, 4754), ("GL", 5700, 4784),
+    ("Next-Q", 5824, 4754), ("GL-A", 5889, 4754),
+    ("GL-B", 5885, 4842), ("GL", 5700, 4784),
 ]
 
 
@@ -277,7 +280,8 @@ def build():
     charts["failure"] = stacked_bars(
         "图 2.4　3636 个样本的去向",
         [("GL", {"通过": 1970, "纯度失败": 970, "跑不起来": 657, "超时": 39}),
-         ("GL-A", {"通过": 2175, "纯度失败": 791, "跑不起来": 642, "超时": 28})],
+         ("GL-A", {"通过": 2175, "纯度失败": 791, "跑不起来": 642, "超时": 28}),
+         ("GL-B", {"通过": 2250, "纯度失败": 620, "跑不起来": 737, "超时": 29})],
         [("通过", GREEN), ("纯度失败", AMBER), ("跑不起来", RED), ("超时", GREY)],
         3636)
 
@@ -295,7 +299,7 @@ def build():
         [m for m, *_ in LAT_SPEED],
         [("自己解出集", GREY,
           {m: (o / mx, "%.2fx" % o) for m, o, _ in LAT_SPEED}),
-         ("七模型共同 101 题", GREEN,
+         ("八模型共同 101 题", GREEN,
           {m: (i / mx, "%.2fx" % i) for m, _, i in LAT_SPEED})],
         ticks=(0, 1 / mx, 2 / mx, 3 / mx, 4 / mx, 5 / mx),
         tick_fmt=lambda t: "%.0fx" % round(t * mx))
@@ -314,10 +318,10 @@ def build():
     # share of solved problems faster / within noise / slower than torch.compile
     lat_dist = [("Next", 86.1, 10.8), ("GL", 82.8, 14.0), ("G4t", 84.4, 13.0),
                 ("Q38", 92.9, 6.3), ("Next-M", 85.5, 10.5), ("Next-Q", 87.2, 9.1),
-                ("GL-A", 76.7, 19.7)]
+                ("GL-A", 76.7, 19.7), ("GL-B", 77.7, 18.6)]
     thr_dist = [("Next", 62.7, 25.4), ("GL", 48.8, 30.1), ("G4t", 63.7, 19.4),
                 ("Q38", 65.3, 24.8), ("Next-M", 63.1, 20.0), ("Next-Q", 60.3, 19.8),
-                ("GL-A", 63.5, 20.6)]
+                ("GL-A", 63.5, 20.6), ("GL-B", 50.4, 28.3)]
     for key, data, label in (("lat_dist", lat_dist, "延迟轨"),
                              ("thr_dist", thr_dist, "吞吐轨")):
         charts[key] = stacked_bars(

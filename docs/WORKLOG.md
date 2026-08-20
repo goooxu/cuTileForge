@@ -2424,15 +2424,16 @@ matmul 79→82，没有拿覆盖去换 twin。`kernel_ms` 中位 1.015x。读数
 # 对外技术报告（HTML）
 
 `results/report/index.html`，单文件、无外部依赖、能从 `file://` 打开。三章加结语：
-评测集怎么建的、七个模型的读数、训练配方，最后是这项工作留下了什么。
+评测集怎么建的、八个模型的读数、训练配方，最后是这项工作留下了什么。
 
 标题定为「cuTile kernel 生成：评测、配方，以及还没解决的问题」——性能这条线是空的，
 写进标题而不是藏在末尾。
 
 内容全部来自已有档案（`REPORT_EVAL_SUITE.md`、`SUMMARY.md`、本文件），只有两处是新算的：
-七个模型在**共同题集**上对 `torch.compile` 的绝对加速比，以及吞吐轨的达成带宽
+八个模型在**共同题集**上对 `torch.compile` 的绝对加速比，以及吞吐轨的达成带宽
 （Next-Q 中位 5824 GB/s，参考 4754 GB/s，约七成标称）。两者都由
 `runs/*_l60_verified.jsonl` 重新统计，取每题通过样本里最快的一个。
+GL-B 加入后共同延迟题仍是 101、共同吞吐题仍是 47（它解出了原来那 101 道的全部）。
 
 第一章配了一个真实例子（第 92 题 `gelu(x)+1.5`，3073×6144）：完整 prompt 的构成、
 四个模型在同一题上的三种结局，以及三份逐字原文——launcher 少展平一个张量的编译失败、
@@ -2446,7 +2447,7 @@ matmul 79→82，没有拿覆盖去换 twin。`kernel_ms` 中位 1.015x。读数
 `refresh_charts.py` 按图号替换已嵌入的 `<figure>`，只动 SVG 不动正文，可重复运行。
 中间产物 `charts.html` 已 gitignore。
 
-族对比用热力图（7 模型 × 8 族全保留数字），样本去向用堆叠条，性能用「自己解出集 vs
+族对比用热力图（8 模型 × 8 族全保留数字），样本去向用堆叠条，性能用「自己解出集 vs
 共同题集」两组柱——后者正好把「构成效应」画成可见的东西：同一批 kernel、同一次计时，
 换个统计集合中位数就差一倍。
 
@@ -2522,3 +2523,14 @@ Frontier 筛不能让 vLLM 和 verifier 各占一个 `--gpus all` 的容器：86
 完了，验证进程 `No CUDA GPUs are available`，600 题全是 inconclusive，写出
 空 `[]`。改成先 `--no-verify` 把 rollout 落到 jsonl，停掉 vLLM，再
 `--from-rollouts` 独占 GPU 验证。空 frontier 不再当成「已经筛过」。
+
+---
+
+# 对外报告补上 GL-B
+
+`results/report/index.html` 原先停在 GL-A（七个模型）。GL-B 的正确性和计时早已进
+`REPORT_EVAL_SUITE.md`，HTML 没跟上。按 `GLB_l60_verified.jsonl` 重算了自己解出集 /
+八模型共同 101 题的中位加速比、吞吐带宽、快/慢于 compile 占比，写进
+`make_charts.py` 后刷新图。正文改成八个模型：覆盖 668/770、延迟 p@1 63.1%、
+吞吐解出 127/139 但 p@1 55.4%（相对 GL-A 的回归写明了），速度相对 GL-A 中位 0.993x。
+表 B 没有 GL-B——thinking 关不掉。GL-C 这轮先不进 HTML。

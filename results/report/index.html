@@ -257,10 +257,10 @@
 
 <header class="masthead">
   <div class="inner">
-    <p class="eyebrow">技术报告 · 草稿 · 2026-08-19</p>
+    <p class="eyebrow">技术报告 · 草稿 · 2026-08-20</p>
     <h1>cuTile kernel 生成：评测、配方，以及还没解决的问题</h1>
     <p class="subtitle">
-      在一套自建的 909 道题上量七个模型，并给出把解出数从 166 推到 634 的训练配方。
+      在一套自建的 909 道题上量八个模型，并给出把解出数从 166 推到 668 的训练配方。
     </p>
   </div>
 </header>
@@ -847,7 +847,7 @@ class ModelNew(nn.Module):
     </p>
     </div>
 
-    <h3>2.1 参赛的七个模型</h3>
+    <h3>2.1 参赛的八个模型</h3>
 
     <table>
       <thead>
@@ -861,12 +861,14 @@ class ModelNew(nn.Module):
         <tr class="highlight"><td>Next-M</td><td>Next 训练后</td><td>同 Next</td><td>是</td></tr>
         <tr class="highlight"><td>Next-Q</td><td>Next-M 再自蒸馏一轮</td><td>同 Next</td><td>是</td></tr>
         <tr class="highlight"><td>GL-A</td><td>GL 训练一轮后</td><td>同 GL</td><td>是</td></tr>
+        <tr class="highlight"><td>GL-B</td><td>GL-A 再自蒸馏一轮</td><td>同 GL</td><td>是</td></tr>
       </tbody>
     </table>
 
     <p>
-      绿色三行是本项目训练出来的，放在同一张表里是为了给公开模型一个参照
+      绿色四行是本项目训练出来的，放在同一张表里是为了给公开模型一个参照
       ——<strong>配方本身在第 3 章讲</strong>，这里只看数。
+      GL-B 对应的是 Next 第十阶段那种自蒸馏，不是 Next-Q 那种第二轮锐化。
     </p>
 
     <h3>2.2 表 A 头条（开 thinking，32K）</h3>
@@ -877,113 +879,123 @@ class ModelNew(nn.Module):
     </p>
 
     <figure class="chart">
-<svg viewBox="0 0 900 496" role="img" aria-label="图 2.1　表 A 延迟轨：pass@4 与 pass@1" width="100%">
+<svg viewBox="0 0 900 560" role="img" aria-label="图 2.1　表 A 延迟轨：pass@4 与 pass@1" width="100%">
 <rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
 <text x="127" y="17" fill="#626b75" font-size="14">pass@4</text>
 <rect x="226" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
 <text x="245" y="17" fill="#626b75" font-size="14">pass@1</text>
-<line x1="108.0" y1="36" x2="108.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="108.0" y1="36" x2="108.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0%</text>
-<line x1="273.0" y1="36" x2="273.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="273.0" y1="36" x2="273.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">25%</text>
-<line x1="438.0" y1="36" x2="438.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="438.0" y1="36" x2="438.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">50%</text>
-<line x1="603.0" y1="36" x2="603.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="603.0" y1="36" x2="603.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">75%</text>
-<line x1="768.0" y1="36" x2="768.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="768.0" y1="36" x2="768.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">100%</text>
 
-<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
-<rect x="108" y="42.0" width="543.4" height="18" rx="2" fill="#76b900"/>
-<text x="658.4" y="57.0" fill="#626b75" font-size="13.5">82.3%（634 题）</text>
-<rect x="108" y="65.0" width="458.0" height="18" rx="2" fill="#3b7dd8"/>
-<text x="573.0" y="80.0" fill="#626b75" font-size="13.5">69.4%</text>
-<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
-<rect x="108" y="106.0" width="539.1" height="18" rx="2" fill="#76b900"/>
-<text x="654.1" y="121.0" fill="#626b75" font-size="13.5">81.7%（629 题）</text>
-<rect x="108" y="129.0" width="438.2" height="18" rx="2" fill="#3b7dd8"/>
-<text x="553.2" y="144.0" fill="#626b75" font-size="13.5">66.4%</text>
-<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
-<rect x="108" y="170.0" width="530.6" height="18" rx="2" fill="#76b900"/>
-<text x="645.6" y="185.0" fill="#626b75" font-size="13.5">80.4%（619 题）</text>
-<rect x="108" y="193.0" width="379.5" height="18" rx="2" fill="#3b7dd8"/>
-<text x="494.5" y="208.0" fill="#626b75" font-size="13.5">57.5%</text>
-<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
-<rect x="108" y="234.0" width="497.1" height="18" rx="2" fill="#76b900"/>
-<text x="612.1" y="249.0" fill="#626b75" font-size="13.5">75.3%（580 题）</text>
-<rect x="108" y="257.0" width="339.9" height="18" rx="2" fill="#3b7dd8"/>
-<text x="454.9" y="272.0" fill="#626b75" font-size="13.5">51.5%</text>
-<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
-<rect x="108" y="298.0" width="487.7" height="18" rx="2" fill="#76b900"/>
-<text x="602.7" y="313.0" fill="#626b75" font-size="13.5">73.9%（569 题）</text>
-<rect x="108" y="321.0" width="326.0" height="18" rx="2" fill="#3b7dd8"/>
-<text x="441.0" y="336.0" fill="#626b75" font-size="13.5">49.4%</text>
-<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
-<rect x="108" y="362.0" width="313.7" height="18" rx="2" fill="#76b900"/>
-<text x="428.7" y="377.0" fill="#626b75" font-size="13.5">47.5%（366 题）</text>
-<rect x="108" y="385.0" width="178.9" height="18" rx="2" fill="#3b7dd8"/>
-<text x="293.9" y="400.0" fill="#626b75" font-size="13.5">27.1%</text>
-<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
-<rect x="108" y="426.0" width="142.3" height="18" rx="2" fill="#76b900"/>
-<text x="257.3" y="441.0" fill="#626b75" font-size="13.5">21.6%（166 题）</text>
-<rect x="108" y="449.0" width="56.1" height="18" rx="2" fill="#3b7dd8"/>
-<text x="171.1" y="464.0" fill="#626b75" font-size="13.5">8.5%</text>
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-B</text>
+<rect x="108" y="42.0" width="572.6" height="18" rx="2" fill="#76b900"/>
+<text x="687.6" y="57.0" fill="#626b75" font-size="13.5">86.8%（668 题）</text>
+<rect x="108" y="65.0" width="416.5" height="18" rx="2" fill="#3b7dd8"/>
+<text x="531.5" y="80.0" fill="#626b75" font-size="13.5">63.1%</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="106.0" width="543.4" height="18" rx="2" fill="#76b900"/>
+<text x="658.4" y="121.0" fill="#626b75" font-size="13.5">82.3%（634 题）</text>
+<rect x="108" y="129.0" width="458.0" height="18" rx="2" fill="#3b7dd8"/>
+<text x="573.0" y="144.0" fill="#626b75" font-size="13.5">69.4%</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="170.0" width="539.1" height="18" rx="2" fill="#76b900"/>
+<text x="654.1" y="185.0" fill="#626b75" font-size="13.5">81.7%（629 题）</text>
+<rect x="108" y="193.0" width="438.2" height="18" rx="2" fill="#3b7dd8"/>
+<text x="553.2" y="208.0" fill="#626b75" font-size="13.5">66.4%</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108" y="234.0" width="530.6" height="18" rx="2" fill="#76b900"/>
+<text x="645.6" y="249.0" fill="#626b75" font-size="13.5">80.4%（619 题）</text>
+<rect x="108" y="257.0" width="379.5" height="18" rx="2" fill="#3b7dd8"/>
+<text x="494.5" y="272.0" fill="#626b75" font-size="13.5">57.5%</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="298.0" width="497.1" height="18" rx="2" fill="#76b900"/>
+<text x="612.1" y="313.0" fill="#626b75" font-size="13.5">75.3%（580 题）</text>
+<rect x="108" y="321.0" width="339.9" height="18" rx="2" fill="#3b7dd8"/>
+<text x="454.9" y="336.0" fill="#626b75" font-size="13.5">51.5%</text>
+<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108" y="362.0" width="487.7" height="18" rx="2" fill="#76b900"/>
+<text x="602.7" y="377.0" fill="#626b75" font-size="13.5">73.9%（569 题）</text>
+<rect x="108" y="385.0" width="326.0" height="18" rx="2" fill="#3b7dd8"/>
+<text x="441.0" y="400.0" fill="#626b75" font-size="13.5">49.4%</text>
+<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108" y="426.0" width="313.7" height="18" rx="2" fill="#76b900"/>
+<text x="428.7" y="441.0" fill="#626b75" font-size="13.5">47.5%（366 题）</text>
+<rect x="108" y="449.0" width="178.9" height="18" rx="2" fill="#3b7dd8"/>
+<text x="293.9" y="464.0" fill="#626b75" font-size="13.5">27.1%</text>
+<text x="96" y="519.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="490.0" width="142.3" height="18" rx="2" fill="#76b900"/>
+<text x="257.3" y="505.0" fill="#626b75" font-size="13.5">21.6%（166 题）</text>
+<rect x="108" y="513.0" width="56.1" height="18" rx="2" fill="#3b7dd8"/>
+<text x="171.1" y="528.0" fill="#626b75" font-size="13.5">8.5%</text>
 </svg>
 <figcaption>图 2.1　表 A 延迟轨：pass@4 与 pass@1</figcaption>
 </figure>
 
 <figure class="chart">
-<svg viewBox="0 0 900 496" role="img" aria-label="图 2.2　表 A 吞吐轨：pass@4 与 pass@1" width="100%">
+<svg viewBox="0 0 900 560" role="img" aria-label="图 2.2　表 A 吞吐轨：pass@4 与 pass@1" width="100%">
 <rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
 <text x="127" y="17" fill="#626b75" font-size="14">pass@4</text>
 <rect x="226" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
 <text x="245" y="17" fill="#626b75" font-size="14">pass@1</text>
-<line x1="108.0" y1="36" x2="108.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="108.0" y1="36" x2="108.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0%</text>
-<line x1="273.0" y1="36" x2="273.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="273.0" y1="36" x2="273.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">25%</text>
-<line x1="438.0" y1="36" x2="438.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="438.0" y1="36" x2="438.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">50%</text>
-<line x1="603.0" y1="36" x2="603.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="603.0" y1="36" x2="603.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">75%</text>
-<line x1="768.0" y1="36" x2="768.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="768.0" y1="36" x2="768.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">100%</text>
 
-<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
-<rect x="108" y="42.0" width="622.0" height="18" rx="2" fill="#76b900"/>
-<text x="737.0" y="57.0" fill="#626b75" font-size="13.5">94.2%（131 题）</text>
-<rect x="108" y="65.0" width="580.1" height="18" rx="2" fill="#3b7dd8"/>
-<text x="695.1" y="80.0" fill="#626b75" font-size="13.5">87.9%</text>
-<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
-<rect x="108" y="106.0" width="617.3" height="18" rx="2" fill="#76b900"/>
-<text x="732.3" y="121.0" fill="#626b75" font-size="13.5">93.5%（130 题）</text>
-<rect x="108" y="129.0" width="563.6" height="18" rx="2" fill="#3b7dd8"/>
-<text x="678.6" y="144.0" fill="#626b75" font-size="13.5">85.4%</text>
-<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
-<rect x="108" y="170.0" width="598.3" height="18" rx="2" fill="#76b900"/>
-<text x="713.3" y="185.0" fill="#626b75" font-size="13.5">90.6%（126 题）</text>
-<rect x="108" y="193.0" width="478.5" height="18" rx="2" fill="#3b7dd8"/>
-<text x="593.5" y="208.0" fill="#626b75" font-size="13.5">72.5%</text>
-<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
-<rect x="108" y="234.0" width="584.0" height="18" rx="2" fill="#76b900"/>
-<text x="699.0" y="249.0" fill="#626b75" font-size="13.5">88.5%（123 题）</text>
-<rect x="108" y="257.0" width="454.7" height="18" rx="2" fill="#3b7dd8"/>
-<text x="569.7" y="272.0" fill="#626b75" font-size="13.5">68.9%</text>
-<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
-<rect x="108" y="298.0" width="588.8" height="18" rx="2" fill="#76b900"/>
-<text x="703.8" y="313.0" fill="#626b75" font-size="13.5">89.2%（124 题）</text>
-<rect x="108" y="321.0" width="468.6" height="18" rx="2" fill="#3b7dd8"/>
-<text x="583.6" y="336.0" fill="#626b75" font-size="13.5">71.0%</text>
-<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
-<rect x="108" y="362.0" width="574.5" height="18" rx="2" fill="#76b900"/>
-<text x="689.5" y="377.0" fill="#626b75" font-size="13.5">87.1%（121 题）</text>
-<rect x="108" y="385.0" width="358.4" height="18" rx="2" fill="#3b7dd8"/>
-<text x="473.4" y="400.0" fill="#626b75" font-size="13.5">54.3%</text>
-<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
-<rect x="108" y="426.0" width="280.1" height="18" rx="2" fill="#76b900"/>
-<text x="395.1" y="441.0" fill="#626b75" font-size="13.5">42.4%（59 题）</text>
-<rect x="108" y="449.0" width="106.9" height="18" rx="2" fill="#3b7dd8"/>
-<text x="221.9" y="464.0" fill="#626b75" font-size="13.5">16.2%</text>
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-B</text>
+<rect x="108" y="42.0" width="603.0" height="18" rx="2" fill="#76b900"/>
+<text x="718.0" y="57.0" fill="#626b75" font-size="13.5">91.4%（127 题）</text>
+<rect x="108" y="65.0" width="365.6" height="18" rx="2" fill="#3b7dd8"/>
+<text x="480.6" y="80.0" fill="#626b75" font-size="13.5">55.4%</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="106.0" width="622.0" height="18" rx="2" fill="#76b900"/>
+<text x="737.0" y="121.0" fill="#626b75" font-size="13.5">94.2%（131 题）</text>
+<rect x="108" y="129.0" width="580.1" height="18" rx="2" fill="#3b7dd8"/>
+<text x="695.1" y="144.0" fill="#626b75" font-size="13.5">87.9%</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="170.0" width="617.3" height="18" rx="2" fill="#76b900"/>
+<text x="732.3" y="185.0" fill="#626b75" font-size="13.5">93.5%（130 题）</text>
+<rect x="108" y="193.0" width="563.6" height="18" rx="2" fill="#3b7dd8"/>
+<text x="678.6" y="208.0" fill="#626b75" font-size="13.5">85.4%</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108" y="234.0" width="598.3" height="18" rx="2" fill="#76b900"/>
+<text x="713.3" y="249.0" fill="#626b75" font-size="13.5">90.6%（126 题）</text>
+<rect x="108" y="257.0" width="478.5" height="18" rx="2" fill="#3b7dd8"/>
+<text x="593.5" y="272.0" fill="#626b75" font-size="13.5">72.5%</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="298.0" width="584.0" height="18" rx="2" fill="#76b900"/>
+<text x="699.0" y="313.0" fill="#626b75" font-size="13.5">88.5%（123 题）</text>
+<rect x="108" y="321.0" width="454.7" height="18" rx="2" fill="#3b7dd8"/>
+<text x="569.7" y="336.0" fill="#626b75" font-size="13.5">68.9%</text>
+<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108" y="362.0" width="588.8" height="18" rx="2" fill="#76b900"/>
+<text x="703.8" y="377.0" fill="#626b75" font-size="13.5">89.2%（124 题）</text>
+<rect x="108" y="385.0" width="468.6" height="18" rx="2" fill="#3b7dd8"/>
+<text x="583.6" y="400.0" fill="#626b75" font-size="13.5">71.0%</text>
+<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108" y="426.0" width="574.5" height="18" rx="2" fill="#76b900"/>
+<text x="689.5" y="441.0" fill="#626b75" font-size="13.5">87.1%（121 题）</text>
+<rect x="108" y="449.0" width="358.4" height="18" rx="2" fill="#3b7dd8"/>
+<text x="473.4" y="464.0" fill="#626b75" font-size="13.5">54.3%</text>
+<text x="96" y="519.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="490.0" width="280.1" height="18" rx="2" fill="#76b900"/>
+<text x="395.1" y="505.0" fill="#626b75" font-size="13.5">42.4%（59 题）</text>
+<rect x="108" y="513.0" width="106.9" height="18" rx="2" fill="#3b7dd8"/>
+<text x="221.9" y="528.0" fill="#626b75" font-size="13.5">16.2%</text>
 </svg>
 <figcaption>图 2.2　表 A 吞吐轨：pass@4 与 pass@1</figcaption>
 </figure>
@@ -999,12 +1011,16 @@ class ModelNew(nn.Module):
     <p>
       <strong>公开模型之间的差距，小于「训没训过」的差距。</strong>
       GL 580、G4t 569 挨得很近，Q38 366 掉一档；而同一个 Next 权重，训练前 166、训练后 634，
-      差了 <strong>3.8 倍</strong>。这说明这套题考的不是通用代码能力，是一个特定 DSL 的熟练度。
+      差了 <strong>3.8 倍</strong>。Glimmer 这条线走完自蒸馏是 668。
+      这说明这套题考的不是通用代码能力，是一个特定 DSL 的熟练度。
     </p>
     <p>
-      <strong>Next 这个基座在未训练时是最差的（166），训练后是最好的（634）。</strong>
-      它是唯一一个专门的代码模型，却在 cuTile 上垫底——
-      更说明 cuTile 不在任何一家的预训练语料里，代码能力不能自动迁移过来。
+      <strong>覆盖面最高的是 GL-B（668），pass@1 最高的仍是 Next-Q（69.4%）。</strong>
+      Next 未训练时垫底（166），训练后 pass@1 第一——它是唯一一个专门的代码模型，
+      却在 cuTile 上从最差翻到最稳，更说明 cuTile 不在任何一家的预训练语料里。
+      GL-B 的解出数超过 Next-Q，但吞吐轨 pass@1 从 GL-A 的 72.5% 掉到 <strong>55.4%</strong>
+      （见 2.6）：蒸馏集来自 conv / matmul / pool 偏重的训练层，几乎没喂这 139 道大 activation twin。
+      k=4 还盖得住（127/139），随手采一次就不稳。
     </p>
     <p>
       <strong>「解出」和 pass@1 的差距就是可用性的差距。</strong>
@@ -1019,7 +1035,7 @@ class ModelNew(nn.Module):
     </p>
 
     <figure class="chart">
-<svg viewBox="0 0 832 386" role="img" aria-label="图 2.3　按算子族的解出题数（颜色深浅 = 该族解出比例）" width="100%">
+<svg viewBox="0 0 928 386" role="img" aria-label="图 2.3　按算子族的解出题数（颜色深浅 = 该族解出比例）" width="100%">
 <text x="198" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">Next</text>
 <text x="294" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">GL</text>
 <text x="390" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">G4t</text>
@@ -1027,6 +1043,7 @@ class ModelNew(nn.Module):
 <text x="582" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">Next-M</text>
 <text x="678" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">Next-Q</text>
 <text x="774" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">GL-A</text>
+<text x="870" y="34" fill="#1b1f24" font-size="15" text-anchor="middle">GL-B</text>
 <text x="140" y="34" fill="#626b75" font-size="13" text-anchor="end">族（题数）</text>
 <text x="140" y="81.0" fill="#1b1f24" font-size="15" text-anchor="end">conv (209)</text>
 <rect x="150" y="56" width="96" height="40" fill="rgb(232,243,213)" stroke="#ffffff" stroke-width="1.5"/>
@@ -1043,6 +1060,8 @@ class ModelNew(nn.Module):
 <text x="678" y="81.0" fill="#ffffff" font-size="15" text-anchor="middle">174</text>
 <rect x="726" y="56" width="96" height="40" fill="rgb(152,202,64)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="774" y="81.0" fill="#ffffff" font-size="15" text-anchor="middle">156</text>
+<rect x="822" y="56" width="96" height="40" fill="rgb(140,196,42)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="870" y="81.0" fill="#ffffff" font-size="15" text-anchor="middle">174</text>
 <text x="140" y="121.0" fill="#1b1f24" font-size="15" text-anchor="end">activation (150)</text>
 <rect x="150" y="96" width="96" height="40" fill="rgb(204,229,161)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="198" y="121.0" fill="#1b1f24" font-size="15" text-anchor="middle">55</text>
@@ -1058,6 +1077,8 @@ class ModelNew(nn.Module):
 <text x="678" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">135</text>
 <rect x="726" y="96" width="96" height="40" fill="rgb(128,190,20)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="774" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">138</text>
+<rect x="822" y="96" width="96" height="40" fill="rgb(128,190,18)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="870" y="121.0" fill="#ffffff" font-size="15" text-anchor="middle">139</text>
 <text x="140" y="161.0" fill="#1b1f24" font-size="15" text-anchor="end">elementwise (105)</text>
 <rect x="150" y="136" width="96" height="40" fill="rgb(210,232,172)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="198" y="161.0" fill="#1b1f24" font-size="15" text-anchor="middle">34</text>
@@ -1073,6 +1094,8 @@ class ModelNew(nn.Module):
 <text x="678" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">98</text>
 <rect x="726" y="136" width="96" height="40" fill="rgb(131,191,24)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="774" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">95</text>
+<rect x="822" y="136" width="96" height="40" fill="rgb(125,189,14)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="870" y="161.0" fill="#ffffff" font-size="15" text-anchor="middle">99</text>
 <text x="140" y="201.0" fill="#1b1f24" font-size="15" text-anchor="end">matmul (102)</text>
 <rect x="150" y="176" width="96" height="40" fill="rgb(237,246,222)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="198" y="201.0" fill="#1b1f24" font-size="15" text-anchor="middle">13</text>
@@ -1088,6 +1111,8 @@ class ModelNew(nn.Module):
 <text x="678" y="201.0" fill="#ffffff" font-size="15" text-anchor="middle">69</text>
 <rect x="726" y="176" width="96" height="40" fill="rgb(170,211,97)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="774" y="201.0" fill="#1b1f24" font-size="15" text-anchor="middle">63</text>
+<rect x="822" y="176" width="96" height="40" fill="rgb(148,200,57)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="870" y="201.0" fill="#ffffff" font-size="15" text-anchor="middle">79</text>
 <text x="140" y="241.0" fill="#1b1f24" font-size="15" text-anchor="end">norm (102)</text>
 <rect x="150" y="216" width="96" height="40" fill="rgb(224,239,197)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="198" y="241.0" fill="#1b1f24" font-size="15" text-anchor="middle">23</text>
@@ -1103,6 +1128,8 @@ class ModelNew(nn.Module):
 <text x="678" y="241.0" fill="#ffffff" font-size="15" text-anchor="middle">75</text>
 <rect x="726" y="216" width="96" height="40" fill="rgb(138,195,37)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="774" y="241.0" fill="#ffffff" font-size="15" text-anchor="middle">87</text>
+<rect x="822" y="216" width="96" height="40" fill="rgb(134,193,30)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="870" y="241.0" fill="#ffffff" font-size="15" text-anchor="middle">90</text>
 <text x="140" y="281.0" fill="#1b1f24" font-size="15" text-anchor="end">pool (75)</text>
 <rect x="150" y="256" width="96" height="40" fill="rgb(251,253,248)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="198" y="281.0" fill="#1b1f24" font-size="15" text-anchor="middle">2</text>
@@ -1118,6 +1145,8 @@ class ModelNew(nn.Module):
 <text x="678" y="281.0" fill="#ffffff" font-size="15" text-anchor="middle">63</text>
 <rect x="726" y="256" width="96" height="40" fill="rgb(150,201,61)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="774" y="281.0" fill="#ffffff" font-size="15" text-anchor="middle">57</text>
+<rect x="822" y="256" width="96" height="40" fill="rgb(143,198,47)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="870" y="281.0" fill="#ffffff" font-size="15" text-anchor="middle">61</text>
 <text x="140" y="321.0" fill="#1b1f24" font-size="15" text-anchor="end">reduction (22)</text>
 <rect x="150" y="296" width="96" height="40" fill="rgb(236,245,220)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="198" y="321.0" fill="#1b1f24" font-size="15" text-anchor="middle">3</text>
@@ -1133,6 +1162,8 @@ class ModelNew(nn.Module):
 <text x="678" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">17</text>
 <rect x="726" y="296" width="96" height="40" fill="rgb(142,197,46)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="774" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">18</text>
+<rect x="822" y="296" width="96" height="40" fill="rgb(124,188,11)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="870" y="321.0" fill="#ffffff" font-size="15" text-anchor="middle">21</text>
 <text x="140" y="361.0" fill="#1b1f24" font-size="15" text-anchor="end">loss (5)</text>
 <rect x="150" y="336" width="96" height="40" fill="rgb(200,227,153)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="198" y="361.0" fill="#1b1f24" font-size="15" text-anchor="middle">2</text>
@@ -1148,6 +1179,8 @@ class ModelNew(nn.Module):
 <text x="678" y="361.0" fill="#1b1f24" font-size="15" text-anchor="middle">3</text>
 <rect x="726" y="336" width="96" height="40" fill="rgb(118,185,0)" stroke="#ffffff" stroke-width="1.5"/>
 <text x="774" y="361.0" fill="#ffffff" font-size="15" text-anchor="middle">5</text>
+<rect x="822" y="336" width="96" height="40" fill="rgb(118,185,0)" stroke="#ffffff" stroke-width="1.5"/>
+<text x="870" y="361.0" fill="#ffffff" font-size="15" text-anchor="middle">5</text>
 </svg>
 <figcaption>图 2.3　按算子族的解出题数（颜色深浅 = 该族解出比例）</figcaption>
 </figure>
@@ -1162,17 +1195,19 @@ class ModelNew(nn.Module):
     <p>
       Q38 的 conv 只有 23/209，几乎全军覆没，这也是它总分掉一档的主要来源。
       未训练的 Next 在 pool 上只解出 <strong>2 / 75</strong>。
+      GL-B 把 GL-A 的三个洞再推一截：conv 156→174（追平 Next-M / Next-Q），
+      matmul 63→79（超过 Next-Q 的 69），pool 57→61。
     </p>
 
     <h3>2.4 失败形态：一半以上不是「算错」</h3>
 
     <p>
       每个模型采 3636 个样本（909 × 4）。把没通过的样本按失败阶段拆开，能看出问题出在哪一层。
-      下图是训练前后的同一个基座（G4t 通过 1917 个样本，未做阶段拆分）：
+      下图是 Glimmer 这条线：基座、一轮 SFT、再自蒸馏（G4t 通过 1917 个样本，未做阶段拆分）：
     </p>
 
     <figure class="chart">
-<svg viewBox="0 0 900 154" role="img" aria-label="图 2.4　3636 个样本的去向" width="100%">
+<svg viewBox="0 0 900 206" role="img" aria-label="图 2.4　3636 个样本的去向" width="100%">
 <rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
 <text x="127" y="17" fill="#626b75" font-size="14">通过</text>
 <rect x="188" y="5" width="13" height="13" rx="2" fill="#e0a33e"/>
@@ -1197,6 +1232,14 @@ class ModelNew(nn.Module):
 <rect x="716.5" y="94" width="131.7" height="28" fill="#d0563f"/>
 <text x="782.4" y="113" fill="#ffffff" font-size="14" text-anchor="middle">642</text>
 <rect x="848.3" y="94" width="5.7" height="28" fill="#9aa4ae"/>
+<text x="96" y="166" fill="#1b1f24" font-size="15" text-anchor="end">GL-B</text>
+<rect x="108.0" y="146" width="461.6" height="28" fill="#76b900"/>
+<text x="338.8" y="165" fill="#ffffff" font-size="14" text-anchor="middle">2250</text>
+<rect x="569.6" y="146" width="127.2" height="28" fill="#e0a33e"/>
+<text x="633.2" y="165" fill="#ffffff" font-size="14" text-anchor="middle">620</text>
+<rect x="696.8" y="146" width="151.2" height="28" fill="#d0563f"/>
+<text x="772.4" y="165" fill="#ffffff" font-size="14" text-anchor="middle">737</text>
+<rect x="848.1" y="146" width="5.9" height="28" fill="#9aa4ae"/>
 </svg>
 <figcaption>图 2.4　3636 个样本的去向</figcaption>
 </figure>
@@ -1206,6 +1249,8 @@ class ModelNew(nn.Module):
       <strong>纯度失败是最大的单一失败类别</strong>：GL 有 970 个样本数值算对了、却因为把活留给 torch 而不算通过
       （1.7 里那份 <code>F.gelu</code> 的代码就是典型）。
       这意味着按标准 pass@k 报，这些模型的分数会明显虚高。
+      第一轮 SFT 买到的主要是纯度（970→791）；自蒸馏再把通过样本从 2175 推到 2250，
+      纯度继续降（791→620），但 exec 从 642 升到 737——多解出的题里，写崩的也多了。
     </p>
     </div>
     <p>
@@ -1216,57 +1261,62 @@ class ModelNew(nn.Module):
     <h3>2.5 不规则形状：没有出现整片崩塌</h3>
 
     <figure class="chart">
-<svg viewBox="0 0 900 496" role="img" aria-label="图 2.5　常见形状与不规则形状的解出率" width="100%">
+<svg viewBox="0 0 900 560" role="img" aria-label="图 2.5　常见形状与不规则形状的解出率" width="100%">
 <rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
 <text x="127" y="17" fill="#626b75" font-size="14">常见（583 道）</text>
 <rect x="256" y="5" width="13" height="13" rx="2" fill="#3b7dd8"/>
 <text x="275" y="17" fill="#626b75" font-size="14">不规则（187 道）</text>
-<line x1="108.0" y1="36" x2="108.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="108.0" y1="36" x2="108.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0%</text>
-<line x1="273.0" y1="36" x2="273.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="273.0" y1="36" x2="273.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">25%</text>
-<line x1="438.0" y1="36" x2="438.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="438.0" y1="36" x2="438.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">50%</text>
-<line x1="603.0" y1="36" x2="603.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="603.0" y1="36" x2="603.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">75%</text>
-<line x1="768.0" y1="36" x2="768.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="768.0" y1="36" x2="768.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">100%</text>
 
-<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
-<rect x="108" y="42.0" width="554.7" height="18" rx="2" fill="#76b900"/>
-<text x="669.7" y="57.0" fill="#626b75" font-size="13.5">84%</text>
-<rect x="108" y="65.0" width="508.2" height="18" rx="2" fill="#3b7dd8"/>
-<text x="623.2" y="80.0" fill="#626b75" font-size="13.5">77%</text>
-<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
-<rect x="108" y="106.0" width="545.7" height="18" rx="2" fill="#76b900"/>
-<text x="660.7" y="121.0" fill="#626b75" font-size="13.5">83%</text>
-<rect x="108" y="129.0" width="518.8" height="18" rx="2" fill="#3b7dd8"/>
-<text x="633.8" y="144.0" fill="#626b75" font-size="13.5">79%</text>
-<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
-<rect x="108" y="170.0" width="537.7" height="18" rx="2" fill="#76b900"/>
-<text x="652.7" y="185.0" fill="#626b75" font-size="13.5">81%</text>
-<rect x="108" y="193.0" width="508.2" height="18" rx="2" fill="#3b7dd8"/>
-<text x="623.2" y="208.0" fill="#626b75" font-size="13.5">77%</text>
-<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
-<rect x="108" y="234.0" width="507.2" height="18" rx="2" fill="#76b900"/>
-<text x="622.2" y="249.0" fill="#626b75" font-size="13.5">77%</text>
-<rect x="108" y="257.0" width="465.9" height="18" rx="2" fill="#3b7dd8"/>
-<text x="580.9" y="272.0" fill="#626b75" font-size="13.5">71%</text>
-<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
-<rect x="108" y="298.0" width="497.0" height="18" rx="2" fill="#76b900"/>
-<text x="612.0" y="313.0" fill="#626b75" font-size="13.5">75%</text>
-<rect x="108" y="321.0" width="458.8" height="18" rx="2" fill="#3b7dd8"/>
-<text x="573.8" y="336.0" fill="#626b75" font-size="13.5">70%</text>
-<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
-<rect x="108" y="362.0" width="315.8" height="18" rx="2" fill="#76b900"/>
-<text x="430.8" y="377.0" fill="#626b75" font-size="13.5">48%</text>
-<rect x="108" y="385.0" width="307.1" height="18" rx="2" fill="#3b7dd8"/>
-<text x="422.1" y="400.0" fill="#626b75" font-size="13.5">47%</text>
-<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
-<rect x="108" y="426.0" width="146.0" height="18" rx="2" fill="#76b900"/>
-<text x="261.0" y="441.0" fill="#626b75" font-size="13.5">22%</text>
-<rect x="108" y="449.0" width="130.6" height="18" rx="2" fill="#3b7dd8"/>
-<text x="245.6" y="464.0" fill="#626b75" font-size="13.5">20%</text>
+<text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-B</text>
+<rect x="108" y="42.0" width="575.1" height="18" rx="2" fill="#76b900"/>
+<text x="690.1" y="57.0" fill="#626b75" font-size="13.5">87%</text>
+<rect x="108" y="65.0" width="564.7" height="18" rx="2" fill="#3b7dd8"/>
+<text x="679.7" y="80.0" fill="#626b75" font-size="13.5">86%</text>
+<text x="96" y="135.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
+<rect x="108" y="106.0" width="554.7" height="18" rx="2" fill="#76b900"/>
+<text x="669.7" y="121.0" fill="#626b75" font-size="13.5">84%</text>
+<rect x="108" y="129.0" width="508.2" height="18" rx="2" fill="#3b7dd8"/>
+<text x="623.2" y="144.0" fill="#626b75" font-size="13.5">77%</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-M</text>
+<rect x="108" y="170.0" width="545.7" height="18" rx="2" fill="#76b900"/>
+<text x="660.7" y="185.0" fill="#626b75" font-size="13.5">83%</text>
+<rect x="108" y="193.0" width="518.8" height="18" rx="2" fill="#3b7dd8"/>
+<text x="633.8" y="208.0" fill="#626b75" font-size="13.5">79%</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-A</text>
+<rect x="108" y="234.0" width="537.7" height="18" rx="2" fill="#76b900"/>
+<text x="652.7" y="249.0" fill="#626b75" font-size="13.5">81%</text>
+<rect x="108" y="257.0" width="508.2" height="18" rx="2" fill="#3b7dd8"/>
+<text x="623.2" y="272.0" fill="#626b75" font-size="13.5">77%</text>
+<text x="96" y="327.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="298.0" width="507.2" height="18" rx="2" fill="#76b900"/>
+<text x="622.2" y="313.0" fill="#626b75" font-size="13.5">77%</text>
+<rect x="108" y="321.0" width="465.9" height="18" rx="2" fill="#3b7dd8"/>
+<text x="580.9" y="336.0" fill="#626b75" font-size="13.5">71%</text>
+<text x="96" y="391.0" fill="#1b1f24" font-size="15" text-anchor="end">G4t</text>
+<rect x="108" y="362.0" width="497.0" height="18" rx="2" fill="#76b900"/>
+<text x="612.0" y="377.0" fill="#626b75" font-size="13.5">75%</text>
+<rect x="108" y="385.0" width="458.8" height="18" rx="2" fill="#3b7dd8"/>
+<text x="573.8" y="400.0" fill="#626b75" font-size="13.5">70%</text>
+<text x="96" y="455.0" fill="#1b1f24" font-size="15" text-anchor="end">Q38</text>
+<rect x="108" y="426.0" width="315.8" height="18" rx="2" fill="#76b900"/>
+<text x="430.8" y="441.0" fill="#626b75" font-size="13.5">48%</text>
+<rect x="108" y="449.0" width="307.1" height="18" rx="2" fill="#3b7dd8"/>
+<text x="422.1" y="464.0" fill="#626b75" font-size="13.5">47%</text>
+<text x="96" y="519.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
+<rect x="108" y="490.0" width="146.0" height="18" rx="2" fill="#76b900"/>
+<text x="261.0" y="505.0" fill="#626b75" font-size="13.5">22%</text>
+<rect x="108" y="513.0" width="130.6" height="18" rx="2" fill="#3b7dd8"/>
+<text x="245.6" y="528.0" fill="#626b75" font-size="13.5">20%</text>
 </svg>
 <figcaption>图 2.5　常见形状与不规则形状的解出率</figcaption>
 </figure>
@@ -1290,22 +1340,22 @@ class ModelNew(nn.Module):
     <h4>延迟轨：题目太小，这一档量的主要是调度开销</h4>
 
     <figure class="chart">
-<svg viewBox="0 0 900 496" role="img" aria-label="图 2.6　延迟轨中位加速比：同一批 kernel，换个统计集合就差一倍" width="100%">
+<svg viewBox="0 0 900 560" role="img" aria-label="图 2.6　延迟轨中位加速比：同一批 kernel，换个统计集合就差一倍" width="100%">
 <rect x="108" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
 <text x="127" y="17" fill="#626b75" font-size="14">自己解出集</text>
 <rect x="216" y="5" width="13" height="13" rx="2" fill="#76b900"/>
-<text x="235" y="17" fill="#626b75" font-size="14">七模型共同 101 题</text>
-<line x1="108.0" y1="36" x2="108.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<text x="235" y="17" fill="#626b75" font-size="14">八模型共同 101 题</text>
+<line x1="108.0" y1="36" x2="108.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0x</text>
-<line x1="228.0" y1="36" x2="228.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="228.0" y1="36" x2="228.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="228.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">1x</text>
-<line x1="348.0" y1="36" x2="348.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="348.0" y1="36" x2="348.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="348.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">2x</text>
-<line x1="468.0" y1="36" x2="468.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="468.0" y1="36" x2="468.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="468.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">3x</text>
-<line x1="588.0" y1="36" x2="588.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="588.0" y1="36" x2="588.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="588.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">4x</text>
-<line x1="708.0" y1="36" x2="708.0" y2="484" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="708.0" y1="36" x2="708.0" y2="548" stroke="#e3e7ec" stroke-width="1"/>
 <text x="708.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">5x</text>
 
 <text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next</text>
@@ -1343,12 +1393,17 @@ class ModelNew(nn.Module):
 <text x="391.0" y="441.0" fill="#626b75" font-size="13.5">2.30x</text>
 <rect x="108" y="449.0" width="559.2" height="18" rx="2" fill="#76b900"/>
 <text x="674.2" y="464.0" fill="#626b75" font-size="13.5">4.66x</text>
+<text x="96" y="519.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-B</text>
+<rect x="108" y="490.0" width="264.0" height="18" rx="2" fill="#9aa4ae"/>
+<text x="379.0" y="505.0" fill="#626b75" font-size="13.5">2.20x</text>
+<rect x="108" y="513.0" width="543.6" height="18" rx="2" fill="#76b900"/>
+<text x="658.6" y="528.0" fill="#626b75" font-size="13.5">4.53x</text>
 </svg>
 <figcaption>图 2.6　延迟轨中位加速比：同一批 kernel，换个统计集合就差一倍</figcaption>
 </figure>
 
 <figure class="chart">
-<svg viewBox="0 0 900 288" role="img" aria-label="图 2.7　延迟轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比" width="100%">
+<svg viewBox="0 0 900 322" role="img" aria-label="图 2.7　延迟轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比" width="100%">
 <rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
 <text x="127" y="17" fill="#626b75" font-size="14">快过 compile</text>
 <rect x="260" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
@@ -1396,6 +1451,12 @@ class ModelNew(nn.Module):
 <rect x="680.2" y="246" width="26.9" height="28" fill="#9aa4ae"/>
 <rect x="707.0" y="246" width="147.0" height="28" fill="#d0563f"/>
 <text x="780.5" y="265" fill="#ffffff" font-size="14" text-anchor="middle">19.7</text>
+<text x="96" y="300" fill="#1b1f24" font-size="15" text-anchor="end">GL-B</text>
+<rect x="108.0" y="280" width="579.6" height="28" fill="#76b900"/>
+<text x="397.8" y="299" fill="#ffffff" font-size="14" text-anchor="middle">77.7</text>
+<rect x="687.6" y="280" width="27.6" height="28" fill="#9aa4ae"/>
+<rect x="715.2" y="280" width="138.8" height="28" fill="#d0563f"/>
+<text x="784.6" y="299" fill="#ffffff" font-size="14" text-anchor="middle">18.6</text>
 </svg>
 <figcaption>图 2.7　延迟轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比</figcaption>
 </figure>
@@ -1411,7 +1472,7 @@ class ModelNew(nn.Module):
       注意图 2.6 里两组柱的反差：<strong>「自己解出集」和「共同 101 题」差了一倍</strong>
       （例如 GL 是 2.33x 对 5.15x）。同一批 kernel、同一次计时，只因为统计的题目集合不同，
       读数就能差这么多——<strong>这就是为什么绝不能拿各模型自己集合上的中位数互相排名。</strong>
-      共同 101 题那一组才是同题同比，而它显示七个模型挤在 4.35x–5.18x，
+      共同 101 题那一组才是同题同比，而它显示八个模型挤在 4.35x–5.18x，
       未训练的 Next 也在其中：<strong>这一档拉不开差距。</strong>
     </p>
 
@@ -1419,25 +1480,25 @@ class ModelNew(nn.Module):
 
     <p>
       139 道副本每道约 1.2e9 个元素（单个张量 4.7 GB），完全是带宽受限，
-      调度开销可以忽略。这一档七个模型的中位加速比挤在 1.13x–1.19x（共同 47 题），
+      调度开销可以忽略。这一档八个模型的中位加速比挤在 1.13x–1.19x（共同 47 题），
       彼此没有差别。换算成实际带宽更直观：
     </p>
 
     <figure class="chart">
-<svg viewBox="0 0 900 240" role="img" aria-label="图 2.8　吞吐轨达成带宽中位（GB200 单卡标称约 8000 GB/s）" width="100%">
+<svg viewBox="0 0 900 304" role="img" aria-label="图 2.8　吞吐轨达成带宽中位（GB200 单卡标称约 8000 GB/s）" width="100%">
 <rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
 <text x="127" y="17" fill="#626b75" font-size="14">生成的 cuTile kernel</text>
 <rect x="336" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
 <text x="355" y="17" fill="#626b75" font-size="14">torch.compile 参考</text>
-<line x1="108.0" y1="36" x2="108.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="108.0" y1="36" x2="108.0" y2="292" stroke="#e3e7ec" stroke-width="1"/>
 <text x="108.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">0</text>
-<line x1="273.0" y1="36" x2="273.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="273.0" y1="36" x2="273.0" y2="292" stroke="#e3e7ec" stroke-width="1"/>
 <text x="273.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">2000</text>
-<line x1="438.0" y1="36" x2="438.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="438.0" y1="36" x2="438.0" y2="292" stroke="#e3e7ec" stroke-width="1"/>
 <text x="438.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">4000</text>
-<line x1="603.0" y1="36" x2="603.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="603.0" y1="36" x2="603.0" y2="292" stroke="#e3e7ec" stroke-width="1"/>
 <text x="603.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">6000</text>
-<line x1="768.0" y1="36" x2="768.0" y2="228" stroke="#e3e7ec" stroke-width="1"/>
+<line x1="768.0" y1="36" x2="768.0" y2="292" stroke="#e3e7ec" stroke-width="1"/>
 <text x="768.0" y="30" fill="#626b75" font-size="13" text-anchor="middle">8000</text>
 
 <text x="96" y="71.0" fill="#1b1f24" font-size="15" text-anchor="end">Next-Q</text>
@@ -1450,17 +1511,22 @@ class ModelNew(nn.Module):
 <text x="600.8" y="121.0" fill="#626b75" font-size="13.5">5889 GB/s</text>
 <rect x="108" y="129.0" width="392.2" height="18" rx="2" fill="#9aa4ae"/>
 <text x="507.2" y="144.0" fill="#626b75" font-size="13.5">4754 GB/s</text>
-<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
-<rect x="108" y="170.0" width="470.2" height="18" rx="2" fill="#76b900"/>
-<text x="585.2" y="185.0" fill="#626b75" font-size="13.5">5700 GB/s</text>
-<rect x="108" y="193.0" width="394.7" height="18" rx="2" fill="#9aa4ae"/>
-<text x="509.7" y="208.0" fill="#626b75" font-size="13.5">4784 GB/s</text>
+<text x="96" y="199.0" fill="#1b1f24" font-size="15" text-anchor="end">GL-B</text>
+<rect x="108" y="170.0" width="485.5" height="18" rx="2" fill="#76b900"/>
+<text x="600.5" y="185.0" fill="#626b75" font-size="13.5">5885 GB/s</text>
+<rect x="108" y="193.0" width="399.5" height="18" rx="2" fill="#9aa4ae"/>
+<text x="514.5" y="208.0" fill="#626b75" font-size="13.5">4842 GB/s</text>
+<text x="96" y="263.0" fill="#1b1f24" font-size="15" text-anchor="end">GL</text>
+<rect x="108" y="234.0" width="470.2" height="18" rx="2" fill="#76b900"/>
+<text x="585.2" y="249.0" fill="#626b75" font-size="13.5">5700 GB/s</text>
+<rect x="108" y="257.0" width="394.7" height="18" rx="2" fill="#9aa4ae"/>
+<text x="509.7" y="272.0" fill="#626b75" font-size="13.5">4784 GB/s</text>
 </svg>
 <figcaption>图 2.8　吞吐轨达成带宽中位（GB200 单卡标称约 8000 GB/s）</figcaption>
 </figure>
 
 <figure class="chart">
-<svg viewBox="0 0 900 288" role="img" aria-label="图 2.9　吞吐轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比" width="100%">
+<svg viewBox="0 0 900 322" role="img" aria-label="图 2.9　吞吐轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比" width="100%">
 <rect x="108" y="5" width="13" height="13" rx="2" fill="#76b900"/>
 <text x="127" y="17" fill="#626b75" font-size="14">快过 compile</text>
 <rect x="260" y="5" width="13" height="13" rx="2" fill="#9aa4ae"/>
@@ -1516,6 +1582,13 @@ class ModelNew(nn.Module):
 <text x="641.0" y="265" fill="#ffffff" font-size="14" text-anchor="middle">15.9</text>
 <rect x="700.3" y="246" width="153.7" height="28" fill="#d0563f"/>
 <text x="777.2" y="265" fill="#ffffff" font-size="14" text-anchor="middle">20.6</text>
+<text x="96" y="300" fill="#1b1f24" font-size="15" text-anchor="end">GL-B</text>
+<rect x="108.0" y="280" width="376.0" height="28" fill="#76b900"/>
+<text x="296.0" y="299" fill="#ffffff" font-size="14" text-anchor="middle">50.4</text>
+<rect x="484.0" y="280" width="158.9" height="28" fill="#9aa4ae"/>
+<text x="563.4" y="299" fill="#ffffff" font-size="14" text-anchor="middle">21.3</text>
+<rect x="642.9" y="280" width="211.1" height="28" fill="#d0563f"/>
+<text x="748.4" y="299" fill="#ffffff" font-size="14" text-anchor="middle">28.3</text>
 </svg>
 <figcaption>图 2.9　吞吐轨：解出的题里，比 torch.compile 快 / 打平 / 慢的占比</figcaption>
 </figure>
@@ -1523,7 +1596,7 @@ class ModelNew(nn.Module):
     <p>
       GB200 单卡 HBM 标称带宽约 8 TB/s，所以生成的 kernel 跑在约<strong>七成峰值</strong>上，
       比 inductor 高约 22%。GL 是 5700 / 4784 GB/s，GL-A 是 5889 / 4754 GB/s，
-      三个模型几乎一样。
+      GL-B 是 5885 / 4842 GB/s，几个模型几乎一样。
     </p>
     <div class="callout">
     <p>
@@ -1548,17 +1621,22 @@ class ModelNew(nn.Module):
         <tr><td>延迟</td><td>GL-A vs GL（全部）</td><td class="num">547</td><td class="num">0.972x</td><td class="num">186</td><td class="num">243</td></tr>
         <tr><td>延迟</td><td>GL-A vs GL（常见形状）</td><td class="num">421</td><td class="num">0.964x</td><td class="num">138</td><td class="num">195</td></tr>
         <tr><td>延迟</td><td>GL-A vs GL（不规则）</td><td class="num">126</td><td class="num">0.994x</td><td class="num">48</td><td class="num">48</td></tr>
+        <tr><td>延迟</td><td>GL-B vs GL-A（全部）</td><td class="num">594</td><td class="num">0.993x</td><td class="num">223</td><td class="num">232</td></tr>
+        <tr><td>延迟</td><td>GL-B vs GL-A（常见形状）</td><td class="num">455</td><td class="num">0.990x</td><td class="num">167</td><td class="num">181</td></tr>
         <tr><td>延迟</td><td>Next-Q vs Next-M（全部）</td><td class="num">601</td><td class="num">0.999x</td><td class="num">170</td><td class="num">180</td></tr>
         <tr><td>吞吐</td><td>GL-A vs GL（全部）</td><td class="num">119</td><td class="num">0.996x</td><td class="num">33</td><td class="num">16</td></tr>
+        <tr><td>吞吐</td><td>GL-B vs GL-A（全部）</td><td class="num">122</td><td class="num">0.996x</td><td class="num">17</td><td class="num">42</td></tr>
         <tr><td>吞吐</td><td>Next-Q vs Next-M（全部）</td><td class="num">130</td><td class="num">0.998x</td><td class="num">6</td><td class="num">12</td></tr>
       </tbody>
     </table>
 
     <p>
-      <strong>一轮 SFT 让 GL 多解出 39 道题，却没让它写的 kernel 变快</strong>，方向甚至略微朝慢。
-      两条轨、四组对比都在噪声量级。这和 Next 那条线的结论一致：
+      <strong>一轮 SFT 让 GL 多解出 39 道题，自蒸馏再多 49 道，却都没让它写的 kernel 变快</strong>，
+      方向甚至略微朝慢。两条轨、六组对比都在噪声量级。这和 Next 那条线的结论一致：
       <strong>正确性训练不搬动性能，性能必须单独立项。</strong>
       本项目为此专门做过性能奖励和性能数据筛选，两次都没过自己设的门（原因在第 3 章）。
+      自蒸馏真正改了的是吞吐轨的<strong>稳定性</strong>：解出 126→127，pass@1 却从 72.5% 掉到 55.4%，
+      四发全对从 64 道变成 21 道——速度中位 0.996x，没变，变的是会不会每次都写对。
     </p>
     <p class="caption">
       完整的成对矩阵（延迟 24 组、吞吐 20 组，各自再拆常见 / 不规则）在
@@ -1669,6 +1747,7 @@ class ModelNew(nn.Module):
       <strong>训练出来的模型不依赖 thinking。</strong> Next-Q 在 8K 无思考下仍是 634 道，
       与它在 32K 开思考时完全一致；而公开模型掉得很明显。
       对部署来说这是个实际优势：同样的质量，token 预算少一个数量级。
+      GL / GL-A / GL-B 的 thinking 关不掉，所以只出现在表 A。
     </p>
     <p>
       G4 与 G4t 是同一个权重的两种配置，但分属两张表，<strong>不能相互比较</strong>。
@@ -1684,12 +1763,12 @@ class ModelNew(nn.Module):
       最强的公开模型 pass@1 51.5%，专门的代码模型未训练时只有 8.5%。
     </p>
     <p>
-      <strong>二、缺口是可以补上的，而且补得动。</strong> 同一权重 166 → 634，
-      在 conv、pool 这些整族塌陷的地方涨得最多。
+      <strong>二、缺口是可以补上的，而且补得动。</strong> Next 同一权重 166 → 634，
+      Glimmer 580 → 619 → 668，在 conv、pool 这些整族塌陷的地方涨得最多。
     </p>
     <p>
       <strong>三、涨的是正确性，不是性能。</strong> 生成的 cuTile kernel 在大张量上确实比
-      <code>torch.compile</code> 快约两成（5824 对 4754 GB/s），但七个模型不分伯仲——
+      <code>torch.compile</code> 快约两成（5824 对 4754 GB/s），但八个模型不分伯仲——
       <strong>那是 cuTile 本身的优势，不是训练买来的</strong>。
       让模型学会「写得更快」目前还没有拿到可信的提升，这是下一阶段要投入的地方。
     </p>
@@ -2036,7 +2115,7 @@ class ModelNew(nn.Module):
       性能一律对 <code>torch.compile</code> 而不是对更弱的 eager、只在共同题集上做成对比较。
     </p>
     <p>
-      这套东西本身就是可复用资产。第 2 章里七个模型的横向读数，是它上线后的第一批产出。
+      这套东西本身就是可复用资产。第 2 章里八个模型的横向读数，是它上线后的第一批产出。
     </p>
 
     <h3>一条被两个基座验证过的配方</h3>
@@ -2044,7 +2123,9 @@ class ModelNew(nn.Module):
     <p>
       同一份权重从解出 166 道到 634 道，pass@1 从 8.5% 到 69.4%。更重要的是它<strong>不是一次性的</strong>：
       同一条配方搬到另一个完全不同的基座（Muse Glimmer，dense 30B）上，
-      一轮就把 580 推到 619，pass@1、pass@4、吞吐三个口径同时涨。
+      一轮 SFT 把 580 推到 619，再自蒸馏到 <strong>668</strong>。
+      第一轮三个口径同时涨；第二轮覆盖和延迟 pass@1 继续涨（57.5% → 63.1%），
+      吞吐 pass@1 却从 72.5% 掉到 55.4%——蒸馏集偏了，不是配方失效。
     </p>
 
     <div class="callout">
@@ -2076,7 +2157,7 @@ class ModelNew(nn.Module):
     <p>
       顺带量到一件与模型无关的事：在 139 道十亿元素的逐点算子上，
       <strong>生成的 cuTile kernel 中位达到 5824 GB/s，而 <code>torch.compile</code> 是 4754 GB/s</strong>，
-      约为 GB200 标称带宽的七成。这个差距七个模型几乎一样——
+      约为 GB200 标称带宽的七成。这个差距八个模型几乎一样——
       说明它来自 cuTile 这条路径本身，而不是某个模型更会调优。
       对「cuTile 值不值得推」这个问题，这是一个独立于本项目的正面证据。
     </p>
