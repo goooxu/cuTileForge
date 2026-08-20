@@ -2406,6 +2406,21 @@ exec。蒸馏集没喂大 activation / elementwise。读数在
 
 ---
 
+# 针对性恢复 SFT 成 GL-C
+
+GL-B 覆盖到了 668/770，但 139 道吞吐 twin 上 pass@1 从 72.5% 掉到 55.4%。
+从 GL-B 自己的通过解里采训练层（87 偏 activation/elementwise/pool，86 偏 conv）：
+3686/5600 和 2659/4800。SFT 集 3232 条 / 1178 题，activation/elementwise 不压，
+只压 norm=400、loss=200。从合并后的 GL-B 挂新 adapter，同一套蒸馏配方
+（attention-only r=128，2 epoch，lr 5e-5，max-len 20480）。
+
+**结论**：GL-B 668 → GL-C **680/770**，p@1 63.1% → 66.8%，p@4 86.8% → **88.3%**。
+吞吐解出 127→**131**（追平 Next-Q），pass@1 **55.4%→83.6%**。conv 174→182，
+matmul 79→82，没有拿覆盖去换 twin。`kernel_ms` 中位 1.015x。读数在
+[results/REPORT_EVAL_SUITE.md](../results/REPORT_EVAL_SUITE.md)。
+
+---
+
 # 对外技术报告（HTML）
 
 `results/report/index.html`，单文件、无外部依赖、能从 `file://` 打开。三章加结语：

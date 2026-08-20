@@ -88,6 +88,7 @@ python3 taskgen/test_eval_suite.py
 | GL | `GL` | Muse Glimmer 30B，未在本项目训练 |
 | GL-A | `GLA` | 在 GL 上拒绝采样 SFT（`rl/run_gl_harvest.sh` 采数据） |
 | GL-B | `GLB` | 在 GL-A 的通过解上自蒸馏 |
+| GL-C | `GLC` | 在 GL-B 上再做一轮 SFT，补回 activation / elementwise |
 
 ## 怎么跑
 
