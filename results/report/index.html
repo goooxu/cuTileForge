@@ -286,26 +286,119 @@
     <h3>1.1 题目从哪来</h3>
 
     <p>
-      题目取自第二套封存题集（<code>level 99 / 88 / 84</code>，共 770 道）。这套题生成时就没有给任何模型看过，
-      也没有参与过任何训练或选数。评测用的是它们变异后的冻结副本，装成 <code>level 60</code>。
+      这 909 道题不是抽来的，是一条链的末端。整条链是：
+      <strong>训练用的任务生成器 → 用它造一套从未给模型看过的封存题集（770 道）→
+      对封存题集做固定变异，得到评测副本 → 给其中 139 张图另配大张量副本 → 909 道</strong>。
+      下面把每一环讲清楚，包括为什么会有「第二套」封存题集，以及它有哪些不干净的可能性被排除掉了。
+    </p>
+
+    <h4>第一环：题目是机器造的，不是人写的</h4>
+
+    <p>
+      项目的训练语料一直靠自产：<code>taskgen/</code> 下的程序化 builder 按「算子族 × 规模阶梯」组合出
+      KernelBench 格式的 <code>Model</code>，每一个都要能真的跑起来（<code>validate()</code> 执行一遍，
+      跑不通就丢）。<strong>阶梯（tier）只控制规模和张量 rank，不换算子</strong>：
+      同一个卷积在 tier 2 是 <code>(2, 4, 16, 16)</code>，在 tier 5 是 <code>(16, 64, 512, 512)</code>。
+      这么设是因为「模型在 112×64×512×512 上写不出来的算子，在 2×4×16×16 上也许写得出来」，
+      拒绝采样就有了起点。
+    </p>
+
+    <p>
+      但 builder 的多样性是有上限的——600 道生成题只对应 151 种不同的算子形态，再往上加只是同一模式的形状变体。
+      所以另一半题目<strong>让模型自己写</strong>：给它一个算子族和一个规模档，让它写一个自洽的 PyTorch 模块，
+      同样靠执行来验收。<strong>这两条路上都没有人写的参考实现</strong>——题面是程序或模型写的、由运行验证，
+      解法是模型写的、由编译器和数值比对验证。
+    </p>
+
+    <h4>第二环：封存 770 道，生成时就不给任何模型看</h4>
+
+    <p>
+      评测题的出处是第二套封存题集，三个 level 共 770 道，种子固定、原文一直留着
+      （builder 后面还会改，改了同一个种子就不是同一批题）：
     </p>
 
     <table>
       <thead>
-        <tr><th>出处</th><th class="num">题数</th><th>怎么来的</th></tr>
+        <tr><th>出处</th><th class="num">题数</th><th>怎么来的</th><th>族构成</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>level 99</code></td><td class="num">400</td><td>程序化 builder，全类别 curriculum</td></tr>
-        <tr><td><code>level 88</code></td><td class="num">250</td><td>模型自撰图，经沙箱验证</td></tr>
-        <tr><td><code>level 84</code></td><td class="num">120</td><td>程序化，专补激活 / 损失 / 归约</td></tr>
+        <tr>
+          <td><code>level 99</code></td><td class="num">400</td>
+          <td>程序化 builder，全类别 curriculum</td>
+          <td>conv 111、elementwise 73、matmul 72、norm 71、activation 34、pool 29、reduction 8、loss 2</td>
+        </tr>
+        <tr>
+          <td><code>level 88</code></td><td class="num">250</td>
+          <td>模型自撰图，经沙箱执行验证</td>
+          <td>conv 98、pool 46、elementwise 32、norm 31、matmul 30、reduction 13</td>
+        </tr>
+        <tr>
+          <td><code>level 84</code></td><td class="num">120</td>
+          <td>程序化，专补激活 / 损失 / 归约</td>
+          <td>activation 116、loss 3、reduction 1</td>
+        </tr>
       </tbody>
     </table>
 
     <p>
-      <strong>干净性是查过的，不是假设的。</strong> 按规范化哈希（去注释、去空行、压空格）比对了全部十三个已用
-      level（85、86、87、89、90–96 训练池，以及 97、98 第一套 held-out），结论是 770 道内部无重复、
-      与 3899 道已用任务无交集；生成时另外挡掉了约 1950 个逐字重复的候选。
-      这一点值得强调：<strong>换个随机种子不构成 held-out</strong>——第一套题集量过，那样做重复率高达 80%。
+      <strong>这 770 道从生成那天起就没参与过任何训练、任何选数、任何调参</strong>，
+      原文也从未按原样跑过任何模型。
+    </p>
+
+    <div class="callout warn">
+    <p>
+      <strong>一个必须说明的来路：level 88 那 250 道是 Next-Q 写的</strong>，而 Next-Q 正是被测模型之一。
+      读数上它没有因此占到便宜：在自己写的这 250 道上，Next-Q 解出 204，
+      同门的 Next-M 是 205，而<strong>另一个基座上训出来的 GL-B / GL-C 是 211</strong>。
+      出题的模型在自己的题上不是最强的那个。按出处分解的完整表在
+      <code>results/REPORT_EVAL_SUITE.md</code>，由 <code>runs/*_l60_verified.jsonl</code> 复核。
+    </p>
+    </div>
+
+    <h4>第三环：为什么是「第二套」</h4>
+
+    <p>
+      第一套封存题集（<code>level 97 / 98</code>，500 道）造于项目第九阶段，
+      <strong>那时激活和损失的 builder 还不存在</strong>，链尾激活这种形态也还没有。
+      结果是它里面<strong>一道独立激活题都没有、一道损失题都没有</strong>——
+      而第十一到十七阶段的训练改动几乎全在这些地方，等于恰好覆盖不到要量的东西。
+      它本身也已经在第十一阶段开封用过一次。
+    </p>
+    <p>
+      所以第二套是重造的，激活从 0 补到 150 道。经验也顺手固化成了工具：
+      <strong>先看类别构成再封存</strong>（<code>taskgen/level_categories.py</code>），
+      比事后发现覆盖不到便宜得多。
+    </p>
+
+    <h4>第四环：干净性是查过的，不是假设的</h4>
+
+    <p>
+      按规范化哈希（去注释、去空行、压空格）比对了<strong>全部十三个已用 level</strong>——
+      85、86、87、89、90–96 是训练池，97、98 是第一套 held-out，去重后共 3899 道。
+      结论是 770 道内部无重复、与这 3899 道无交集；生成过程中另外挡掉了约 1950 个逐字重复的候选。
+    </p>
+    <p>
+      这一步不是形式主义。第一套题集量过一个值得记住的数字：生成 <code>level 97</code> 时，
+      1481 个候选里有 <strong>1181 个（80%）与训练集逐字重复</strong>——因为形状阶梯短，
+      同一个算子在同一个形状上反复出现。<strong>换个随机种子再生成一批，得到的不是 held-out，
+      是 80% 的训练集副本。</strong>
+    </p>
+
+    <h4>第五环：770 → 909</h4>
+
+    <p>
+      封存题集的原文不直接用来评测。评测装的是按固定规则变异过的冻结副本
+      （<code>level 60</code>，见 1.2），再从其中 139 张 <code>(batch_size, dim)</code> 的
+      activation / elementwise 图另配大张量副本，构成吞吐轨（见 1.3）：
+      <strong>770 + 139 = 909</strong>。这 139 道来自 <code>level 99</code> 的 92 道和
+      <code>level 84</code> 的 47 道；<code>level 88</code> 一道都没有——模型自撰的逐点题写的是
+      transformer / 卷积那种 3D–5D 形状，放大之后量到的不再只是带宽。
+      softmax 族同样被排除在吞吐轨之外（见 1.3）。
+    </p>
+    <p>
+      代价要写明：<strong>这套图现在是常设尺子，就不再是「只开一次、查是否过拟合」的检查了。</strong>
+      它已经被反复消耗，判别力只对「没在它上面做过选型」的模型成立——
+      而这条纪律靠的是流程（评测不参与选 checkpoint），不是靠题目本身。
     </p>
 
     <h3>1.2 变异：让“背过原题”拿不到分</h3>
