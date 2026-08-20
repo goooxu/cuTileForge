@@ -60,34 +60,18 @@ sys.path.insert(0, os.path.join(HERE, "..", "train"))
 sys.path.insert(0, os.path.join(HERE, "..", "repair"))
 sys.path.insert(0, HERE)
 
-from lora_config import (ATTENTION_ONLY_TARGETS, freeze_experts,  # noqa: E402
-                         logit_transform)
+from lora_config import (family_of, freeze_experts,  # noqa: E402
+                         load_base_model, logit_transform, targets_for,
+                         validate_targets)
 from repair_loop import Chat, extract_code, sample_batch  # noqa: E402
 from reward import score_rollouts, summarise  # noqa: E402
-from train_lora import unwrap  # noqa: E402
+from rollout_tokens import build_sequence  # noqa: E402
+from train_lora import TURN_END, unwrap  # noqa: E402
 
 
-def build_sequence(tok, prompt: str, completion: str, max_len: int):
-    """Tokenise a rollout the way training saw it, and mark the completion.
-
-    Must match CompletionOnlyDataset: the same chat template, the same eos, and
-    truncation from the front of the prompt. A mismatch here would have the model
-    scoring token positions it never actually generated.
-    """
-    from train_lora import CompletionOnlyDataset
-
-    prompt_ids = CompletionOnlyDataset._as_ids(tok.apply_chat_template(
-        [{"role": "user", "content": prompt}],
-        add_generation_prompt=True, tokenize=True))
-    completion_ids = tok(completion + tok.eos_token,
-                         add_special_tokens=False)["input_ids"]
-
-    ids = prompt_ids + completion_ids
-    mask = [0] * len(prompt_ids) + [1] * len(completion_ids)
-    if len(ids) > max_len:
-        overflow = len(ids) - max_len
-        ids, mask = ids[overflow:], mask[overflow:]
-    return ids, mask
+# Eval suite and the two held-out tracks. Training on these would leak the
+# published numbers; GRPO's frontier has to come from the training levels.
+HELDOUT_LEVELS = frozenset({60, 84, 88, 97, 98, 99})
 
 
 def completion_logprobs(model, ids, comp_mask, grad: bool):
@@ -163,12 +147,13 @@ def main() -> None:
                          "clipping starts doing its job.")
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--clip-eps", type=float, default=0.2)
-    ap.add_argument("--max-len", type=int, default=8192,
-                    help="Sized for the concepts tier. The full reference tier "
-                         "needs ~17k and costs four times as much per step.")
+    ap.add_argument("--max-len", type=int, default=20480,
+                    help="Drop rollouts longer than this (prompt + sampled "
+                         "text). 20480 matches Glimmer SFT; front-truncation "
+                         "would strip the task description.")
     ap.add_argument("--gradient-checkpointing", action="store_true",
-                    help="Off by default: at 8k it is not needed, and it makes "
-                         "each step markedly slower.")
+                    help="Needed at max-len 20480; off by default because it "
+                         "makes each step slower.")
     ap.add_argument("--kl-coef", type=float, default=0.05,
                     help="Weight on KL to the adapter-off reference policy. Set "
                          "to 0 only if you want to reproduce the collapse.")
@@ -187,7 +172,7 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--top-p", type=float, default=0.95)
     ap.add_argument("--top-k", type=int, default=40)
-    ap.add_argument("--max-tokens", type=int, default=6144)
+    ap.add_argument("--max-tokens", type=int, default=32768)
     ap.add_argument("--concurrency", type=int, default=96)
     ap.add_argument("--verify-workers", type=int, default=8)
     ap.add_argument("--gpus", type=int, default=4)
@@ -195,6 +180,10 @@ def main() -> None:
                     help="Skip timing; correctness-only reward.")
     ap.add_argument("--resume", default=None,
                     help="Checkpoint directory from an earlier invocation.")
+    ap.add_argument("--reasoning-strength", default=None,
+                    help="Passed to the chat template so the training prefix "
+                         "matches serving (Muse Glimmer writes it into the "
+                         "system block).")
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -207,12 +196,15 @@ def main() -> None:
               % (workers, args.gpus))
         workers = args.gpus
 
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoTokenizer
     from peft import PeftModel
     from kernelbench.dataset import construct_kernelbench_dataset
     from kernelbench.prompt_constructor_toml import get_custom_prompt
 
     frontier = json.load(open(args.frontier))
+    leaked = sorted({t["level"] for t in frontier if t["level"] in HELDOUT_LEVELS})
+    if leaked:
+        raise SystemExit("frontier contains held-out levels %s" % leaked)
     print("frontier: %d tasks" % len(frontier))
 
     # Prompts are rebuilt rather than stored, so they stay identical to what
@@ -230,17 +222,23 @@ def main() -> None:
             option="one_shot", precision="fp32")
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    family = family_of(AutoConfig.from_pretrained(args.model,
+                                                  trust_remote_code=True))
+    chat_kwargs = ({"reasoning_strength": args.reasoning_strength}
+                   if args.reasoning_strength else {})
+    turn_end = TURN_END.get(family)
 
     print("loading policy ...")
     t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+    model = load_base_model(args.model, device_map="auto", dtype=torch.bfloat16)
     if args.fresh_lora:
         from peft import LoraConfig, get_peft_model
+        targets = targets_for(model, "attention_only")
+        validate_targets(model, targets)
         model = get_peft_model(model, LoraConfig(
             r=args.lora_r, lora_alpha=args.lora_r * 2, lora_dropout=0.0,
             bias="none", task_type="CAUSAL_LM",
-            target_modules=list(ATTENTION_ONLY_TARGETS)))
+            target_modules=targets))
     else:
         if not args.adapter:
             raise SystemExit("pass --adapter or --fresh-lora")
@@ -366,12 +364,37 @@ def main() -> None:
         # --- policy gradient ----------------------------------------------
         t0 = time.time()
         seqs = []
+        n_overflow = 0
         for j in train_idx:
-            ids, mask = build_sequence(tok, prompts[owner[j]], items[j][1],
-                                       args.max_len)
-            if sum(mask) < 2:
+            # Score the sampled text, not extract_code(text). The kernel fence
+            # is what the reward saw; the tokens the policy emitted include the
+            # reasoning channel.
+            sampled = texts[j]
+            if sampled.startswith("__ERROR__"):
+                continue
+            ids, mask = build_sequence(
+                tok, prompts[owner[j]], sampled, args.max_len,
+                chat_kwargs=chat_kwargs, turn_end=turn_end)
+            if ids is None or sum(mask) < 2:
+                n_overflow += 1
                 continue
             seqs.append((j, ids, mask))
+
+        if not seqs:
+            rec = {"iteration": it, "prompts": len(keys),
+                   "rollouts": len(owner), "live_groups": n_live_groups,
+                   "trained_on": 0, "skipped": True, "overflow": n_overflow,
+                   "mean_reward": round(stats["mean_reward"], 4),
+                   "pass_rate": round(stats["pass_rate"], 4),
+                   "purity_rate": round(stats["purity_rate"], 4),
+                   "fast_rate": round(stats["fast_rate"], 4),
+                   "no_code_rate": round(stats["no_code_rate"], 4)}
+            history.append(rec)
+            with open(hist_path, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+            print("iter %d: %d live rollouts overflowed max_len=%d; skipping"
+                  % (it, n_overflow, args.max_len))
+            continue
 
         n_clipped = n_tok = 0
         losses, kls = [], []
@@ -443,6 +466,7 @@ def main() -> None:
             "iteration": it,
             "prompts": len(keys), "rollouts": len(owner),
             "live_groups": n_live_groups, "trained_on": len(seqs),
+            "overflow": n_overflow,
             "mean_reward": round(stats["mean_reward"], 4),
             "pass_rate": round(stats["pass_rate"], 4),
             "purity_rate": round(stats["purity_rate"], 4),

@@ -2489,3 +2489,31 @@ GL-C 吞吐 twin 计时大面积 OOM：不是单条 kernel 要 180 GB，是每�
   jsonl 已齐时不重做正确性，避免把已有 speedup 写掉。
 
 正确性数字不动。GL-C 缺的 twin 计时按这个 harness 续。
+
+---
+
+# GL-C 上跑 GRPO（可靠性，不是速度）
+
+GL-C 覆盖已经超过 Next-Q（680 vs 634，p@4 88.3% vs 82.3%），缺口是稳定性：
+four-of-four 312 vs 403，还有 92 道只有 1/4，所以 p@1 66.8% vs 69.4%。正确性
+SFT 推不动 `kernel_ms`。下一轮是 GRPO，起点是 GL-C 不是 GL-B（否则 twin
+恢复会被吐回去）。Frontier 只来自训练层 86/87/92/93，评测 60 和 held-out
+84/88/99/97/98 一律拒绝。
+
+Qwen 那套 GRPO 直接套到 Glimmer 上会练到错误的 token：
+
+1. `build_sequence` 以前对 `extract_code(text)` 算 loss，推理通道整段被丢掉；
+   超长还从 prompt 头上截断。现在对采样原文算，超 `max_len=20480` 就丢掉这一条。
+2. `Chat.complete` 只读 `content`。parser 开着时 thinking 在 `reasoning_content`，
+   看起来像没写代码。harvest / GRPO 关 parser，但还是要 fallback；并且
+   `KEEP_SPECIAL_TOKENS=1` 才能留下 `to=self ... <|eom|>`。
+3. `max_tokens` 默认 6144，评测和 harvest 是 32768。
+
+加载路径也要跟 SFT 一致：`load_base_model`（不是 `AutoModelForCausalLM`）、
+attention-only 的 Glimmer regex、chat template 带 `reasoning_strength=xhigh`、
+turn end `<|eot|>`。服务端用 `muse-glimmer` 镜像、`--generation-config auto`、
+不开 reasoning parser、`GPU_UTIL=0.45`（vLLM 和 trainer 共用卡）。
+
+`rl/run_gl_grpo.sh` 按层筛 frontier 再 `supervise_grpo.sh`；看门狗
+`rl/keep_grpo_alive.sh` 跑在工作区这台机器上。GL-C 计时仍在另一台评测盒上，
+互不碰。

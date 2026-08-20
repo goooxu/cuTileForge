@@ -38,6 +38,55 @@ def extract_code(text: str):
     return extract_best_code(text, ["python", "cpp"])
 
 
+def choice_text(choice):
+    """Assistant text from a chat choice.
+
+    A reasoning parser (eval protocol) moves the thinking channel into
+    `reasoning_content` and can leave `content` empty. Training harvests and
+    GRPO turn the parser off, but Chat still has to fall back: an empty
+    content with a full reasoning field used to look like 'no code' and the
+    policy got a zero for a complete sample.
+    """
+    msg = getattr(choice, "message", choice)
+    content = getattr(msg, "content", None) or ""
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict):
+                parts.append(p.get("text") or "")
+            else:
+                parts.append(getattr(p, "text", None) or "")
+        content = "".join(parts)
+    if str(content).strip():
+        return content
+    return getattr(msg, "reasoning_content", None) or ""
+
+
+def chat_extra_body(top_k):
+    """vLLM extras the OpenAI schema does not name.
+
+    Must match kernelbench.utils.query_server: reasoning_strength goes into
+    the chat template, and skip_special_tokens=False keeps Glimmer's
+    to=self ... <|eom|> markers so the extractor can see a finished trace.
+    """
+    extra = {}
+    if top_k and top_k > 0:
+        extra["top_k"] = top_k
+    thinking = os.environ.get("ENABLE_THINKING", "").strip()
+    if thinking in ("0", "1"):
+        extra.setdefault("chat_template_kwargs", {})["enable_thinking"] = (
+            thinking == "1")
+    effort = os.environ.get("REASONING_EFFORT", "").strip()
+    if effort:
+        extra["reasoning_effort"] = effort
+    strength = os.environ.get("REASONING_STRENGTH", "").strip()
+    if strength:
+        extra.setdefault("chat_template_kwargs", {})["reasoning_strength"] = strength
+    if os.environ.get("KEEP_SPECIAL_TOKENS", "").strip() in ("1", "true", "yes"):
+        extra["skip_special_tokens"] = False
+    return extra
+
+
 class Chat:
     """Thin OpenAI-compatible client for the locally served model."""
 
@@ -47,13 +96,16 @@ class Chat:
         self.client = OpenAI(api_key="local-no-auth", base_url=base_url,
                              timeout=1800, max_retries=2)
         self.model = model
+        extra = chat_extra_body(top_k)
         self.kw = dict(temperature=temperature, top_p=top_p,
-                       max_tokens=max_tokens, extra_body={"top_k": top_k})
+                       max_tokens=max_tokens)
+        if extra:
+            self.kw["extra_body"] = extra
 
     def complete(self, messages):
         r = self.client.chat.completions.create(
             model=self.model, messages=messages, **self.kw)
-        return r.choices[0].message.content or ""
+        return choice_text(r.choices[0])
 
 
 def sample_batch(chat: Chat, message_lists, concurrency: int):
@@ -84,7 +136,7 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--top-p", type=float, default=0.95)
     ap.add_argument("--top-k", type=int, default=40)
-    ap.add_argument("--max-tokens", type=int, default=6144)
+    ap.add_argument("--max-tokens", type=int, default=32768)
     ap.add_argument("--concurrency", type=int, default=128)
     ap.add_argument("--verify-workers", type=int, default=8)
     ap.add_argument("--gpus", type=int, default=4)

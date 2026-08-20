@@ -32,6 +32,8 @@ from repair_loop import Chat, extract_code, sample_batch  # noqa: E402
 from reward import reward_for  # noqa: E402
 from worker import VerifierPool  # noqa: E402
 
+HELDOUT_LEVELS = frozenset({60, 84, 88, 97, 98, 99})
+
 
 def in_speed_band(best, min_speedup, max_speedup) -> bool:
     """Keep tasks whose best passing sample sits strictly inside (min, max).
@@ -92,7 +94,7 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--top-p", type=float, default=0.95)
     ap.add_argument("--top-k", type=int, default=40)
-    ap.add_argument("--max-tokens", type=int, default=6144)
+    ap.add_argument("--max-tokens", type=int, default=32768)
     ap.add_argument("--concurrency", type=int, default=96)
     ap.add_argument("--verify-workers", type=int, default=8)
     ap.add_argument("--gpus", type=int, default=4)
@@ -127,6 +129,11 @@ def main() -> None:
                          "far better than a k=6 screen would.")
     args = ap.parse_args()
 
+    levels = [int(x) for x in args.levels.split(",")]
+    leaked = [lv for lv in levels if lv in HELDOUT_LEVELS]
+    if leaked:
+        raise SystemExit("refusing held-out levels %s" % leaked)
+
     if ((args.max_speedup is not None or args.min_speedup is not None)
             and not args.from_run):
         raise SystemExit(
@@ -137,7 +144,7 @@ def main() -> None:
     from kernelbench.prompt_constructor_toml import get_custom_prompt
 
     tasks = []
-    for level in [int(x) for x in args.levels.split(",")]:
+    for level in levels:
         dataset = construct_kernelbench_dataset(level)
         pids = dataset.get_problem_ids()
         if args.limit_per_level:

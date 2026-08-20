@@ -40,7 +40,9 @@ serve() {
     local model="$1"
     docker rm -f qwen-vllm >/dev/null 2>&1
     CUTILE_WS="$WS" MODEL="$model" MOUNTS="-v $SCRATCH:$SCRATCH:ro" \
-        GPU_UTIL="$GPU_UTIL" "$KB/scripts/serve_qwen.sh" >/dev/null 2>&1
+        GPU_UTIL="$GPU_UTIL" \
+        VLLM_IMAGE="${VLLM_IMAGE:-}" EXTRA_ARGS="${EXTRA_ARGS:-}" \
+        "$KB/scripts/serve_qwen.sh" >/dev/null 2>&1
     for _ in $(seq 1 40); do
         if curl -s --max-time 3 http://localhost:8000/v1/models 2>/dev/null \
                 | grep -q Qwen3; then
@@ -99,7 +101,7 @@ while [ "$done_iters" -lt "$TOTAL" ]; do
             --prompt-tier $TIER --frontier $FRONTIER --out $OUT \
             --iterations $n --lr ${RL_LR:-3e-6} --kl-coef ${RL_KL:-0.05} \
             --temperature ${RL_TEMP:-1.0} --top-p ${RL_TOP_P:-0.95} \
-            ${resume[*]}" >/dev/null || exit 1
+            ${resume[*]} ${GRPO_EXTRA:-}" >/dev/null || exit 1
     while docker ps --filter name=grpo --format '{{.Names}}' | grep -q grpo; do
         sleep 60
     done
