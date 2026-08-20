@@ -2598,3 +2598,13 @@ history，两台不会抢同一把 flock。结束后表 A 评更好的那条，�
 训练盒第一窗 10 轮全是 skip：父进程先跑了 on/off logprob 探测，再 spawn
 验证 worker，新进程看不到 GPU。探测挪到池起来之后；全是 inconclusive 就退出，
 不把 skip 记成完成轮次。
+
+评测盒后来验证通了，backward 在 GPU 3 上 OOM（vLLM ~91 GB + policy ~89 GB）。
+改成 0/1 卡 TP=2 给 vLLM，2/3 卡给训练和验证。训练盒节点作业没了，先只在
+评测盒上跑 seed=1。
+
+`--gpus device=0,1` 会被 nvidia-container-toolkit 拒掉（Count 和 DeviceIDs
+一起设），容器停在 created。改成带引号的 `"device=0,1"`。看门狗用内联
+`python -c` 扫远端 /proc，引号一坏就永远看不见 `supervise_grpo.sh`（而且
+`run_gl_grpo.sh` 会 exec 掉），于是把正在起来的 vLLM 当残骸删掉。改成
+`rl/proc_has.py`，启动后立刻写 remote pid。

@@ -76,40 +76,14 @@ sys.exit(0 if n >= int(sys.argv[2]) else 1)
 PY
 }
 
-# True if a remote process cmdline contains $1. Skips the checker itself:
-# the needle is also on this python's argv, so matching every /proc would
-# always succeed. Do not pkill -f.
+# True if a remote process cmdline contains $1. Skips the checker itself
+# (the needle is on that python's argv). Do not pkill -f.
 remote_has_cmd() {
-    remote "python3 -c $(printf %q "import os,sys
-needle=sys.argv[1]
-me=str(os.getpid())
-for pid in os.listdir('/proc'):
-    if pid == me or not pid.isdigit():
-        continue
-    try:
-        cmd=open('/proc/%s/cmdline'%pid,'rb').read().replace(b'\\0',b' ').decode()
-    except OSError:
-        continue
-    if needle in cmd:
-        sys.exit(0)
-sys.exit(1)") $(printf %q "$1")" >/dev/null 2>&1
+    remote "python3 $(printf %q "$FORGE/rl/proc_has.py") $(printf %q "$1")" >/dev/null 2>&1
 }
 
 remote_cmd_pid() {
-    remote "python3 -c $(printf %q "import os,sys
-needle=sys.argv[1]
-me=str(os.getpid())
-for pid in os.listdir('/proc'):
-    if pid == me or not pid.isdigit():
-        continue
-    try:
-        cmd=open('/proc/%s/cmdline'%pid,'rb').read().replace(b'\\0',b' ').decode()
-    except OSError:
-        continue
-    if needle in cmd:
-        print(pid)
-        sys.exit(0)
-sys.exit(1)") $(printf %q "$1")" 2>/dev/null
+    remote "python3 $(printf %q "$FORGE/rl/proc_has.py") $(printf %q "$1")" 2>/dev/null
 }
 
 job_running() {
@@ -120,6 +94,7 @@ job_running() {
     echo "$names" | grep -qx rlmerge && return 0
     remote_has_cmd "run_gl_grpo.sh" && return 0
     remote_has_cmd "supervise_grpo.sh" && return 0
+    remote_has_cmd "refresh_loop.sh" && return 0
     if [[ -f "$REMOTE_PIDFILE" ]]; then
         rpid="$(cat "$REMOTE_PIDFILE")"
         if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "test -d /proc/$rpid"; then
@@ -130,7 +105,7 @@ job_running() {
 }
 
 leftover_vllm() {
-    remote "docker ps --format '{{.Names}}' | grep -qx qwen-vllm" >/dev/null 2>&1
+    remote "docker ps -a --format '{{.Names}}' | grep -qx qwen-vllm" >/dev/null 2>&1
 }
 
 unstick() {

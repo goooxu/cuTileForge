@@ -71,8 +71,14 @@ args=(--user "$(id -u):$(id -g)" --ipc=host --network host
 [[ ${#extra_mounts[@]} -gt 0 ]] && args+=("${extra_mounts[@]}")
 
 # GPUS=none skips GPU passthrough entirely, for CPU-only steps such as generation
-# (which just talks to the vLLM server over HTTP).
-[[ "$GPUS" != "none" ]] && args+=(--gpus "$GPUS")
+# (which just talks to the vLLM server over HTTP). device=N,M must be the
+# quoted docker form; see overlay/scripts/serve_qwen.sh.
+if [[ "$GPUS" != "none" ]]; then
+    case "$GPUS" in
+        device=*) args+=(--gpus "$(printf '"%s"' "$GPUS")") ;;
+        *) args+=(--gpus "$GPUS") ;;
+    esac
+fi
 [[ -n "$NAME" ]] && args+=(--name "$NAME")
 
 # Detached runs keep their logs (docker logs) instead of being auto-removed.

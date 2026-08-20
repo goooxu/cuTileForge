@@ -32,6 +32,9 @@ KB="$FORGE/kernelbench"
 SCRATCH="${RL_SCRATCH:-/raid/tmp/gemsg-cutile}"
 TIER="${PROMPT_TIER:-cutile_concepts}"
 GPU_UTIL="${GPU_UTIL:-0.55}"
+TENSOR_PARALLEL="${TENSOR_PARALLEL:-4}"
+VLLM_GPUS="${VLLM_GPUS:-all}"
+TRAIN_GPUS="${TRAIN_GPUS:-all}"
 
 TRAIN_IMAGE="cutile-train:latest"
 TRAIN_MOUNTS="-v $SCRATCH:$SCRATCH"
@@ -63,7 +66,8 @@ serve() {
     # (cudaErrorNotPermitted). The frontier screen waits 20s; do the same.
     sleep 20
     CUTILE_WS="$WS" MODEL="$model" MOUNTS="-v $SCRATCH:$SCRATCH:ro" \
-        GPU_UTIL="$GPU_UTIL" \
+        GPU_UTIL="$GPU_UTIL" TENSOR_PARALLEL="$TENSOR_PARALLEL" \
+        VLLM_GPUS="$VLLM_GPUS" \
         VLLM_IMAGE="${VLLM_IMAGE:-}" EXTRA_ARGS="${EXTRA_ARGS:-}" \
         "$KB/scripts/serve_qwen.sh" >/dev/null 2>&1
     for _ in $(seq 1 40); do
@@ -109,7 +113,7 @@ while [ "$done_iters" -lt "$TOTAL" ]; do
 
     echo "=== iterations $done_iters..$(( done_iters + n - 1 )) ==="
     docker rm -f grpo >/dev/null 2>&1
-    CUTILE_WS="$WS" IMAGE="$TRAIN_IMAGE" MOUNTS="$TRAIN_MOUNTS" GPUS=all \
+    CUTILE_WS="$WS" IMAGE="$TRAIN_IMAGE" MOUNTS="$TRAIN_MOUNTS" GPUS="$TRAIN_GPUS" \
         DETACH=1 NAME=grpo "$KB/scripts/in_container.sh" \
         "cd /ws/cuTileForge && python3 -u rl/grpo.py --model $BASE --fresh-lora \
             --prompt-tier $TIER --frontier $FRONTIER --out $OUT \

@@ -24,6 +24,17 @@ PORT="${PORT:-8000}"
 # of context is enough and keeps far more KV cache than the native 262k.
 MAX_LEN="${MAX_LEN:-40960}"
 TENSOR_PARALLEL="${TENSOR_PARALLEL:-4}"
+# "all" or a docker device list such as device=0,1 so the trainer can own the
+# remaining cards. device=N,M must be passed as the quoted form
+# --gpus "device=N,M"; the unquoted form sets Count and DeviceIDs together
+# and nvidia-container-toolkit leaves the container in created/exit 128.
+VLLM_GPUS="${VLLM_GPUS:-all}"
+docker_gpus_flag() {
+    case "$1" in
+        device=*) printf '"%s"' "$1" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
 
 # Fraction of each GPU vLLM may claim. 0.90 suits a phase that owns the machine.
 # Anything sharing the GPUs concurrently -- the repair loop's verifier workers --
@@ -52,7 +63,7 @@ docker rm -f qwen-vllm 2>/dev/null || true
 # The official muse-glimmer image ENTRYPOINT is `vllm serve`; the python -m
 # module path is not what that image is built around.
 common_args=(
-    --gpus all --ipc=host --network host
+    --gpus "$(docker_gpus_flag "$VLLM_GPUS")" --ipc=host --network host
     -e HOME=/tmp
     -e HF_HOME=/tmp/hf
     -e VLLM_CACHE_ROOT=/tmp/vllm-cache

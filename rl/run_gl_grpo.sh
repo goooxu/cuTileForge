@@ -52,11 +52,14 @@ export VLLM_IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:muse-glimmer}"
 export EXTRA_ARGS="${EXTRA_ARGS:---generation-config auto}"
 export REASONING_STRENGTH="${REASONING_STRENGTH:-xhigh}"
 export KEEP_SPECIAL_TOKENS=1
-export GPU_UTIL="${GPU_UTIL:-0.45}"
+export GPU_UTIL="${GPU_UTIL:-0.90}"
+export TENSOR_PARALLEL="${TENSOR_PARALLEL:-2}"
+export VLLM_GPUS="${VLLM_GPUS:-device=0,1}"
+export TRAIN_GPUS="${TRAIN_GPUS:-device=2,3}"
 export PROMPT_TIER="${PROMPT_TIER:-cutile_concepts}"
-# refresh_loop already passes --prompt-tier; do not repeat it here (argparse
-# would still accept the last value, but the flag list stays one of each).
-export GRPO_EXTRA="${GRPO_EXTRA:---max-tokens 32768 --max-len 20480 --gradient-checkpointing --reasoning-strength xhigh --no-speed --concurrency 32}"
+# vLLM owns two cards; the trainer/verifier own the other two. Sharing all
+# four made the backward pass OOM (vLLM ~91 GB + policy ~89 GB).
+export GRPO_EXTRA="${GRPO_EXTRA:---max-tokens 32768 --max-len 20480 --gradient-checkpointing --reasoning-strength xhigh --no-speed --concurrency 32 --gpus 2 --verify-workers 4}"
 
 mkdir -p "$WS/runs"
 exec 9>"$LOCK"
@@ -64,6 +67,9 @@ if ! flock -n 9; then
     echo "run_gl_grpo.sh already holds $LOCK; exiting"
     exit 0
 fi
+# keep_grpo_alive looks this up; run_gl_grpo execs into supervise so the
+# original script name disappears from /proc cmdline.
+echo $$ > "$WS/runs/.${OUT_NAME}.remote_pid"
 
 if ! [[ "$VLLM_IMAGE" == *muse-glimmer* ]]; then
     echo "refusing VLLM_IMAGE=$VLLM_IMAGE (need muse-glimmer for GL-C)" >&2
