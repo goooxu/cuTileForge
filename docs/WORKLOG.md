@@ -2619,3 +2619,9 @@ seed=0 第 0 轮 backward 通了，但 KL=13199（loss 几乎是 kl_coef×KL）�
 上对不上。改成 `use_reentrant=False`，真序列上再测一次 identity，KL>1 就拒写
 adapter。看门狗不再 `docker rm` 活着的 vLLM/grpo；window 没跑满不 merge。
 那一颗 KL=13199 的 adapter 丢掉，两边从 GL-C 重新开。
+
+`use_reentrant=False` 不够：短序列探测仍是 L1=0，真序列 8637 token 上
+`disable_adapter` L1=0.34，拒写。peft 关掉 adapter 走的是纯 `F.linear(x, W)`，
+fresh LoRA 走的是 `W x + B(A(x))*scaling`（B=0 时多一次加零）。参考 logprob
+改成把 scaling 置 0，保持同一条计算路径。vLLM 启动期若容器已死就重试，不再
+对着空端口轮询 20 分钟。

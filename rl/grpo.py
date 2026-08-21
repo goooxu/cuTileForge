@@ -27,9 +27,14 @@ because the ratio is then identically 1 and the clip never binds.
 It is free because of --fresh-lora. An earlier version of this note argued a
 reference policy would either undo the supervised rounds or cost another 27.5 GB
 of weights. Both are wrong once the adapter sits on top of already-merged
-supervised weights: switching the adapter off *is* the supervised policy, so
-peft's disable_adapter() yields exact reference log-probabilities at no extra
-memory, and anchoring to it pulls toward the SFT model rather than away from it.
+supervised weights: a zero LoRA contribution *is* the supervised policy, so the
+reference log-probabilities cost one extra forward rather than a second copy of
+the weights, and anchoring to it pulls toward the SFT model rather than away
+from it. peft's disable_adapter() is the wrong way to get that zero: it skips
+the LoRA add entirely, which on this Glimmer stack is a different kernel path
+from B=0, and the two disagree by ~0.3 nats/token on 8k sequences -- enough for
+the k3 KL estimator to read thousands. Zeroing the LoRA scaling keeps the same
+path the policy uses.
 
 Only the attention and DeltaNet adapters are trained. The first run of this
 script did that by loading an adapter trained with the full target set and
@@ -53,6 +58,7 @@ import os
 import random
 import sys
 import time
+from contextlib import contextmanager
 
 import torch
 
@@ -122,8 +128,62 @@ def group_advantages(rewards):
     return [0.0 if r is None else (r - mean) / std for r in rewards]
 
 
+@contextmanager
+def adapter_kept_at_base(model):
+    """Reference forwards through the LoRA compute path with contribution 0.
+
+    disable_adapter() takes the `if self.disable_adapters: return F.linear(x, W)`
+    branch. A fresh LoRA takes `F.linear(x, W) + B(A(x)) * scaling` with B=0.
+    Those are not the same kernels, and Glimmer's residual stream accumulates
+    the difference over long sequences. Setting scaling to 0 keeps the add.
+    """
+    restored = []
+    found = 0
+    for m in model.modules():
+        if not (hasattr(m, "lora_A") or hasattr(m, "lora_embedding_A")):
+            continue
+        found += 1
+        scaling = getattr(m, "scaling", None)
+        if isinstance(scaling, dict):
+            prev = dict(scaling)
+
+            def _restore_dict(sc=scaling, p=prev):
+                sc.clear()
+                sc.update(p)
+
+            restored.append(_restore_dict)
+            for k in list(scaling):
+                v = scaling[k]
+                scaling[k] = v * 0 if hasattr(v, "__mul__") else 0.0
+            continue
+        if scaling is not None:
+            def _restore_attr(mod=m, p=scaling):
+                mod.scaling = p
+
+            restored.append(_restore_attr)
+            m.scaling = scaling * 0 if hasattr(scaling, "__mul__") else 0.0
+            continue
+        for name, p in m.named_parameters(recurse=False):
+            if "lora_B" not in name and "lora_embedding_B" not in name:
+                continue
+            data = p.data.detach().clone()
+
+            def _restore_B(param=p, d=data):
+                param.data.copy_(d)
+
+            restored.append(_restore_B)
+            p.data.zero_()
+    if found == 0:
+        raise RuntimeError("adapter_kept_at_base found no LoRA layers")
+    try:
+        yield
+    finally:
+        for fn in restored:
+            fn()
+
+
 def adapter_logprob_l1(model, dev, length=16):
-    """Mean |logp_on - logp_off|. A fresh LoRA is B=0, so this must be ~0.
+    """Mean |logp_on - logp_base|. A fresh LoRA is B=0, so this must be ~0.
 
     The 16-token probe missed the GL-C failure: iter 0 reported kl 13199
     (loss almost equal to kl_coef * KL) on real 20k-token sequences. Probe
@@ -134,7 +194,7 @@ def adapter_logprob_l1(model, dev, length=16):
     mask[:, : min(4, length // 4)] = 0
     with torch.no_grad():
         on = completion_logprobs(model, ids, mask, grad=False)
-        with model.disable_adapter():
+        with adapter_kept_at_base(model):
             off = completion_logprobs(model, ids, mask, grad=False)
     if on is None or off is None:
         return None
@@ -142,8 +202,11 @@ def adapter_logprob_l1(model, dev, length=16):
 
 
 def _set_checkpointing(model, enabled: bool) -> None:
-    """Reentrant checkpointing on Glimmer/Gated-DeltaNet corrupts the backward
-    and made disable_adapter logprobs diverge on long sequences."""
+    """Reentrant checkpointing on Glimmer/Gated-DeltaNet corrupts the backward.
+
+    The on/off logprob divergence on long sequences was disable_adapter taking
+    a different kernel path, not this flag; keep non-reentrant anyway.
+    """
     if enabled:
         try:
             model.gradient_checkpointing_enable(
@@ -190,8 +253,8 @@ def main() -> None:
                     help="Needed at max-len 20480; off by default because it "
                          "makes each step slower.")
     ap.add_argument("--kl-coef", type=float, default=0.05,
-                    help="Weight on KL to the adapter-off reference policy. Set "
-                         "to 0 only if you want to reproduce the collapse.")
+                    help="Weight on KL to the SFT policy (LoRA scaling held at "
+                         "0). Set to 0 only if you want to reproduce the collapse.")
     ap.add_argument("--max-no-code", type=float, default=0.35,
                     help="Abort if this share of rollouts yields no code block. "
                          "The failure mode this catches is degeneration to empty "
@@ -335,14 +398,14 @@ def main() -> None:
                 l1 = adapter_logprob_l1(model, dev, length=probe_len)
             except torch.cuda.OutOfMemoryError as e:
                 torch.cuda.empty_cache()
-                print("fresh LoRA vs disable_adapter probe OOM at len=%d (%s)"
+                print("fresh LoRA vs scaling-0 probe OOM at len=%d (%s)"
                       % (probe_len, e))
                 continue
             except Exception as e:
-                print("fresh LoRA vs disable_adapter probe skipped at len=%d: %s"
+                print("fresh LoRA vs scaling-0 probe skipped at len=%d: %s"
                       % (probe_len, e))
                 continue
-            print("fresh LoRA vs disable_adapter logprob L1 (len %d): %s" %
+            print("fresh LoRA vs scaling-0 logprob L1 (len %d): %s" %
                   (probe_len, "n/a" if l1 is None else "%.6f" % l1))
             if l1 is not None and l1 > 0.05:
                 raise SystemExit(
@@ -508,11 +571,12 @@ def main() -> None:
                     continue
                 old = old.detach()
 
-            # The starting policy, obtained by switching the adapter off. Exact,
-            # and costs one forward pass rather than a second copy of the weights.
+            # The starting policy, obtained by holding LoRA scaling at 0 so the
+            # compute path matches the trainable adapter. Costs one forward
+            # rather than a second copy of the weights.
             ref = None
             if args.kl_coef > 0:
-                with model.disable_adapter():
+                with adapter_kept_at_base(model):
                     ref = completion_logprobs(model, t_ids, t_mask, grad=False)
                 if ref is None:
                     continue
@@ -522,13 +586,23 @@ def main() -> None:
                         on = completion_logprobs(model, t_ids, t_mask, grad=False)
                     if on is not None:
                         seq_l1 = float((on - ref).abs().mean())
-                        print("iter %d seq0 disable_adapter L1=%.6f (tokens %d)"
-                              % (it, seq_l1, t_ids.shape[1]))
-                        if seq_l1 > 0.05:
+                        on2 = completion_logprobs(model, t_ids, t_mask,
+                                                  grad=False)
+                        same_l1 = (float((on - on2).abs().mean())
+                                   if on2 is not None else float("nan"))
+                        print("iter %d seq0 scaling-0 L1=%.6f two-forward L1=%.6f "
+                              "(tokens %d)"
+                              % (it, seq_l1, same_l1, t_ids.shape[1]))
+                        # Two-forward noise is not a broken adapter; only refuse
+                        # when the reference path disagrees beyond that floor.
+                        floor = (0.05 if math.isnan(same_l1)
+                                 else max(0.05, 10.0 * same_l1 + 0.02))
+                        if seq_l1 > floor:
                             raise SystemExit(
-                                "disable_adapter L1 %.4f on a real sequence "
-                                "(fresh LoRA must be identity); refusing."
-                                % seq_l1)
+                                "scaling-0 L1 %.4f on a real sequence "
+                                "(fresh LoRA must be identity; two-forward "
+                                "L1 %.4f); refusing."
+                                % (seq_l1, same_l1))
 
             for _ in range(args.inner_epochs):
                 new = completion_logprobs(model, t_ids, t_mask, grad=True)

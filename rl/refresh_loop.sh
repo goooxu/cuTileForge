@@ -61,21 +61,40 @@ PY
 
 serve() {
     local model="$1"
+    local attempt
     docker rm -f qwen-vllm >/dev/null 2>&1
     # After a verifier container exits, the next vLLM can see 0 CUDA devices
-    # (cudaErrorNotPermitted). The frontier screen waits 20s; do the same.
-    sleep 20
-    CUTILE_WS="$WS" MODEL="$model" MOUNTS="-v $SCRATCH:$SCRATCH:ro" \
-        GPU_UTIL="$GPU_UTIL" TENSOR_PARALLEL="$TENSOR_PARALLEL" \
-        VLLM_GPUS="$VLLM_GPUS" \
-        VLLM_IMAGE="${VLLM_IMAGE:-}" EXTRA_ARGS="${EXTRA_ARGS:-}" \
-        "$KB/scripts/serve_qwen.sh" >/dev/null 2>&1
-    for _ in $(seq 1 40); do
+    # (cudaErrorNotPermitted). Give the driver a moment, and if the container
+    # dies during start, retry rather than polling a dead server for 20 min.
+    sleep 30
+    for attempt in 1 2 3; do
+        CUTILE_WS="$WS" MODEL="$model" MOUNTS="-v $SCRATCH:$SCRATCH:ro" \
+            GPU_UTIL="$GPU_UTIL" TENSOR_PARALLEL="$TENSOR_PARALLEL" \
+            VLLM_GPUS="$VLLM_GPUS" \
+            VLLM_IMAGE="${VLLM_IMAGE:-}" EXTRA_ARGS="${EXTRA_ARGS:-}" \
+            "$KB/scripts/serve_qwen.sh" >/dev/null 2>&1
+        for _ in $(seq 1 40); do
+            if curl -s --max-time 3 http://localhost:8000/v1/models 2>/dev/null \
+                    | grep -q Qwen3; then
+                echo "  serving $model"
+                return 0
+            fi
+            if ! docker ps --filter name=qwen-vllm --format '{{.Names}}' \
+                    | grep -qx qwen-vllm; then
+                echo "  vLLM exited during start (attempt $attempt)"
+                docker logs qwen-vllm 2>&1 | tail -20 || true
+                docker rm -f qwen-vllm >/dev/null 2>&1
+                sleep 30
+                break
+            fi
+            sleep 30
+        done
         if curl -s --max-time 3 http://localhost:8000/v1/models 2>/dev/null \
                 | grep -q Qwen3; then
             echo "  serving $model"
             return 0
         fi
+        docker rm -f qwen-vllm >/dev/null 2>&1
         sleep 30
     done
     echo "  ERROR: vLLM did not come up on $model" >&2
