@@ -29,6 +29,7 @@
 # GLB = the same, after self-distillation on GLA's own passing solutions.
 # GLC = the same, after a second SFT on GLB that restocks activation / elementwise.
 # GLD = the same, after GRPO on GLC (reliability, table A).
+# GLD0 was the seed=0 replica; abandoned after table A. Do not sample it.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -106,7 +107,8 @@ for spec in "$@"; do
         export VLLM_IMAGE=vllm/vllm-openai:nightly-aarch64
     elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" || "$tag" == "GLC" || "$tag" == "GLD" || "$tag" == "GLD0" ]]; then
         # Muse Glimmer: thinking cannot be turned off. Table A, xhigh.
-        # GLA / GLB / GLC / GLD / GLD0 must be sampled identically to GL so the comparison holds.
+        # GLA / GLB / GLC / GLD must be sampled identically to GL so the comparison holds.
+        # GLD0 stays on this path only so a leftover score of existing jsonl stays comparable.
         export REASONING_STRENGTH=xhigh
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser muse_glimmer --generation-config auto"

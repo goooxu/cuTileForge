@@ -2654,3 +2654,8 @@ needle 在自己的 argv 上，永远判成 running，idle 时不会重拉。改
 GLD0（seed=0）45.9% / 64.7%。吞吐 GLD 略升（83.6%→85.3% p@1）。`kernel_ms`
 相对 GL-C 中位约 1.00x。Frontier 训练日志不能当选 replica 的依据。
 
+# 放弃 GL-D0
+
+seed=0 那条不作发表线。合并权重删掉。表 A 的 jsonl / kernel 留下当失败记录，
+不要再采、不要再合。发表名只留 GL-D（仍然低于 GL-C）。
+
