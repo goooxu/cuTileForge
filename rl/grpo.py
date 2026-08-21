@@ -198,7 +198,7 @@ def lora_b_mean_sq(model):
         if "lora_B" not in name and "lora_embedding_B" not in name:
             continue
         term = p.float().pow(2).sum()
-        tot = term if tot is None else tot + term
+        tot = term if tot is None else tot + term.to(tot.device)
         n += p.numel()
     if tot is None or n == 0:
         return None
@@ -636,7 +636,7 @@ def main() -> None:
                     b2 = lora_b_mean_sq(model)
                     if b2 is not None:
                         kl = b2 / LORA_B2_REF
-                        loss = loss + args.kl_coef * kl
+                        loss = loss + args.kl_coef * kl.to(loss.device)
                         kls.append(kl.item())
                 if not torch.isfinite(loss):
                     break

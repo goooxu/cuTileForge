@@ -130,6 +130,8 @@ def main() -> None:
           "grpo.py forces Glimmer channel markers if the env is empty", fails)
     check("def lora_b_mean_sq" in grpo_src,
           "KL uses LoRA-B mean-square, not a second long forward", fails)
+    check("term.to(tot.device)" in grpo_src,
+          "LoRA-B penalty sums across sharded devices", fails)
     check("two-forward L1" not in grpo_src,
           "does not refuse on unreproducible long-seq logprobs", fails)
 
