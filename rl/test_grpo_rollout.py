@@ -136,6 +136,9 @@ def main() -> None:
           "does not refuse on unreproducible long-seq logprobs", fails)
     check("LOGIT_CHUNK" in grpo_src and "checkpoint" in grpo_src,
           "LM head logprobs are chunked and checkpointed", fails)
+    lora_src = open(os.path.join(HERE, "..", "train", "lora_config.py")).read()
+    check("tanh_()" not in lora_src,
+          "logit softcap is not in-place (autograd needs the tanh output)", fails)
 
     print("\nscore_rollouts pool reuse:")
     from reward import score_rollouts  # noqa: E402

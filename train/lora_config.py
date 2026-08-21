@@ -171,14 +171,12 @@ def logit_transform(model_or_config):
         return None
 
     def apply(logits):
-        if not logits.is_contiguous():
-            logits = logits.contiguous()
         if mult:
-            logits.mul_(mult)
+            logits = logits * mult
         if cap:
-            logits.div_(cap)
-            logits.tanh_()
-            logits.mul_(cap)
+            # Out of place: tanh backward needs its output, and a following
+            # in-place mul_(cap) raises "modified by an inplace operation".
+            logits = torch.tanh(logits / cap) * cap
         return logits
 
     return apply

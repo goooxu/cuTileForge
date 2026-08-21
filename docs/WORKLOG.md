@@ -2638,5 +2638,6 @@ Glimmer 上自己补这两个，并打印 extra_body 和第一条样本前缀。
 LoRA-B 均方作锚，省掉第二次长前向。B 分在两张卡上，求和要先 `.to` 到同一设备。
 重启父进程时，若 vLLM 已在 8000 上应答就不要 `docker rm`。
 长 completion 一次过 LM head 会在 `logits * output_multiplier` 上 OOM；head 按
-512 token 切开并 checkpoint，softcap 改成 in-place。
+512 token 切开并 checkpoint。softcap 不能 in-place：tanh 的反传要用输出，
+后面再 `mul_` 会直接爆。
 

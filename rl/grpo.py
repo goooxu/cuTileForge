@@ -682,6 +682,7 @@ def main() -> None:
             torch.nn.utils.clip_grad_norm_(params, 1.0)
             opt.step()
             opt.zero_grad(set_to_none=True)
+        torch.cuda.empty_cache()
         t_train = time.time() - t0
 
         rec = {
