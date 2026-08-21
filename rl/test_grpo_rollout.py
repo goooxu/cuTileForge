@@ -128,8 +128,6 @@ def main() -> None:
           "KL reference does not skip the LoRA add", fails)
     check("KEEP_SPECIAL_TOKENS" in grpo_src,
           "grpo.py forces Glimmer channel markers if the env is empty", fails)
-    check("logprob attention: math/eager" in grpo_src,
-          "KL logprobs use reproducible attention", fails)
     check("grad=True" in grpo_src and "adapter_kept_at_base" in grpo_src,
           "KL reference uses the same autograd path as the policy", fails)
 

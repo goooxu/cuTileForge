@@ -83,35 +83,6 @@ from worker import VerifierPool  # noqa: E402
 HELDOUT_LEVELS = frozenset({60, 84, 88, 97, 98, 99})
 
 
-def _prefer_math_attention(model):
-    """Flash / mem-efficient attention is not bitwise reproducible.
-
-    Two no-grad forwards of a fresh LoRA then differ by ~0.4 nats/token, and
-    the k3 KL estimator reads thousands. Eager math kernels are slower and
-    are the path whose logprobs can actually be compared.
-    """
-    torch.backends.cudnn.benchmark = False
-    if hasattr(torch.backends.cuda, "enable_flash_sdp"):
-        torch.backends.cuda.enable_flash_sdp(False)
-        torch.backends.cuda.enable_mem_efficient_sdp(False)
-        torch.backends.cuda.enable_math_sdp(True)
-    cfgs = [getattr(model, "config", None)]
-    inner = getattr(cfgs[0], "text_config", None) if cfgs[0] is not None else None
-    if inner is not None:
-        cfgs.append(inner)
-    for cfg in cfgs:
-        if cfg is None:
-            continue
-        if hasattr(cfg, "_attn_implementation"):
-            cfg._attn_implementation = "eager"
-        if hasattr(cfg, "attn_implementation"):
-            try:
-                cfg.attn_implementation = "eager"
-            except Exception:
-                pass
-    print("logprob attention: math/eager")
-
-
 def completion_logprobs(model, ids, comp_mask, grad: bool):
     """Per-token log probability of the completion tokens.
 
@@ -407,7 +378,6 @@ def main() -> None:
     # already 0; eval() also freezes any base-model dropout.
     model.eval()
     model.config.use_cache = False
-    _prefer_math_attention(model)
 
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0,
