@@ -2645,3 +2645,7 @@ LoRA-B 均方作锚，省掉第二次长前向。B 分在两张卡上，求和�
 `empty_cache` 本身也会 IMA，必须包在 try 里。supervise 对「这一轮没写出
 history」允许连 stall 几次，不要第一次就放弃。
 
+两条 replica 都跑满 60 轮。选 seed=1 做 GL-D（全程 pass>0 的轮次更多），
+merge 到本地 NVMe 后按 GL-C 同一套表 A 协议评。`compare_eval_suite.sh`
+要把 `GLD` 走 Glimmer 那条采样路径，否则会落到默认 nightly 镜像。
+

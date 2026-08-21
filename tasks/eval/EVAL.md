@@ -92,6 +92,7 @@ python3 taskgen/test_eval_suite.py
 | GL-A | `GLA` | 在 GL 上拒绝采样 SFT（`rl/run_gl_harvest.sh` 采数据） |
 | GL-B | `GLB` | 在 GL-A 的通过解上自蒸馏 |
 | GL-C | `GLC` | 在 GL-B 上再做一轮 SFT，补回 activation / elementwise |
+| GL-D | `GLD` | 在 GL-C 上做 GRPO（可靠性，表 A） |
 
 ## 怎么跑
 
