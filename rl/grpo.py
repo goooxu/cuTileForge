@@ -68,7 +68,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "repair"))
 sys.path.insert(0, os.path.join(HERE, "..", "verify"))
 sys.path.insert(0, HERE)
 
-from lora_config import (family_of, freeze_experts,  # noqa: E402
+from lora_config import (MUSE_GLIMMER, family_of, freeze_experts,  # noqa: E402
                          load_base_model, logit_transform, targets_for,
                          validate_targets)
 from repair_loop import Chat, extract_code, sample_batch  # noqa: E402
@@ -426,8 +426,18 @@ def main() -> None:
         print("resumed at iteration %d (%d tensors restored, %d unexpected)"
               % (start_iter, len(deltas), len(missing.unexpected_keys)))
 
+    # Chat reads these from the environment, not from argparse. A container
+    # started without the wrapper's exports silently strips Glimmer channel
+    # markers and omits reasoning_strength; iter 0 then looks like 100% no-code
+    # "degeneration" of an SFT policy that still solves the frontier.
+    if args.reasoning_strength and not os.environ.get("REASONING_STRENGTH"):
+        os.environ["REASONING_STRENGTH"] = args.reasoning_strength
+    if family == MUSE_GLIMMER and not os.environ.get("KEEP_SPECIAL_TOKENS"):
+        os.environ["KEEP_SPECIAL_TOKENS"] = "1"
+        print("KEEP_SPECIAL_TOKENS unset; defaulting to 1 for Glimmer")
     chat = Chat(args.base_url, args.served_model, args.temperature, args.top_p,
                 args.top_k, args.max_tokens)
+    print("chat extra_body: %s" % chat.kw.get("extra_body"))
 
     # Carry the log forward across invocations, or the trend window restarts at
     # every resume and hides exactly the comparison it exists to show.
@@ -455,6 +465,12 @@ def main() -> None:
         t0 = time.time()
         texts = sample_batch(chat, messages, args.concurrency)
         t_roll = time.time() - t0
+        n_err = sum(1 for t in texts if t.startswith("__ERROR__"))
+        n_code = sum(1 for t in texts
+                     if not t.startswith("__ERROR__") and extract_code(t))
+        preview = (texts[0][:240].replace("\n", "\\n") if texts else "")
+        print("iter %d sampled %d in %.0fs (%d code, %d err); first: %s"
+              % (it, len(texts), t_roll, n_code, n_err, preview))
 
         # --- reward -------------------------------------------------------
         items = []

@@ -126,6 +126,8 @@ def main() -> None:
           "KL reference keeps the LoRA compute path", fails)
     check("with model.disable_adapter()" not in grpo_src,
           "KL reference does not skip the LoRA add", fails)
+    check("KEEP_SPECIAL_TOKENS" in grpo_src,
+          "grpo.py forces Glimmer channel markers if the env is empty", fails)
 
     print("\nscore_rollouts pool reuse:")
     from reward import score_rollouts  # noqa: E402
