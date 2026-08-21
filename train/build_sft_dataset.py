@@ -100,7 +100,15 @@ def main() -> None:
                          "5.5%% of the time untrained.")
     ap.add_argument("--min-speedup", type=float, default=None,
                     help="Drop solutions slower than this multiple of the torch "
-                         "reference. Samples with no timing are kept.")
+                         "reference. Samples with no timing are kept unless "
+                         "--require-timing is also set.")
+    ap.add_argument("--max-speedup", type=float, default=None,
+                    help="Drop solutions at or above this multiple of the torch "
+                         "reference. Used for a catchable-speed slice so already-"
+                         "winning kernels do not rebuild the win-more dead zone.")
+    ap.add_argument("--require-timing", action="store_true",
+                    help="Drop solutions that have no speedup. Needed when "
+                         "--max-speedup / --min-speedup define a speed gate.")
     ap.add_argument("--category-quota", default=None,
                     help="Comma-separated cat=N caps, e.g. matmul=100,elementwise=60. "
                          "Use '*=N' for a default. Uncapped categories keep everything.")
@@ -132,16 +140,25 @@ def main() -> None:
                 passed.append((int(pid), int(sid), r.get("speedup")))
         print("level %d: %d verified passing samples" % (level, len(passed)))
 
-        n_slow = 0
+        n_slow = n_fast = n_untimed = 0
+        if args.require_timing:
+            before = len(passed)
+            passed = [p for p in passed if p[2] is not None]
+            n_untimed = before - len(passed)
+            print("  dropped %d with no timing" % n_untimed)
         if args.min_speedup is not None:
             before = len(passed)
-            # A kernel with no timing cannot be judged, so keep it: correctness
-            # sets that were verified without --measure-time would otherwise
-            # vanish entirely.
+            # Without --require-timing, untimed correctness samples stay.
             passed = [p for p in passed
                       if p[2] is None or p[2] >= args.min_speedup]
             n_slow = before - len(passed)
             print("  dropped %d below %.2fx" % (n_slow, args.min_speedup))
+        if args.max_speedup is not None:
+            before = len(passed)
+            passed = [p for p in passed
+                      if p[2] is None or p[2] < args.max_speedup]
+            n_fast = before - len(passed)
+            print("  dropped %d at or above %.2fx" % (n_fast, args.max_speedup))
 
         by_problem = collections.defaultdict(list)
         for pid, sid, sp in passed:

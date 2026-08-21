@@ -788,6 +788,40 @@ BW_2D = [
 assert _KB_ACT_SHAPE not in BW_2D
 assert all(0.8e9 <= m * k <= 1.4e9 for m, k in BW_2D)
 
+# Tier 7: between PERF_2D (launch still matters) and BW_2D (already bandwidth
+# bound, and LongChain already wins). Compile typically still ahead, a fused
+# tile kernel can catch up. About a third are not multiples of 1024.
+CATCH_2D = [
+    (8192, 16384),    # 1.34e8
+    (16384, 8192),    # 1.34e8
+    (4096, 32768),    # 1.34e8
+    (12288, 12288),   # 1.51e8
+    (8192, 20480),    # 1.68e8
+    (10240, 16384),   # 1.68e8
+    (6144, 24576),    # 1.51e8
+    (2048, 65536),    # 1.34e8
+    (4096, 40960),    # 1.68e8
+    (16384, 12288),   # 2.01e8
+    (8192, 24576),    # 2.01e8
+    (12288, 16384),   # 2.01e8
+    (3073, 40960),    # 1.26e8 remainder
+    (5000, 28000),    # 1.40e8
+    (7777, 18000),    # 1.40e8
+    (3333, 48000),    # 1.60e8
+    (9999, 16000),    # 1.60e8
+    (2500, 80000),    # 2.00e8
+    (6111, 28000),    # 1.71e8
+    (8888, 20000),    # 1.78e8
+]
+assert all(8e7 <= m * k <= 3e8 for m, k in CATCH_2D)
+
+
+def _speed_2d(tier, rng, default):
+    """Catchable mid-size 2D shapes at tier 7; otherwise the caller's table."""
+    if tier >= 7:
+        return rng.choice(CATCH_2D)
+    return rng.choice(default)
+
 
 def large_pointwise_activation(tier, rng):
     """One pointwise activation on a bandwidth-bound 2D tensor.
@@ -798,7 +832,7 @@ def large_pointwise_activation(tier, rng):
     is about coalesced loads of a unary kernel.
     """
     label, expr = rng.choice(POINTWISE_ACTIVATION_OPS)
-    m, k = rng.choice(BW_2D)
+    m, k = _speed_2d(tier, rng, BW_2D)
     return Spec(
         name=label,
         category="activation", tier=tier,
@@ -822,7 +856,7 @@ def long_elementwise_chain(tier, rng):
     this shape of problem at 8192x8192. Included as the curriculum's floor and as
     a control -- if speed does not improve here, it will not improve anywhere.
     """
-    m, k = rng.choice(PERF_2D)
+    m, k = _speed_2d(tier, rng, PERF_2D)
     picked = [rng.choice(FUSION_TAILS) for _ in range(rng.choice([4, 6, 8]))]
     expr = "x"
     for _, tmpl in picked:
@@ -945,9 +979,24 @@ def anchor_with_tail(tier, rng):
     model gets wrong. What is missing is the context -- everything before the tail
     is already a tile computation, and the tail has to stay in the same kernel.
     """
-    label, init_sig, init_body, expr, consts_fn, inputs, init_inputs = \
-        rng.choice(ANCHORS)
-    consts = consts_fn(rng)
+    if tier >= 7:
+        # Mid-size LayerNorm + tail only. Gemm / conv at CATCH_2D lose to
+        # cuBLAS / cuDNN by 10x and rebuild the speed-reward dead zone.
+        m, k = rng.choice(CATCH_2D)
+        label, init_sig, init_body, expr = (
+            "LayerNorm",
+            "dim: int, eps: float = 1e-5",
+            "        self.eps = eps",
+            "((x - x.mean(dim=-1, keepdim=True)) / "
+            "torch.sqrt(x.var(dim=-1, keepdim=True, unbiased=False) + self.eps))",
+        )
+        consts = {"batch_size": m, "dim": k}
+        inputs = "    return [torch.randn(batch_size, dim)]"
+        init_inputs = "    return [dim]"
+    else:
+        label, init_sig, init_body, expr, consts_fn, inputs, init_inputs = \
+            rng.choice(ANCHORS)
+        consts = consts_fn(rng)
 
     tails = [rng.choice(FUSION_TAILS)]
     # A second tail sometimes, because the benchmark's chains are rarely one deep
@@ -984,7 +1033,7 @@ def anchor_with_tail(tier, rng):
 
 def fused_norm_residual(tier, rng):
     """Normalise, add a residual, activate: the classic transformer block tail."""
-    m, k = rng.choice(PERF_2D)
+    m, k = _speed_2d(tier, rng, PERF_2D)
     label, tmpl = rng.choice(FUSION_TAILS)
     return Spec(
         name="NormResidual%s" % label,
@@ -1005,7 +1054,7 @@ def fused_norm_residual(tier, rng):
 
 def fused_softmax_chain(tier, rng):
     """Scale, softmax, activation: attention's tail, and reduction-bound."""
-    m, k = rng.choice(PERF_2D)
+    m, k = _speed_2d(tier, rng, PERF_2D)
     label, tmpl = rng.choice(FUSION_TAILS)
     return Spec(
         name="SoftmaxChain%s" % label,
@@ -1171,7 +1220,7 @@ def residual_chain(tier, rng):
 
 
 def fused_elementwise_chain(tier, rng):
-    m, k = rng.choice(shapes_for(MAT2D_BY_TIER, tier))
+    m, k = _speed_2d(tier, rng, shapes_for(MAT2D_BY_TIER, tier))
     n_ops = rng.choice([2, 3])
     picked = [rng.choice(FUSION_TAILS) for _ in range(n_ops)]
     expr = "x"
@@ -1375,7 +1424,7 @@ BUILDERS = [
     (bmm,                    4, [2, 3, 5]),
     (elementwise,            3, [0, 2, 3, 5]),
     (reduction,              4, [0, 2, 3, 5]),
-    (fused_elementwise_chain, 3, [4]),
+    (fused_elementwise_chain, 3, [4, 7]),
     (fused_matmul_chain,      3, [4]),
     # Tier 6 is the speed curriculum: large shapes and long chains, the only
     # tier where a measured speedup means anything. Ordered easiest first --
@@ -1403,17 +1452,17 @@ BUILDERS = [
     (loss_fn,                7, [0, 2, 3, 5]),
     # Weighted highest of anything here. It is the single largest failure mode
     # left: a correct kernel rejected because the chain's tail stayed in torch.
-    (anchor_with_tail,      12, [2, 3, 4, 5]),
+    (anchor_with_tail,      12, [2, 3, 4, 5, 7]),
     # Chains. Level 2 is 100 of the 200 problems, is entirely chains, and has
     # moved 16 -> 15 across six rounds, so this is where the weight goes.
     (operator_chain,        12, [2, 3, 5]),
     (conv_chain,            12, [2, 3, 5]),
     (pool_chain,             8, [2, 3, 5]),
     (residual_chain,         6, [2, 3, 5]),
-    (large_pointwise_activation, 12, [6]),
-    (long_elementwise_chain, 10, [6]),
-    (fused_softmax_chain,     8, [6]),
-    (fused_norm_residual,     8, [6]),
+    (large_pointwise_activation, 12, [6, 7]),
+    (long_elementwise_chain, 10, [6, 7]),
+    (fused_softmax_chain,     8, [6, 7]),
+    (fused_norm_residual,     8, [6, 7]),
     (fused_matmul_bias_act,   9, [6]),
     (fused_matmul_residual,   8, [6]),
     (fused_conv_bias_act,     9, [6]),

@@ -30,6 +30,14 @@ RUN_NAME="${1:-harvest_gl92}"
 LEVEL="${2:-92}"
 K="${3:-8}"
 SMOKE="${SMOKE:-0}"
+# Eval suite and both sealed held-out tracks. Same set as select_frontier /
+# grpo.py. A harvest that writes these would leak the ruler into SFT.
+case " $LEVEL " in
+    *" 60 "*|*" 84 "*|*" 88 "*|*" 97 "*|*" 98 "*|*" 99 "*)
+        echo "refusing held-out level $LEVEL" >&2
+        exit 1
+        ;;
+esac
 
 export CUTILE_WS="$WS"
 export MODEL="${MODEL:-/raid/tmp/gemsg-cutile/Muse-Glimmer-30B}"
@@ -88,3 +96,23 @@ done
 docker logs "$FV" 2>&1 | tail -5 || true
 echo "verify done: $OUT"
 wc -l "$OUT" || true
+
+# Timing is a second container. The correctness pool can poison CUDA; do not
+# measure in the same process. Needed for a speed-gated slice (level 80).
+if [[ "${MEASURE_TIME:-0}" == "1" ]]; then
+    echo "=== time passed kernels vs torch.compile ==="
+    TV="tv_$RUN_NAME"
+    docker rm -f "$TV" >/dev/null 2>&1 || true
+    CUTILE_WS="$WS" DETACH=1 NAME="$TV" "$KB/scripts/in_container.sh" \
+        "cd /ws/cuTileForge && python3 -u verify/fast_verify.py \
+            --kernel-dir /ws/runs/$RUN_NAME --level $LEVEL \
+            --workers 4 --gpus 4 --timeout 180 \
+            --measure-time --timing-from /ws/runs/${RUN_NAME}_verified.jsonl \
+            --ref-mode compile \
+            --out /ws/runs/${RUN_NAME}_verified.jsonl"
+    while docker ps --filter name="$TV" --format '{{.Names}}' | grep -q "$TV"; do
+        sleep 60
+    done
+    docker logs "$TV" 2>&1 | tail -8 || true
+    echo "timing done: $OUT"
+fi
