@@ -16,6 +16,9 @@ WS="${CUTILE_WS:?}"
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HIST="$WS/runs/$(basename "$OUT")/history.jsonl"
 MAX_TRIES="${MAX_TRIES:-30}"
+# A mid-iteration CUDA poison writes no history, so count() does not move.
+# That is flaky, not a deterministic bug; retry a few times before giving up.
+STALL_TRIES="${STALL_TRIES:-8}"
 
 count() {
     [ -f "$HIST" ] || { echo 0; return; }
@@ -36,6 +39,7 @@ print(n)
 PY
 }
 
+stalls=0
 for try in $(seq 1 "$MAX_TRIES"); do
     n=$(count)
     if [ "$n" -ge "$TOTAL" ]; then
@@ -45,12 +49,20 @@ for try in $(seq 1 "$MAX_TRIES"); do
     echo "supervisor: attempt $try, at $n/$TOTAL"
     bash "$FORGE/rl/refresh_loop.sh" "$BASE" "$FRONTIER" "$OUT" "$TOTAL" "$WINDOW"
 
-    # A retry that gains nothing means the failure is deterministic, not a reaped
-    # container; stop rather than spin.
+    # A retry that gains nothing used to mean "deterministic failure, stop".
+    # Flaky CUDA (mha_graph / illegal access) also writes no history; keep
+    # retrying a bounded number of stalls.
     if [ "$(count)" = "$n" ]; then
-        echo "supervisor: attempt $try made no progress; giving up at $n/$TOTAL" >&2
-        exit 1
+        stalls=$((stalls + 1))
+        echo "supervisor: attempt $try made no progress ($stalls/$STALL_TRIES stalls)" >&2
+        if [ "$stalls" -ge "$STALL_TRIES" ]; then
+            echo "supervisor: giving up at $n/$TOTAL" >&2
+            exit 1
+        fi
+        sleep 20
+        continue
     fi
+    stalls=0
     sleep 20
 done
 echo "supervisor: out of tries at $(count)/$TOTAL" >&2

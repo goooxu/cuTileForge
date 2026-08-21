@@ -690,13 +690,16 @@ def main() -> None:
                     reason = _cuda_skip_reason(e)
                     if reason is None:
                         raise
-                    torch.cuda.empty_cache()
-                    opt.zero_grad(set_to_none=True)
+                    try:
+                        opt.zero_grad(set_to_none=True)
+                    except Exception:
+                        pass
                     if reason == "cuda-poison":
                         raise SystemExit(
                             "iter %d: CUDA context poisoned; restarting the window"
                             % it)
                     try:
+                        torch.cuda.empty_cache()
                         torch.cuda.synchronize()
                     except Exception:
                         raise SystemExit(

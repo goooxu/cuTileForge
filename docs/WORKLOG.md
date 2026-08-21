@@ -2642,4 +2642,6 @@ LoRA-B 均方作锚，省掉第二次长前向。B 分在两张卡上，求和�
 后面再 `mul_` 会直接爆。flash-attn `mha_graph.execute` 失败也跳过该序列，
 不要把整个 window 作废。训练前向显式 `use_cache=False`；OOM 之后若 CUDA
 已经 illegal access，直接退出让 supervise 重启，不要在坏 context 里继续。
+`empty_cache` 本身也会 IMA，必须包在 try 里。supervise 对「这一轮没写出
+history」允许连 stall 几次，不要第一次就放弃。
 

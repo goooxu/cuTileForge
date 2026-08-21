@@ -142,6 +142,11 @@ def main() -> None:
           "training forwards disable the KV cache", fails)
     check("cuda-poison" in grpo_src,
           "a poisoned CUDA context exits the window instead of continuing", fails)
+    check("empty_cache()" in grpo_src,
+          "cache flush after a CUDA skip is itself guarded", fails)
+    sup_src = open(os.path.join(HERE, "supervise_grpo.sh")).read()
+    check("STALL_TRIES" in sup_src,
+          "supervise retries flaky CUDA stalls instead of giving up once", fails)
     lora_src = open(os.path.join(HERE, "..", "train", "lora_config.py")).read()
     check("tanh_()" not in lora_src,
           "logit softcap is not in-place (autograd needs the tanh output)", fails)
