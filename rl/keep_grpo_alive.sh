@@ -92,12 +92,13 @@ job_running() {
     echo "$names" | grep -q '^glc_front_' && return 0
     echo "$names" | grep -qx grpo && return 0
     echo "$names" | grep -qx rlmerge && return 0
-    # ps on the GPU box, grep here, so the scanner argv cannot match.
-    args="$(remote "ps -eo args=" 2>/dev/null || true)"
+    # -ww so a long argv is not column-truncated; grep runs here so the
+    # scanner's own argv cannot match.
+    args="$(remote "ps -eww -o args=" 2>/dev/null || true)"
     echo "$args" | grep -qE 'run_gl_grpo\.sh|supervise_grpo\.sh|refresh_loop\.sh' && return 0
     if [[ -f "$REMOTE_PIDFILE" ]]; then
         rpid="$(tr -dc '0-9' < "$REMOTE_PIDFILE")"
-        if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "test -d /proc/$rpid"; then
+        if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "kill -0 $rpid"; then
             return 0
         fi
     fi
@@ -112,8 +113,11 @@ leftover_vllm() {
 }
 
 unstick() {
-    echo "[keep-grpo] removing leftover vLLM/front/grpo containers on train host"
-    remote "docker rm -f qwen-vllm grpo rlmerge glc_front_86 glc_front_87 glc_front_92 glc_front_93 >/dev/null 2>&1 || true"
+    # Named containers only. Do not pkill -f. run_gl_grpo / refresh_loop
+    # already docker rm -f before they serve; the watchdog must not delete
+    # qwen-vllm/grpo out from under a live parent (job_running false
+    # negatives were wiping every window after iteration 0).
+    echo "[keep-grpo] leftover containers left for the next run_gl_grpo to reap"
 }
 
 start_grpo() {
@@ -154,7 +158,7 @@ os.execve('/bin/bash', ['bash', script], env)
     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
         if [[ -f "$REMOTE_PIDFILE" ]]; then
             rpid="$(tr -dc '0-9' < "$REMOTE_PIDFILE")"
-            if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "test -d /proc/$rpid"; then
+            if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "kill -0 $rpid"; then
                 echo "[keep-grpo] remote pid $rpid"
                 return
             fi

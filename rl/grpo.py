@@ -122,16 +122,16 @@ def group_advantages(rewards):
     return [0.0 if r is None else (r - mean) / std for r in rewards]
 
 
-def adapter_logprob_l1(model, dev):
-    """Mean |logp_on - logp_off| on a short dummy sequence.
+def adapter_logprob_l1(model, dev, length=16):
+    """Mean |logp_on - logp_off|. A fresh LoRA is B=0, so this must be ~0.
 
-    A fresh LoRA is B=0, so this must be ~0. If it is not, the KL term is
-    measuring a broken disable_adapter path rather than drift from SFT, and
-    it will dominate the loss (GL-C iter 0 reported kl 180 vs ~0.001 on Qwen).
+    The 16-token probe missed the GL-C failure: iter 0 reported kl 13199
+    (loss almost equal to kl_coef * KL) on real 20k-token sequences. Probe
+    at `length` close to a training example, not just a toy tensor.
     """
-    ids = torch.arange(8, 24, device=dev, dtype=torch.long).unsqueeze(0)
+    ids = torch.arange(8, 8 + length, device=dev, dtype=torch.long).unsqueeze(0)
     mask = torch.ones_like(ids)
-    mask[:, :4] = 0
+    mask[:, : min(4, length // 4)] = 0
     with torch.no_grad():
         on = completion_logprobs(model, ids, mask, grad=False)
         with model.disable_adapter():
@@ -139,6 +139,19 @@ def adapter_logprob_l1(model, dev):
     if on is None or off is None:
         return None
     return float((on - off).abs().mean())
+
+
+def _set_checkpointing(model, enabled: bool) -> None:
+    """Reentrant checkpointing on Glimmer/Gated-DeltaNet corrupts the backward
+    and made disable_adapter logprobs diverge on long sequences."""
+    if enabled:
+        try:
+            model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False})
+        except TypeError:
+            model.gradient_checkpointing_enable()
+    else:
+        model.gradient_checkpointing_disable()
 
 
 def main() -> None:
@@ -295,7 +308,7 @@ def main() -> None:
         raise SystemExit("nothing left trainable after freezing experts")
 
     if args.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
+        _set_checkpointing(model, True)
     model.enable_input_require_grads()
     # Dropout in the logprob path would make the KL estimator compare two
     # different stochastic forwards, not adapter on vs off. LoRA dropout is
@@ -316,23 +329,28 @@ def main() -> None:
     atexit.register(pool.close)
 
     if args.fresh_lora and args.kl_coef > 0:
-        try:
-            l1 = adapter_logprob_l1(model, dev)
-        except torch.cuda.OutOfMemoryError as e:
-            torch.cuda.empty_cache()
-            print("fresh LoRA vs disable_adapter logprob probe OOM (%s); "
-                  "continuing, watch iter-0 KL" % e)
-            l1 = None
-        except Exception as e:
-            print("fresh LoRA vs disable_adapter logprob probe skipped: %s" % e)
-            l1 = None
-        else:
-            print("fresh LoRA vs disable_adapter logprob L1: %s" %
-                  ("n/a" if l1 is None else "%.6f" % l1))
+        l1 = None
+        for probe_len in (16, 256):
+            try:
+                l1 = adapter_logprob_l1(model, dev, length=probe_len)
+            except torch.cuda.OutOfMemoryError as e:
+                torch.cuda.empty_cache()
+                print("fresh LoRA vs disable_adapter probe OOM at len=%d (%s)"
+                      % (probe_len, e))
+                continue
+            except Exception as e:
+                print("fresh LoRA vs disable_adapter probe skipped at len=%d: %s"
+                      % (probe_len, e))
+                continue
+            print("fresh LoRA vs disable_adapter logprob L1 (len %d): %s" %
+                  (probe_len, "n/a" if l1 is None else "%.6f" % l1))
             if l1 is not None and l1 > 0.05:
                 raise SystemExit(
-                    "fresh LoRA is not an identity (L1 %.4f). The KL term would "
-                    "dominate the loss; refusing to train." % l1)
+                    "fresh LoRA is not an identity at len=%d (L1 %.4f). "
+                    "The KL term would dominate the loss; refusing to train."
+                    % (probe_len, l1))
+        if l1 is None:
+            print("fresh LoRA identity probe did not run; watch iter-0 KL")
 
     start_iter = 0
     if args.resume:
@@ -499,6 +517,18 @@ def main() -> None:
                 if ref is None:
                     continue
                 ref = ref.detach()
+                if args.fresh_lora and it == start_iter and i == 0:
+                    with torch.no_grad():
+                        on = completion_logprobs(model, t_ids, t_mask, grad=False)
+                    if on is not None:
+                        seq_l1 = float((on - ref).abs().mean())
+                        print("iter %d seq0 disable_adapter L1=%.6f (tokens %d)"
+                              % (it, seq_l1, t_ids.shape[1]))
+                        if seq_l1 > 0.05:
+                            raise SystemExit(
+                                "disable_adapter L1 %.4f on a real sequence "
+                                "(fresh LoRA must be identity); refusing."
+                                % seq_l1)
 
             for _ in range(args.inner_epochs):
                 new = completion_logprobs(model, t_ids, t_mask, grad=True)
@@ -523,6 +553,10 @@ def main() -> None:
                     kl = (torch.exp(d) - d - 1).mean()
                     loss = loss + args.kl_coef * kl
                     kls.append(kl.item())
+                    if args.fresh_lora and it == start_iter and kl.item() > 1.0:
+                        raise SystemExit(
+                            "iter %d KL %.1f on a fresh LoRA (expected ~0). "
+                            "Refusing to write this adapter." % (it, kl.item()))
                 if not torch.isfinite(loss):
                     break
                 (loss / args.grad_accum).backward()

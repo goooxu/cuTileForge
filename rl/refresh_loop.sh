@@ -133,6 +133,12 @@ while [ "$done_iters" -lt "$TOTAL" ]; do
         docker logs grpo 2>&1 | tail -40
         exit 1
     fi
+    gained=$((done_iters - prev))
+    if [ "$gained" -lt "$n" ] && [ "$done_iters" -lt "$TOTAL" ]; then
+        echo "ERROR: GRPO window incomplete ($gained/$n iters); not merging" >&2
+        docker logs grpo 2>&1 | tail -20
+        exit 1
+    fi
     [ "$done_iters" -ge "$TOTAL" ] && break
 
     # --- refresh the sampler -------------------------------------------------

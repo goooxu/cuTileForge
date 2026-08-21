@@ -2613,3 +2613,9 @@ history，两台不会抢同一把 flock。结束后表 A 评更好的那条，�
 backward 在那张卡上顶到 ~180 GB。按卡数设 `max_memory`，逼 accelerate 切开。
 看门狗在 serve 阶段仍会把活着的父进程当成残骸；先认 pidfile / 远端 cmdline，
 再删容器。训练盒节点回来了，seed=0 和 seed=1 一起跑。
+
+seed=0 第 0 轮 backward 通了，但 KL=13199（loss 几乎是 kl_coef×KL）。短序列
+探测 L1=0。整层 reentrant checkpoint 在 Glimmer 上让 on/off 对数概率在长序列
+上对不上。改成 `use_reentrant=False`，真序列上再测一次 identity，KL>1 就拒写
+adapter。看门狗不再 `docker rm` 活着的 vLLM/grpo；window 没跑满不 merge。
+那一颗 KL=13199 的 adapter 丢掉，两边从 GL-C 重新开。
