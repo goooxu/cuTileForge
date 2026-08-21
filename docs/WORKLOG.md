@@ -2608,3 +2608,8 @@ history，两台不会抢同一把 flock。结束后表 A 评更好的那条，�
 `python -c` 扫远端 /proc，引号一坏就永远看不见 `supervise_grpo.sh`（而且
 `run_gl_grpo.sh` 会 exec 掉），于是把正在起来的 vLLM 当残骸删掉。改成
 `rl/proc_has.py`，启动后立刻写 remote pid。
+
+2 卡训练仍然 OOM：30B bf16 能装进一张 184 GB，`device_map=auto` 整模放一张卡，
+backward 在那张卡上顶到 ~180 GB。按卡数设 `max_memory`，逼 accelerate 切开。
+看门狗在 serve 阶段仍会把活着的父进程当成残骸；先认 pidfile / 远端 cmdline，
+再删容器。训练盒节点回来了，seed=0 和 seed=1 一起跑。

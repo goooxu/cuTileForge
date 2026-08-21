@@ -86,21 +86,29 @@ remote_cmd_pid() {
     remote "python3 $(printf %q "$FORGE/rl/proc_has.py") $(printf %q "$1")" 2>/dev/null
 }
 
+# Parent scripts dump cmdlines to stdout; grep runs here so the remote
+# scanner's own argv cannot match the needle.
+remote_parent_alive() {
+    remote 'for c in /proc/[0-9]*/cmdline; do tr "\0" " " < "$c" 2>/dev/null; echo; done' 2>/dev/null \
+        | grep -qE 'run_gl_grpo\.sh|supervise_grpo\.sh|refresh_loop\.sh'
+}
+
 job_running() {
     local names rpid
     names="$(remote "docker ps --format '{{.Names}}'" 2>/dev/null || true)"
     echo "$names" | grep -q '^glc_front_' && return 0
     echo "$names" | grep -qx grpo && return 0
     echo "$names" | grep -qx rlmerge && return 0
-    remote_has_cmd "run_gl_grpo.sh" && return 0
-    remote_has_cmd "supervise_grpo.sh" && return 0
-    remote_has_cmd "refresh_loop.sh" && return 0
     if [[ -f "$REMOTE_PIDFILE" ]]; then
-        rpid="$(cat "$REMOTE_PIDFILE")"
+        rpid="$(tr -dc '0-9' < "$REMOTE_PIDFILE")"
         if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "test -d /proc/$rpid"; then
             return 0
         fi
     fi
+    remote_parent_alive && return 0
+    remote_has_cmd "run_gl_grpo.sh" && return 0
+    remote_has_cmd "supervise_grpo.sh" && return 0
+    remote_has_cmd "refresh_loop.sh" && return 0
     return 1
 }
 
@@ -145,7 +153,19 @@ os.close(devnull)
 os.execve('/bin/bash', ['bash', script], env)
 ") $(printf %q "$WS") $(printf %q "$FORGE/rl/run_gl_grpo.sh") $(printf %q "$LOG") $(printf %q "$TOTAL") $(printf %q "$OUT_NAME") $(printf %q "${RL_SEED:-0}") $(printf %q "$MODEL")"
     local rpid="" i
-    for i in 1 2 3 4 5 6 7 8; do
+    # run_gl_grpo writes the pidfile after flock, then execs into supervise.
+    # Wait for that file (NFS) rather than scanning for a script name that
+    # disappears. Do not overwrite a live pidfile with a failed scan.
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        if [[ -f "$REMOTE_PIDFILE" ]]; then
+            rpid="$(tr -dc '0-9' < "$REMOTE_PIDFILE")"
+            if [[ "$rpid" =~ ^[0-9]+$ ]] && remote "test -d /proc/$rpid"; then
+                echo "[keep-grpo] remote pid $rpid"
+                return
+            fi
+        fi
+        rpid="$(remote_cmd_pid "supervise_grpo.sh" || true)"
+        [[ "$rpid" =~ ^[0-9]+$ ]] && break
         rpid="$(remote_cmd_pid "run_gl_grpo.sh" || true)"
         [[ "$rpid" =~ ^[0-9]+$ ]] && break
         sleep 1
@@ -170,6 +190,11 @@ while true; do
         continue
     fi
     if leftover_vllm; then
+        # Parent may still be in the unit tests / writing the pidfile.
+        sleep 15
+        if job_running; then
+            continue
+        fi
         echo "[keep-grpo] leftover vLLM, no parent"
         unstick
         sleep 5

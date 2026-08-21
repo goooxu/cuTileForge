@@ -110,7 +110,8 @@ def family_of(model_or_config) -> str:
     return getattr(config, "model_type", "") or ""
 
 
-def load_base_model(path, device_map="auto", dtype=None, trust_remote_code=True):
+def load_base_model(path, device_map="auto", dtype=None, trust_remote_code=True,
+                    max_memory=None):
     """Load a base model with the class its own config names.
 
     AutoModelForCausalLM does not cover every family here. Muse Glimmer is
@@ -140,8 +141,11 @@ def load_base_model(path, device_map="auto", dtype=None, trust_remote_code=True)
                 "transformers has no class named %r"
                 % (path, family, arch))
     print("loading %s as %s (model_type %s)" % (path, cls.__name__, family))
-    return cls.from_pretrained(path, dtype=dtype, device_map=device_map,
-                               trust_remote_code=trust_remote_code)
+    kwargs = dict(dtype=dtype, device_map=device_map,
+                  trust_remote_code=trust_remote_code)
+    if max_memory is not None:
+        kwargs["max_memory"] = max_memory
+    return cls.from_pretrained(path, **kwargs)
 
 
 def logit_transform(model_or_config):

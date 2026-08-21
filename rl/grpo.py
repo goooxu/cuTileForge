@@ -252,7 +252,18 @@ def main() -> None:
 
     print("loading policy ...")
     t0 = time.time()
-    model = load_base_model(args.model, device_map="auto", dtype=torch.bfloat16)
+    # 30B bf16 is ~60 GB and fits on one 184 GB card, so device_map="auto"
+    # packs the whole policy onto a single GPU. Backward at max_len=20480
+    # then OOMs at ~180 GB on that card. Cap per-GPU weight placement so
+    # accelerate has to split.
+    max_memory = None
+    n_cuda = torch.cuda.device_count()
+    if n_cuda > 1:
+        per_gb = max(20, 60 // n_cuda + 8)
+        max_memory = {i: "%dGiB" % per_gb for i in range(n_cuda)}
+        print("forcing %d-way split (max_memory %s)" % (n_cuda, max_memory))
+    model = load_base_model(args.model, device_map="auto", dtype=torch.bfloat16,
+                            max_memory=max_memory)
     if args.fresh_lora:
         from peft import LoraConfig, get_peft_model
         targets = targets_for(model, "attention_only")
@@ -266,6 +277,12 @@ def main() -> None:
             raise SystemExit("pass --adapter or --fresh-lora")
         model = PeftModel.from_pretrained(model, args.adapter, is_trainable=True)
     print("loaded in %.0fs" % (time.time() - t0))
+    placed = {}
+    for p in model.parameters():
+        d = str(p.device)
+        placed[d] = placed.get(d, 0) + p.numel()
+    print("parameter devices: %s" %
+          {k: "{:,}".format(v) for k, v in placed.items()})
 
     # A fresh attention-only adapter has no expert tensors to begin with, so this
     # is a no-op there and only bites when resuming one of the old full-target
