@@ -2650,3 +2650,7 @@ history」允许连 stall 几次，不要第一次就放弃。
 nightly 镜像。`keep_eval_alive.sh` 的 cmdline 扫描不能用 inline `python -c`：
 needle 在自己的 argv 上，永远判成 running，idle 时不会重拉。改走 `proc_has.py`。
 
+表 A：GRPO 没抬 latency p@1。GL-C 66.8% / 88.3%；GLD（seed=1）61.7% / 82.9%；
+GLD0（seed=0）45.9% / 64.7%。吞吐 GLD 略升（83.6%→85.3% p@1）。`kernel_ms`
+相对 GL-C 中位约 1.00x。Frontier 训练日志不能当选 replica 的依据。
+
