@@ -2629,3 +2629,6 @@ fresh LoRA 走的是 `W x + B(A(x))*scaling`（B=0 时多一次加零）。参�
 手动拉起的 `grpo` 容器没带上 `KEEP_SPECIAL_TOKENS` / `REASONING_STRENGTH`，第 0 轮
 128 条全是 no_code，看起来像策略崩了。其实是 Chat 只读环境变量。`grpo.py` 在
 Glimmer 上自己补这两个，并打印 extra_body 和第一条样本前缀。
+
+评测盒 scaling-0 L1=0，但两次前向 L1=0.39，KL 6092。参考前向改成 `grad=True`
+再 detach，attention 走 eager/math，避免 no-grad 和 flash 两条路对不上。

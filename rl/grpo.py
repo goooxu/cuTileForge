@@ -83,6 +83,35 @@ from worker import VerifierPool  # noqa: E402
 HELDOUT_LEVELS = frozenset({60, 84, 88, 97, 98, 99})
 
 
+def _prefer_math_attention(model):
+    """Flash / mem-efficient attention is not bitwise reproducible.
+
+    Two no-grad forwards of a fresh LoRA then differ by ~0.4 nats/token, and
+    the k3 KL estimator reads thousands. Eager math kernels are slower and
+    are the path whose logprobs can actually be compared.
+    """
+    torch.backends.cudnn.benchmark = False
+    if hasattr(torch.backends.cuda, "enable_flash_sdp"):
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
+    cfgs = [getattr(model, "config", None)]
+    inner = getattr(cfgs[0], "text_config", None) if cfgs[0] is not None else None
+    if inner is not None:
+        cfgs.append(inner)
+    for cfg in cfgs:
+        if cfg is None:
+            continue
+        if hasattr(cfg, "_attn_implementation"):
+            cfg._attn_implementation = "eager"
+        if hasattr(cfg, "attn_implementation"):
+            try:
+                cfg.attn_implementation = "eager"
+            except Exception:
+                pass
+    print("logprob attention: math/eager")
+
+
 def completion_logprobs(model, ids, comp_mask, grad: bool):
     """Per-token log probability of the completion tokens.
 
@@ -378,6 +407,7 @@ def main() -> None:
     # already 0; eval() also freezes any base-model dropout.
     model.eval()
     model.config.use_cache = False
+    _prefer_math_attention(model)
 
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0,
@@ -588,29 +618,31 @@ def main() -> None:
                 old = old.detach()
 
             # The starting policy, obtained by holding LoRA scaling at 0 so the
-            # compute path matches the trainable adapter. Costs one forward
-            # rather than a second copy of the weights.
+            # compute path matches the trainable adapter. The reference forward
+            # uses grad=True (then detach) so it shares the autograd/checkpoint
+            # path with `new`; a no-grad ref vs a grad policy was KL 6092 on a
+            # fresh LoRA whose scaling-0 L1 was 0.
             ref = None
             if args.kl_coef > 0:
                 with adapter_kept_at_base(model):
-                    ref = completion_logprobs(model, t_ids, t_mask, grad=False)
+                    ref = completion_logprobs(model, t_ids, t_mask, grad=True)
                 if ref is None:
                     continue
                 ref = ref.detach()
                 if args.fresh_lora and it == start_iter and i == 0:
-                    with torch.no_grad():
-                        on = completion_logprobs(model, t_ids, t_mask, grad=False)
+                    on = completion_logprobs(model, t_ids, t_mask, grad=True)
                     if on is not None:
+                        on = on.detach()
                         seq_l1 = float((on - ref).abs().mean())
                         on2 = completion_logprobs(model, t_ids, t_mask,
-                                                  grad=False)
+                                                  grad=True)
+                        if on2 is not None:
+                            on2 = on2.detach()
                         same_l1 = (float((on - on2).abs().mean())
                                    if on2 is not None else float("nan"))
                         print("iter %d seq0 scaling-0 L1=%.6f two-forward L1=%.6f "
                               "(tokens %d)"
                               % (it, seq_l1, same_l1, t_ids.shape[1]))
-                        # Two-forward noise is not a broken adapter; only refuse
-                        # when the reference path disagrees beyond that floor.
                         floor = (0.05 if math.isnan(same_l1)
                                  else max(0.05, 10.0 * same_l1 + 0.02))
                         if seq_l1 > floor:
@@ -619,6 +651,11 @@ def main() -> None:
                                 "(fresh LoRA must be identity; two-forward "
                                 "L1 %.4f); refusing."
                                 % (seq_l1, same_l1))
+                        if not math.isnan(same_l1) and same_l1 > 0.05:
+                            raise SystemExit(
+                                "two-forward L1 %.4f with identical weights; "
+                                "KL would be noise. Refusing."
+                                % same_l1)
 
             for _ in range(args.inner_epochs):
                 new = completion_logprobs(model, t_ids, t_mask, grad=True)
