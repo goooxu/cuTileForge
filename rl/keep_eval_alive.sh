@@ -110,22 +110,12 @@ print(int(time.time() - max(mt)) if mt else 10 ** 9)
 PY
 }
 
-# True if a remote process cmdline contains $1. Reads /proc directly:
-# pgrep -f is a regex, and leftover detection must not miss the parent
-# during the generate→verify handoff (gen gone, fv not started yet).
+# True if a remote process cmdline contains $1. Reads /proc via
+# proc_has.py so the scanner's own argv cannot match (an inline
+# python -c put the needle on argv and always reported running).
+# Do not pkill -f.
 remote_has_cmd() {
-    remote "python3 -c $(printf %q "import os,sys
-needle=sys.argv[1]
-for pid in os.listdir('/proc'):
-    if not pid.isdigit():
-        continue
-    try:
-        cmd=open('/proc/%s/cmdline'%pid,'rb').read().replace(b'\\0',b' ').decode()
-    except OSError:
-        continue
-    if needle in cmd:
-        sys.exit(0)
-sys.exit(1)") $(printf %q "$1")" >/dev/null 2>&1
+    remote "python3 $(printf %q "$FORGE/rl/proc_has.py") $(printf %q "$1")" >/dev/null 2>&1
 }
 
 # Prints running / leftover / idle / down.
