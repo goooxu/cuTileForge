@@ -2640,5 +2640,6 @@ LoRA-B 均方作锚，省掉第二次长前向。B 分在两张卡上，求和�
 长 completion 一次过 LM head 会在 `logits * output_multiplier` 上 OOM；head 按
 512 token 切开并 checkpoint。softcap 不能 in-place：tanh 的反传要用输出，
 后面再 `mul_` 会直接爆。flash-attn `mha_graph.execute` 失败也跳过该序列，
-不要把整个 window 作废。
+不要把整个 window 作废。训练前向显式 `use_cache=False`；OOM 之后若 CUDA
+已经 illegal access，直接退出让 supervise 重启，不要在坏 context 里继续。
 

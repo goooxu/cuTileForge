@@ -138,6 +138,10 @@ def main() -> None:
           "LM head logprobs are chunked and checkpointed", fails)
     check("mha_graph" in grpo_src,
           "flash-attn graph failures skip the sequence instead of the window", fails)
+    check("use_cache=False" in grpo_src,
+          "training forwards disable the KV cache", fails)
+    check("cuda-poison" in grpo_src,
+          "a poisoned CUDA context exits the window instead of continuing", fails)
     lora_src = open(os.path.join(HERE, "..", "train", "lora_config.py")).read()
     check("tanh_()" not in lora_src,
           "logit softcap is not in-place (autograd needs the tanh output)", fails)

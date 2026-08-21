@@ -91,16 +91,20 @@ LOGIT_CHUNK = 512
 
 
 def _cuda_skip_reason(exc):
-    """Sequences we can drop without killing the window, or None to propagate."""
+    """Sequences we can drop without killing the window, or None to propagate.
+
+    An illegal-memory-access after OOM means the CUDA context is already dead;
+    skipping another sequence will not recover it.
+    """
     if isinstance(exc, torch.cuda.OutOfMemoryError):
         return "OOM"
-    if not isinstance(exc, RuntimeError):
-        return None
     msg = str(exc).lower()
     if "out of memory" in msg:
         return "OOM"
     if "mha_graph" in msg:
         return "flash-attn"
+    if "illegal memory access" in msg or "illegaladdress" in msg:
+        return "cuda-poison"
     return None
 
 
@@ -129,7 +133,8 @@ def completion_logprobs(model, ids, comp_mask, grad: bool):
     ctx = torch.enable_grad() if grad else torch.no_grad()
     with ctx:
         hidden = body(input_ids=ids,
-                      attention_mask=torch.ones_like(ids)).last_hidden_state
+                      attention_mask=torch.ones_like(ids),
+                      use_cache=False).last_hidden_state
         # Position t predicts token t+1, so a completion token at t is scored by
         # the hidden state at t-1.
         h = hidden[:, :-1]
@@ -681,12 +686,22 @@ def main() -> None:
                     if not torch.isfinite(loss):
                         break
                     (loss / args.grad_accum).backward()
-                except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                except Exception as e:
                     reason = _cuda_skip_reason(e)
                     if reason is None:
                         raise
                     torch.cuda.empty_cache()
                     opt.zero_grad(set_to_none=True)
+                    if reason == "cuda-poison":
+                        raise SystemExit(
+                            "iter %d: CUDA context poisoned; restarting the window"
+                            % it)
+                    try:
+                        torch.cuda.synchronize()
+                    except Exception:
+                        raise SystemExit(
+                            "iter %d: CUDA poisoned after %s; restarting the window"
+                            % (it, reason))
                     print("iter %d: %s on a %d-token sequence; skipping it"
                           % (it, reason, t_ids.shape[1]))
                     break
