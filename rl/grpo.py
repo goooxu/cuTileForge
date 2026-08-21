@@ -83,6 +83,13 @@ from worker import VerifierPool  # noqa: E402
 HELDOUT_LEVELS = frozenset({60, 84, 88, 97, 98, 99})
 
 
+# 512 x 152k vocab x 2 B ~ 156 MiB bf16 logits (312 MiB after the fp32
+# log_softmax). A 12k-token completion projected in one shot is 3.6 GiB and
+# OOM'd Glimmer on the training GPUs; checkpointing the head chunk keeps the
+# backward from holding every chunk's softmax at once.
+LOGIT_CHUNK = 512
+
+
 def completion_logprobs(model, ids, comp_mask, grad: bool):
     """Per-token log probability of the completion tokens.
 
@@ -97,6 +104,14 @@ def completion_logprobs(model, ids, comp_mask, grad: bool):
     """
     body, lm_head = unwrap(model)
     transform = logit_transform(body)
+
+    def _head_logprobs(h_chunk, tgt_chunk):
+        logits = lm_head(h_chunk)
+        if transform is not None:
+            logits = transform(logits)
+        return torch.log_softmax(logits.float(), dim=-1).gather(
+            1, tgt_chunk.unsqueeze(1)).squeeze(1)
+
     ctx = torch.enable_grad() if grad else torch.no_grad()
     with ctx:
         hidden = body(input_ids=ids,
@@ -108,11 +123,20 @@ def completion_logprobs(model, ids, comp_mask, grad: bool):
         keep = comp_mask[:, 1:].to(h.device).bool()
         if not keep.any():
             return None
-        logits = lm_head(h[keep])
-        if transform is not None:
-            logits = transform(logits)
-        return torch.log_softmax(logits.float(), dim=-1).gather(
-            1, target[keep].unsqueeze(1)).squeeze(1)
+        h_keep = h[keep]
+        tgt = target[keep]
+        pieces = []
+        n = h_keep.shape[0]
+        for s in range(0, n, LOGIT_CHUNK):
+            h_c = h_keep[s:s + LOGIT_CHUNK]
+            t_c = tgt[s:s + LOGIT_CHUNK]
+            if grad:
+                lp = torch.utils.checkpoint.checkpoint(
+                    _head_logprobs, h_c, t_c, use_reentrant=False)
+            else:
+                lp = _head_logprobs(h_c, t_c)
+            pieces.append(lp)
+        return torch.cat(pieces, dim=0)
 
 
 def group_advantages(rewards):
@@ -509,6 +533,7 @@ def main() -> None:
         t0 = time.time()
         scored = score_rollouts(items, gpus=args.gpus, workers=workers,
                                 measure_speed=not args.no_speed, pool=pool)
+        torch.cuda.empty_cache()
         t_reward = time.time() - t0
         stats = summarise(scored)
         n_inconclusive = sum(1 for r, rec in scored.values()
@@ -617,7 +642,13 @@ def main() -> None:
                 old = old.detach()
 
             for _ in range(args.inner_epochs):
-                new = completion_logprobs(model, t_ids, t_mask, grad=True)
+                try:
+                    new = completion_logprobs(model, t_ids, t_mask, grad=True)
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+                    print("iter %d: OOM on a %d-token sequence; skipping it"
+                          % (it, t_ids.shape[1]))
+                    break
                 if new is None:
                     break
                 a = adv[j]

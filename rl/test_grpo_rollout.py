@@ -134,6 +134,8 @@ def main() -> None:
           "LoRA-B penalty sums across sharded devices", fails)
     check("two-forward L1" not in grpo_src,
           "does not refuse on unreproducible long-seq logprobs", fails)
+    check("LOGIT_CHUNK" in grpo_src and "checkpoint" in grpo_src,
+          "LM head logprobs are chunked and checkpointed", fails)
 
     print("\nscore_rollouts pool reuse:")
     from reward import score_rollouts  # noqa: E402
