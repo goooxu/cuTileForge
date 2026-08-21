@@ -62,6 +62,11 @@ PY
 serve() {
     local model="$1"
     local attempt
+    if curl -s --max-time 3 http://localhost:8000/v1/models 2>/dev/null \
+            | grep -q Qwen3; then
+        echo "  already serving $model"
+        return 0
+    fi
     docker rm -f qwen-vllm >/dev/null 2>&1
     # After a verifier container exits, the next vLLM can see 0 CUDA devices
     # (cudaErrorNotPermitted). Give the driver a moment, and if the container

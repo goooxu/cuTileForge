@@ -155,7 +155,10 @@ fi
 echo "frontier: $frontier ($(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$frontier") tasks)"
 
 # refresh_loop serves itself; a leftover screen server would steal GPUs.
-docker rm -f qwen-vllm >/dev/null 2>&1 || true
+if ! curl -s --max-time 3 http://localhost:8000/v1/models 2>/dev/null \
+        | grep -q Qwen3; then
+    docker rm -f qwen-vllm >/dev/null 2>&1 || true
+fi
 
 echo "=== GRPO $TOTAL iterations, window $WINDOW ==="
 exec bash "$FORGE/rl/supervise_grpo.sh" \

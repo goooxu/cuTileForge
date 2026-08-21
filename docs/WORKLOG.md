@@ -2636,4 +2636,5 @@ Glimmer 上自己补这两个，并打印 extra_body 和第一条样本前缀。
 
 同一条 autograd 路径上两次前向仍差 L1=0.34（7518 token）。token KL 放弃，改成
 LoRA-B 均方作锚，省掉第二次长前向。B 分在两张卡上，求和要先 `.to` 到同一设备。
+重启父进程时，若 vLLM 已在 8000 上应答就不要 `docker rm`。
 
