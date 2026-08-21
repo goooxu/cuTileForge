@@ -104,9 +104,9 @@ for spec in "$@"; do
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser gemma4"
         export VLLM_IMAGE=vllm/vllm-openai:nightly-aarch64
-    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" || "$tag" == "GLC" || "$tag" == "GLD" ]]; then
+    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" || "$tag" == "GLC" || "$tag" == "GLD" || "$tag" == "GLD0" ]]; then
         # Muse Glimmer: thinking cannot be turned off. Table A, xhigh.
-        # GLA / GLB / GLC / GLD must be sampled identically to GL so the comparison holds.
+        # GLA / GLB / GLC / GLD / GLD0 must be sampled identically to GL so the comparison holds.
         export REASONING_STRENGTH=xhigh
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser muse_glimmer --generation-config auto"

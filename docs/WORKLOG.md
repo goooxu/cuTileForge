@@ -2645,9 +2645,8 @@ LoRA-B 均方作锚，省掉第二次长前向。B 分在两张卡上，求和�
 `empty_cache` 本身也会 IMA，必须包在 try 里。supervise 对「这一轮没写出
 history」允许连 stall 几次，不要第一次就放弃。
 
-两条 replica 都跑满 60 轮。选 seed=1 做 GL-D（全程 pass>0 的轮次更多），
-merge 到本地 NVMe 后按 GL-C 同一套表 A 协议评。`compare_eval_suite.sh`
-要把 `GLD` 走 Glimmer 那条采样路径，否则会落到默认 nightly 镜像。
-`keep_eval_alive.sh` 的 cmdline 扫描不能用 inline `python -c`：needle 在
-自己的 argv 上，永远判成 running，idle 时不会重拉。改走 `proc_has.py`。
+两条 replica 都跑满 60 轮。seed=1 merge 成 `GLD`，seed=0 成 `GLD0`，两套都走
+表 A。`compare_eval_suite.sh` 要把这些 tag 走 Glimmer 路径，否则会落到默认
+nightly 镜像。`keep_eval_alive.sh` 的 cmdline 扫描不能用 inline `python -c`：
+needle 在自己的 argv 上，永远判成 running，idle 时不会重拉。改走 `proc_has.py`。
 
