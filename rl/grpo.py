@@ -90,6 +90,20 @@ HELDOUT_LEVELS = frozenset({60, 84, 88, 97, 98, 99})
 LOGIT_CHUNK = 512
 
 
+def _cuda_skip_reason(exc):
+    """Sequences we can drop without killing the window, or None to propagate."""
+    if isinstance(exc, torch.cuda.OutOfMemoryError):
+        return "OOM"
+    if not isinstance(exc, RuntimeError):
+        return None
+    msg = str(exc).lower()
+    if "out of memory" in msg:
+        return "OOM"
+    if "mha_graph" in msg:
+        return "flash-attn"
+    return None
+
+
 def completion_logprobs(model, ids, comp_mask, grad: bool):
     """Per-token log probability of the completion tokens.
 
@@ -644,34 +658,38 @@ def main() -> None:
             for _ in range(args.inner_epochs):
                 try:
                     new = completion_logprobs(model, t_ids, t_mask, grad=True)
-                except torch.cuda.OutOfMemoryError:
+                    if new is None:
+                        break
+                    a = adv[j]
+                    if old is None:
+                        loss = -(a * new).mean()
+                        n_tok += new.numel()
+                    else:
+                        ratio = torch.exp(new - old)
+                        unclipped = ratio * a
+                        clipped = torch.clamp(ratio, 1 - args.clip_eps,
+                                              1 + args.clip_eps) * a
+                        loss = -torch.min(unclipped, clipped).mean()
+                        n_clipped += int((unclipped > clipped).sum())
+                        n_tok += ratio.numel()
+                    if args.kl_coef > 0:
+                        b2 = lora_b_mean_sq(model)
+                        if b2 is not None:
+                            kl = b2 / LORA_B2_REF
+                            loss = loss + args.kl_coef * kl.to(loss.device)
+                            kls.append(kl.item())
+                    if not torch.isfinite(loss):
+                        break
+                    (loss / args.grad_accum).backward()
+                except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                    reason = _cuda_skip_reason(e)
+                    if reason is None:
+                        raise
                     torch.cuda.empty_cache()
-                    print("iter %d: OOM on a %d-token sequence; skipping it"
-                          % (it, t_ids.shape[1]))
+                    opt.zero_grad(set_to_none=True)
+                    print("iter %d: %s on a %d-token sequence; skipping it"
+                          % (it, reason, t_ids.shape[1]))
                     break
-                if new is None:
-                    break
-                a = adv[j]
-                if old is None:
-                    loss = -(a * new).mean()
-                    n_tok += new.numel()
-                else:
-                    ratio = torch.exp(new - old)
-                    unclipped = ratio * a
-                    clipped = torch.clamp(ratio, 1 - args.clip_eps,
-                                          1 + args.clip_eps) * a
-                    loss = -torch.min(unclipped, clipped).mean()
-                    n_clipped += int((unclipped > clipped).sum())
-                    n_tok += ratio.numel()
-                if args.kl_coef > 0:
-                    b2 = lora_b_mean_sq(model)
-                    if b2 is not None:
-                        kl = b2 / LORA_B2_REF
-                        loss = loss + args.kl_coef * kl.to(loss.device)
-                        kls.append(kl.item())
-                if not torch.isfinite(loss):
-                    break
-                (loss / args.grad_accum).backward()
                 losses.append(loss.item())
                 done_micro += 1
                 if done_micro % args.grad_accum == 0:
