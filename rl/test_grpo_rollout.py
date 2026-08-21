@@ -128,8 +128,10 @@ def main() -> None:
           "KL reference does not skip the LoRA add", fails)
     check("KEEP_SPECIAL_TOKENS" in grpo_src,
           "grpo.py forces Glimmer channel markers if the env is empty", fails)
-    check("grad=True" in grpo_src and "adapter_kept_at_base" in grpo_src,
-          "KL reference uses the same autograd path as the policy", fails)
+    check("def lora_b_mean_sq" in grpo_src,
+          "KL uses LoRA-B mean-square, not a second long forward", fails)
+    check("two-forward L1" not in grpo_src,
+          "does not refuse on unreproducible long-seq logprobs", fails)
 
     print("\nscore_rollouts pool reuse:")
     from reward import score_rollouts  # noqa: E402

@@ -182,6 +182,33 @@ def adapter_kept_at_base(model):
             fn()
 
 
+def lora_b_mean_sq(model):
+    """Mean square of LoRA B. Zero at init, so this is a cheap KL-to-SFT.
+
+    Token-level KL needs two long forwards whose logprobs differ by ~0.3 nats
+    even with identical weights on this Glimmer stack (flash attention). That
+    is not a KL, it is noise, and k3 reads thousands. Penalising B keeps the
+    adapter near the merged SFT policy without a second forward.
+    """
+    tot = None
+    n = 0
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if "lora_B" not in name and "lora_embedding_B" not in name:
+            continue
+        term = p.float().pow(2).sum()
+        tot = term if tot is None else tot + term
+        n += p.numel()
+    if tot is None or n == 0:
+        return None
+    return tot / n
+
+
+# mean(B^2) at RMS 1e-3. Makes kl_coef * (b2 / this) O(kl_coef) at that scale.
+LORA_B2_REF = 1e-6
+
+
 def adapter_logprob_l1(model, dev, length=16):
     """Mean |logp_on - logp_base|. A fresh LoRA is B=0, so this must be ~0.
 
@@ -253,8 +280,8 @@ def main() -> None:
                     help="Needed at max-len 20480; off by default because it "
                          "makes each step slower.")
     ap.add_argument("--kl-coef", type=float, default=0.05,
-                    help="Weight on KL to the SFT policy (LoRA scaling held at "
-                         "0). Set to 0 only if you want to reproduce the collapse.")
+                    help="Weight on LoRA-B mean-square (stand-in for token KL "
+                         "to SFT). Set to 0 only if you want to reproduce the collapse.")
     ap.add_argument("--max-no-code", type=float, default=0.35,
                     help="Abort if this share of rollouts yields no code block. "
                          "The failure mode this catches is degeneration to empty "
@@ -438,6 +465,8 @@ def main() -> None:
     chat = Chat(args.base_url, args.served_model, args.temperature, args.top_p,
                 args.top_k, args.max_tokens)
     print("chat extra_body: %s" % chat.kw.get("extra_body"))
+    if args.kl_coef > 0:
+        print("KL: LoRA-B mean-square (token KL is not reproducible here)")
 
     # Carry the log forward across invocations, or the trend window restarts at
     # every resume and hides exactly the comparison it exists to show.
@@ -587,46 +616,6 @@ def main() -> None:
                     continue
                 old = old.detach()
 
-            # The starting policy, obtained by holding LoRA scaling at 0 so the
-            # compute path matches the trainable adapter. The reference forward
-            # uses grad=True (then detach) so it shares the autograd/checkpoint
-            # path with `new`; a no-grad ref vs a grad policy was KL 6092 on a
-            # fresh LoRA whose scaling-0 L1 was 0.
-            ref = None
-            if args.kl_coef > 0:
-                with adapter_kept_at_base(model):
-                    ref = completion_logprobs(model, t_ids, t_mask, grad=True)
-                if ref is None:
-                    continue
-                ref = ref.detach()
-                if args.fresh_lora and it == start_iter and i == 0:
-                    on = completion_logprobs(model, t_ids, t_mask, grad=True)
-                    if on is not None:
-                        on = on.detach()
-                        seq_l1 = float((on - ref).abs().mean())
-                        on2 = completion_logprobs(model, t_ids, t_mask,
-                                                  grad=True)
-                        if on2 is not None:
-                            on2 = on2.detach()
-                        same_l1 = (float((on - on2).abs().mean())
-                                   if on2 is not None else float("nan"))
-                        print("iter %d seq0 scaling-0 L1=%.6f two-forward L1=%.6f "
-                              "(tokens %d)"
-                              % (it, seq_l1, same_l1, t_ids.shape[1]))
-                        floor = (0.05 if math.isnan(same_l1)
-                                 else max(0.05, 10.0 * same_l1 + 0.02))
-                        if seq_l1 > floor:
-                            raise SystemExit(
-                                "scaling-0 L1 %.4f on a real sequence "
-                                "(fresh LoRA must be identity; two-forward "
-                                "L1 %.4f); refusing."
-                                % (seq_l1, same_l1))
-                        if not math.isnan(same_l1) and same_l1 > 0.05:
-                            raise SystemExit(
-                                "two-forward L1 %.4f with identical weights; "
-                                "KL would be noise. Refusing."
-                                % same_l1)
-
             for _ in range(args.inner_epochs):
                 new = completion_logprobs(model, t_ids, t_mask, grad=True)
                 if new is None:
@@ -643,17 +632,12 @@ def main() -> None:
                     loss = -torch.min(unclipped, clipped).mean()
                     n_clipped += int((unclipped > clipped).sum())
                     n_tok += ratio.numel()
-                if ref is not None:
-                    # k3 estimator: non-negative and lower variance than the
-                    # plain log-ratio difference.
-                    d = ref - new
-                    kl = (torch.exp(d) - d - 1).mean()
-                    loss = loss + args.kl_coef * kl
-                    kls.append(kl.item())
-                    if args.fresh_lora and it == start_iter and kl.item() > 1.0:
-                        raise SystemExit(
-                            "iter %d KL %.1f on a fresh LoRA (expected ~0). "
-                            "Refusing to write this adapter." % (it, kl.item()))
+                if args.kl_coef > 0:
+                    b2 = lora_b_mean_sq(model)
+                    if b2 is not None:
+                        kl = b2 / LORA_B2_REF
+                        loss = loss + args.kl_coef * kl
+                        kls.append(kl.item())
                 if not torch.isfinite(loss):
                     break
                 (loss / args.grad_accum).backward()

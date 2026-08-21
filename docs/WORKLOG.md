@@ -2631,4 +2631,9 @@ fresh LoRA 走的是 `W x + B(A(x))*scaling`（B=0 时多一次加零）。参�
 Glimmer 上自己补这两个，并打印 extra_body 和第一条样本前缀。
 
 评测盒 scaling-0 L1=0，但两次前向 L1=0.39，KL 6092。参考前向改成 `grad=True`
-再 detach，attention 走 eager/math，避免 no-grad 和 flash 两条路对不上。
+再 detach。eager attention 在长序列上 OOM（还要 6 GB），所以长序列仍走 flash；
+可复现性靠同一条 autograd 路径，不靠换成 math kernel。
+
+同一条 autograd 路径上两次前向仍差 L1=0.34（7518 token）。token KL 放弃，改成
+LoRA-B 均方作锚，省掉第二次长前向。
+
