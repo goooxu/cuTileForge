@@ -32,6 +32,8 @@
 # GLD0 was the seed=0 replica; abandoned after table A. Do not sample it.
 # GLE = SFT on GLC mixing a second distill of GL-C's own passes with a
 # catchable-speed slice from level 80.
+# GLF = SFT on GLE from the fastest timed traces of GL-E's own harvest
+# on train levels 86/87/92/93. Speed-only, no distill mix.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -107,9 +109,9 @@ for spec in "$@"; do
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser gemma4"
         export VLLM_IMAGE=vllm/vllm-openai:nightly-aarch64
-    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" || "$tag" == "GLC" || "$tag" == "GLD" || "$tag" == "GLD0" || "$tag" == "GLE" ]]; then
+    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" || "$tag" == "GLC" || "$tag" == "GLD" || "$tag" == "GLD0" || "$tag" == "GLE" || "$tag" == "GLF" ]]; then
         # Muse Glimmer: thinking cannot be turned off. Table A, xhigh.
-        # GLA / GLB / GLC / GLD / GLE must be sampled identically to GL so the comparison holds.
+        # GLA / GLB / GLC / GLD / GLE / GLF must be sampled identically to GL so the comparison holds.
         # GLD0 stays on this path only so a leftover score of existing jsonl stays comparable.
         export REASONING_STRENGTH=xhigh
         export MAX_TOKENS=32768

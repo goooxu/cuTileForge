@@ -109,6 +109,14 @@ def main() -> None:
     ap.add_argument("--require-timing", action="store_true",
                     help="Drop solutions that have no speedup. Needed when "
                          "--max-speedup / --min-speedup define a speed gate.")
+    ap.add_argument("--min-timed-passes", type=int, default=None,
+                    help="Drop a problem unless it has at least this many "
+                         "timed passing samples. Use with --require-timing "
+                         "so a single lucky kernel cannot enter a speed set.")
+    ap.add_argument("--min-best-over-median", type=float, default=None,
+                    help="Drop a problem unless its fastest timed pass is at "
+                         "least this multiple of the median timed pass. "
+                         "Keeps only tasks that actually showed a speed choice.")
     ap.add_argument("--category-quota", default=None,
                     help="Comma-separated cat=N caps, e.g. matmul=100,elementwise=60. "
                          "Use '*=N' for a default. Uncapped categories keep everything.")
@@ -167,8 +175,31 @@ def main() -> None:
         # than whichever the sampler happened to emit first. Among several
         # correct kernels for one task, the difference between them is the most
         # direct signal about speed the dataset can carry.
-        for pid in by_problem:
-            by_problem[pid].sort(key=lambda t: (-(t[1] or 0.0), t[0]))
+        n_few = n_flat = 0
+        for pid in list(by_problem):
+            recs = by_problem[pid]
+            recs.sort(key=lambda t: (-(t[1] or 0.0), t[0]))
+            timed = [t[1] for t in recs if t[1] is not None]
+            if args.min_timed_passes is not None and len(timed) < args.min_timed_passes:
+                n_few += 1
+                del by_problem[pid]
+                continue
+            if args.min_best_over_median is not None:
+                if len(timed) < 2:
+                    n_flat += 1
+                    del by_problem[pid]
+                    continue
+                timed_sorted = sorted(timed)
+                med = timed_sorted[len(timed_sorted) // 2]
+                if not med or (max(timed) / med) < args.min_best_over_median:
+                    n_flat += 1
+                    del by_problem[pid]
+        if args.min_timed_passes is not None:
+            print("  dropped %d problems with fewer than %d timed passes"
+                  % (n_few, args.min_timed_passes))
+        if args.min_best_over_median is not None:
+            print("  dropped %d problems with best/median < %.2fx"
+                  % (n_flat, args.min_best_over_median))
         n_tasks += len(by_problem)
 
         for pid, sids in sorted(by_problem.items()):

@@ -94,6 +94,7 @@ python3 taskgen/test_eval_suite.py
 | GL-C | `GLC` | 在 GL-B 上再做一轮 SFT，补回 activation / elementwise |
 | GL-D | `GLD` | 在 GL-C 上做 GRPO，seed=1 |
 | GL-E | `GLE` | 在 GL-C 上混训：第二次自蒸馏 + level 80 速度切片 |
+| GL-F | `GLF` | 在 GL-E 上只训最快计时轨迹（训练层 86/87/92/93） |
 
 seed=0 那条合过一次、tag 是 `GLD0`，表 A 之后放弃，不作发表线。已有
 `runs/GLD0_l60_verified.jsonl` 只作失败记录，不要再采、不要再合权重。
@@ -126,7 +127,7 @@ CUTILE_WS=... rl/compare_eval_suite.sh \
 
 `Q38` 会开 thinking 并设 `max_tokens=32768`。`Q38nt` 会关 thinking 并设
 `max_tokens=8192`。`G4` 关 thinking、8192、`nightly-aarch64`（v0.27.1 起不来）。
-`G4t` 开 thinking、32768、同一镜像。`GL`、`GLA`、`GLB`、`GLC`、`GLD`、`GLE` 用 `muse-glimmer` 镜像、
+`G4t` 开 thinking、32768、同一镜像。`GL`、`GLA`、`GLB`、`GLC`、`GLD`、`GLE`、`GLF` 用 `muse-glimmer` 镜像、
 `reasoning_strength=xhigh`、32768。其它 tag 默认 32768、不传 thinking 开关。
 `GLD0` 已放弃，不要再进 compare。
 

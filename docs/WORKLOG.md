@@ -2692,3 +2692,14 @@ p@4 **90.3%**（GL-C 680 / 66.8% / 88.3%）。吞吐 132/139，p@1 84.7%
 （GL-C 131 / 83.6%）。共同 658 道上 `kernel_ms` 中位 1.008x。compile `su`
 1.883x 不引用。发表线改成 GL-E。不重采 GLC / GLD。
 
+---
+
+# 从 GL-E 做最快轨迹 SFT（GL-F）
+
+只攻速度。起点是 GL-E，不混蒸馏。level 80 那轮训的是 catchable 慢解、且没有
+conv/matmul，表 A 的 `kernel_ms` 没动。这一轮用 GL-E 自己在训练层 86 / 87 /
+92 / 93 上的高温计时采集，过 `speed_gates` 加 GEMM 门之后，每题只留最快的
+一条（至少 2 条计时、best/median ≥ 1.2x）。不过门就停。
+
+发表只认对 GL-E 的 pairwise `kernel_ms`。不重采 GLE。
+
