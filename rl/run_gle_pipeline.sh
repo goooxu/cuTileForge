@@ -7,6 +7,12 @@ set -euo pipefail
 WS="${CUTILE_WS:?CUTILE_WS must point at the workspace root}"
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MERGED="${MERGED_OUT:-/raid/tmp/gemsg-cutile/model-GLE}"
+mkdir -p "$WS/runs"
+exec 8>"$WS/runs/.gle_pipeline.lock"
+if ! flock -n 8; then
+    echo "run_gle_pipeline already running"
+    exit 0
+fi
 
 need=(
     "$WS/runs/harvest_glc86_verified.jsonl"
@@ -22,15 +28,16 @@ for f in "${need[@]}"; do
     fi
 done
 
-python3 - "$WS/runs/harvest_glc80_verified.jsonl" "$FORGE/verify" <<'PY' || {
-    echo "waiting: level 80 timing incomplete"
-    exit 2
-}
+if ! python3 - "$WS/runs/harvest_glc80_verified.jsonl" "$FORGE/verify" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[2])
 from fast_verify import timing_complete
 sys.exit(0 if timing_complete(sys.argv[1]) else 1)
 PY
+then
+    echo "waiting: level 80 timing incomplete"
+    exit 2
+fi
 
 if [[ -f "$MERGED/processor_config.json" ]]; then
     echo "already merged $MERGED"
@@ -50,7 +57,15 @@ if ! python3 "$FORGE/rl/speed_gate.py" \
 fi
 
 echo "=== mix SFT ==="
-bash "$FORGE/rl/mix_gl_e_sft.sh" "$WS/runs/sft_gle.jsonl"
+if [[ -f "$WS/runs/sft_gle.jsonl" ]]; then
+    echo "sft jsonl exists, skip mix"
+else
+    # Host python on the GPU box has no kernelbench extras (tqdm). Build
+    # the jsonl in the eval image; CUTILE_WS inside the container is /ws.
+    CUTILE_WS="$WS" IMAGE=cutile-eval:latest GPUS=none NAME=gle_mix \
+        "$FORGE/kernelbench/scripts/in_container.sh" \
+        "cd /ws/cuTileForge && CUTILE_WS=/ws bash rl/mix_gl_e_sft.sh /ws/runs/sft_gle.jsonl"
+fi
 
 echo "=== SFT + merge ==="
 bash "$FORGE/rl/run_gle_sft.sh"

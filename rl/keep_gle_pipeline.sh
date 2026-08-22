@@ -101,7 +101,10 @@ while true; do
     fi
     if [[ ! -f "$WS/runs/.keep_eval_GLE.pid" ]] || ! kill -0 "$(cat "$WS/runs/.keep_eval_GLE.pid")" 2>/dev/null; then
         echo "[keep-gle] starting table A"
+        # Do not inherit MERGE_ADAPTER from a GRPO shell. GLE remake on the
+        # eval box must use the SFT adapter, not grpo_glc_s1.
         setsid env CUTILE_WS="$WS" SKIP_INSTALL=1 \
+            MERGE_BASE="$BASE" MERGE_ADAPTER="$WS/models/lora-GLE" \
             bash "$FORGE/rl/keep_eval_alive.sh" "GLE:$MODEL" \
             >> "$WS/runs/keep_eval_GLE.log" 2>&1 < /dev/null &
         echo $! > "$WS/runs/.keep_eval_GLE.launch.pid"

@@ -12,6 +12,7 @@ DISTILL_OUT="$WS/runs/sft_gle_distill.jsonl"
 SPEED_OUT="$WS/runs/sft_gle_speed.jsonl"
 
 cd "$FORGE"
+export PYTHONPATH="$FORGE/kernelbench/src${PYTHONPATH:+:$PYTHONPATH}"
 python3 train/build_sft_dataset.py \
     --run 86:$WS/runs/harvest_glc86:$WS/runs/harvest_glc86_verified.jsonl \
     --run 87:$WS/runs/harvest_glc87:$WS/runs/harvest_glc87_verified.jsonl \

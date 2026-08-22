@@ -184,7 +184,11 @@ ensure_model() {
     local adapter
     adapter="$(as_container_path "$MERGE_ADAPTER")"
     echo "[keep] re-merging $adapter onto $MERGE_BASE -> $MODEL"
-    remote "cd $(printf %q "$WS") && IMAGE=cutile-train:latest MOUNTS='-v /raid/tmp:/raid/tmp' GPUS=none \
+    # CUTILE_WS must be the workspace root so the container mounts it at /ws
+    # and /ws/cuTileForge exists. Without it, in_container.sh defaults to the
+    # kernelbench parent and `cd /ws/cuTileForge` fails on the host mount.
+    remote "cd $(printf %q "$WS") && CUTILE_WS=$(printf %q "$WS") IMAGE=cutile-train:latest \
+        MOUNTS='-v /raid/tmp:/raid/tmp' GPUS=none \
         $(printf %q "$FORGE/kernelbench/scripts/in_container.sh") \
         $(printf %q "cd /ws/cuTileForge && python3 -u train/merge_lora.py --base $MERGE_BASE --adapter $adapter --out $MODEL")"
     remote "test -f $(printf %q "$MODEL/processor_config.json")"

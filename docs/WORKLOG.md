@@ -2677,3 +2677,13 @@ conv。哈希相对 60 / 83 / 84–99 无泄漏。过门条件：`0.40 ≤ speed
 SFT 与 GL-B / GL-C 相同：attention-only r=128，2 epoch，lr 5e-5，max-len 20480。
 速度切片目标占成品 20–35%。
 
+level 80 门过了：1312 条 / 346 道，matmul+conv 0%。混成 `sft_gle.jsonl`
+4205 条，速度切片 20%。SFT 从 GL-C 训完，adapter 在 `models/lora-GLE`，
+训练盒本地盘写成 `model-GLE`。
+
+表 A 没马上起来。`/raid/tmp` 是盒子本地盘，评测盒没有这份合并权重。
+看门狗从早先的 GRPO 环境里继承了 `MERGE_ADAPTER=grpo_glc_s1`，差点用错
+adapter 在评测盒重合成 GLE；`in_container.sh` 又没带 `CUTILE_WS`，
+`cd /ws/cuTileForge` 失败，所以错误合并没写成。已改成评测盒用
+`models/lora-GLE` 重合成 `model-GLE`，再走 tag `GLE`。
+
