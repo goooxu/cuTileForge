@@ -2687,3 +2687,8 @@ adapter 在评测盒重合成 GLE；`in_container.sh` 又没带 `CUTILE_WS`，
 `cd /ws/cuTileForge` 失败，所以错误合并没写成。已改成评测盒用
 `models/lora-GLE` 重合成 `model-GLE`，再走 tag `GLE`。
 
+表 A：GL-E 相对 GL-C 正确性涨了，速度没动。延迟 **695/770**，p@1 **69.8%**，
+p@4 **90.3%**（GL-C 680 / 66.8% / 88.3%）。吞吐 132/139，p@1 84.7%
+（GL-C 131 / 83.6%）。共同 658 道上 `kernel_ms` 中位 1.008x。compile `su`
+1.883x 不引用。发表线改成 GL-E。不重采 GLC / GLD。
+
