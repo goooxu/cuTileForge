@@ -2741,3 +2741,21 @@ vLLM 刚停就开 verifier 会 `No CUDA GPUs are available`，写出全是
 **1.001x**，没过 1.02x。速度实验失败。正确性涨了，发表线仍是 GL-E。不重采
 GLE。读数在 `results/REPORT_EVAL_SUITE.md`。
 
+---
+
+# GL-G：同一题快/慢对做 ORPO
+
+不再做第三轮「每题一条最快轨迹」SFT。GL-F 在评测上不是没动速度，是快慢
+抵消（≥1.05x 236 道，≤0.95x 190 道）。
+
+Harvest 里 2277 道至少 2 条计时。筛 `kernel_ms` 差在 **1.5x–8x**、两边都在
+**0.05–50 ms**：366 对，conv+matmul 248（68%），代码都不重复。漏掉
+`TM/TN/TK` 时以为写法没差；补上之后 GEMM 的 90%（224/248）tile 常量不同。
+最常见是快 `(32, 64)` 对慢 `(64, 128)`。几乎都是同一条 `ct.mma` 循环，差在
+tile。SFT 只喂快的那条，模型两边都会写，没有「这个 tile 更慢」。
+
+从 **GL-F** 做 ORPO，chosen = 最低 `kernel_ms`，rejected = 最高。attention-only
+r=128，2 epoch，lr 5e-5，`orpo-lambda` 0.5。合成 `model-GLG`。表 A 对 GL-F
+（也看 GL-E）。赢的门槛是共同题中位 `kernel_ms` ≥ 1.05x；p@1 不能掉下
+GL-F 的 72.4%。不引用 compile `su`。不重采。
+
