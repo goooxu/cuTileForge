@@ -70,6 +70,25 @@ fi
 
 echo "=== stop vLLM, verify correctness ==="
 docker rm -f qwen-vllm >/dev/null 2>&1 || true
+# Starting the verifier in the same second as the serve container dies
+# has returned "No CUDA GPUs are available" and a jsonl of worker_crash.
+# Wait until a fresh eval-image container can see CUDA.
+ready=0
+for _ in $(seq 1 12); do
+    if CUTILE_WS="$WS" IMAGE=cutile-eval:latest GPUS=all \
+            "$KB/scripts/in_container.sh" \
+            "python3 -c 'import torch; assert torch.cuda.device_count() >= 1'" \
+            >/dev/null 2>&1; then
+        ready=1
+        break
+    fi
+    echo "waiting for CUDA to reappear in the eval image"
+    sleep 5
+done
+if [[ "$ready" != "1" ]]; then
+    echo "CUDA still invisible after vLLM stop; not verifying" >&2
+    exit 1
+fi
 
 KERNEL_DIR="$WS/runs/$RUN_NAME"
 n_kern=0
@@ -96,6 +115,23 @@ done
 docker logs "$FV" 2>&1 | tail -5 || true
 echo "verify done: $OUT"
 wc -l "$OUT" || true
+if ! python3 - "$OUT" <<'PY'
+import json, sys
+n = p = 0
+for line in open(sys.argv[1]):
+    if not line.strip():
+        continue
+    n += 1
+    if json.loads(line).get("passed"):
+        p += 1
+if n == 0 or p == 0:
+    raise SystemExit(1)
+print("passed %d / %d" % (p, n))
+PY
+then
+    echo "verify produced no passes (GPU missing or all crash); not timing" >&2
+    exit 1
+fi
 
 # Timing is a second container. The correctness pool can poison CUDA; do not
 # measure in the same process. Needed for a speed-gated slice (level 80).

@@ -71,6 +71,11 @@ def timing_complete(path, need=0, max_untimed_frac=0.01, max_untimed_abs=8):
     if need and n < need:
         return False
     passed = sum(1 for r in prior.values() if r.get("passed"))
+    # All-crash / empty-pass jsonl is not done. timing_complete used to
+    # return True when passed=0 (untimed=0 <= cap), which skipped a
+    # harvest whose verifier never saw a GPU.
+    if n and passed == 0:
+        return False
     untimed = len(passed_untimed(prior))
     cap = max(max_untimed_abs, int(passed * max_untimed_frac))
     return untimed <= cap

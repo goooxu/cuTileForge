@@ -2703,3 +2703,21 @@ conv/matmul，表 A 的 `kernel_ms` 没动。这一轮用 GL-E 自己在训练�
 
 发表只认对 GL-E 的 pairwise `kernel_ms`。不重采 GLE。
 
+采集齐了（k=8，温度 1.2，对 compile 计时）：
+
+| run | kernels | passed | timed |
+| --- | ---: | ---: | ---: |
+| harvest_gle86 | 4800 | 3375 | 3373 |
+| harvest_gle87 | 5600 | 4159 | 4150 |
+| harvest_gle92 | 7200 | 5863 | 5852 |
+| harvest_gle93 | 2000 | 1623 | 1623 |
+
+vLLM 刚停就开 verifier 会 `No CUDA GPUs are available`，写出全是
+`worker_crash` 的 jsonl。`timing_complete` 以前在 0 条通过时也算完成。
+两边都改了：停 serve 之后先探 CUDA，0 通过就失败；0 通过的 jsonl 不算 timed。
+
+**门没过，没有训。** 2346 道有计时通过：median best 2.549，只有 9% 落在
+`(0.40, 1.00)`（GATE 1）。组内差够（989/2185 ≥ 1.3x，GATE 2）。slow-but-solid
+543 道里 conv+matmul 62.8%（GATE 3）。中位 2.55x 和表 A 上 pairwise
+`kernel_ms` 对不上，跨次 compile 墙钟不可用。按计划停，不拿蒸馏顶替，不改门硬训。
+
