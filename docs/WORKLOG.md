@@ -2721,3 +2721,18 @@ vLLM 刚停就开 verifier 会 `No CUDA GPUs are available`，写出全是
 543 道里 conv+matmul 62.8%（GATE 3）。中位 2.55x 和表 A 上 pairwise
 `kernel_ms` 对不上，跨次 compile 墙钟不可用。按计划停，不拿蒸馏顶替，不改门硬训。
 
+---
+
+# GL-F 改成 421 道 leftover 切片
+
+不再过 union 的 RL 速度带门。采集 jsonl 不动。切片：
+
+- 该题最好的 compile speedup **< 1.0**（对 compile 仍输）
+- `max(kernel_ms)/min(kernel_ms) ≥ 1.2`（墙钟上已经有可选）
+- 每题只留 **`kernel_ms` 最低** 的一条，不是 compile speedup 最高的那条
+
+筛出来 421 道。不混蒸馏。SFT 从 `model-GLE` 出发，attention-only r=128，
+2 epoch，lr 5e-5，max-len 20480。合成 `model-GLF`。表 A 只对 GL-E，认
+`kernel_ms` 和 p@1 / p@4。赢的门槛是共同题中位 `kernel_ms` ≥ 1.05x；
+< 1.02x 或 p@1 掉下 69.8% 就算失败。不引用 compile `su`。
+

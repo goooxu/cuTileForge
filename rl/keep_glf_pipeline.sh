@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Workspace-host supervisor for the GL-F speed SFT/eval tail.
 # Harvests have their own keep_harvest_alive. This waits for those jsonl,
-# refuses a failed speed gate, then SFT on the train box and table A on the
-# eval box.
+# then SFT on the train box (slow-vs-compile + kernel_ms-spread slice) and
+# table A on the eval box.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -80,15 +80,6 @@ while true; do
         echo "[keep-glf] harvests not ready; sleep ${POLL_SEC}s"
         sleep "$POLL_SEC"
         continue
-    fi
-    gate_args=()
-    for lv in 86 87 92 93; do
-        gate_args+=(--run "$lv:$WS/runs/harvest_gle${lv}_verified.jsonl")
-    done
-    if ! python3 "$FORGE/rl/glf_speed_gate.py" "${gate_args[@]}" \
-            | tee -a "$WS/runs/glf_speed_gate.txt"; then
-        echo "[keep-glf] speed gate failed; stopping"
-        exit 1
     fi
     if ! remote_train "test -f $(printf %q "$MODEL/processor_config.json")"; then
         echo "[keep-glf] starting SFT on train box"

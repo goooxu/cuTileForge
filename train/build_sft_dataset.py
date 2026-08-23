@@ -117,6 +117,19 @@ def main() -> None:
                     help="Drop a problem unless its fastest timed pass is at "
                          "least this multiple of the median timed pass. "
                          "Keeps only tasks that actually showed a speed choice.")
+    ap.add_argument("--max-best-speedup", type=float, default=None,
+                    help="Drop a problem whose best compile speedup is at or "
+                         "above this. Use 1.0 to keep only tasks that still "
+                         "lose to torch.compile.")
+    ap.add_argument("--min-kernel-ms-spread", type=float, default=None,
+                    help="Drop a problem unless max(kernel_ms)/min(kernel_ms) "
+                         "is at least this. Selects tasks that already showed "
+                         "a wall-clock speed choice, independent of compile.")
+    ap.add_argument("--rank-by", default="speedup",
+                    choices=["speedup", "kernel_ms"],
+                    help="How to pick the best sample under --max-per-problem. "
+                         "kernel_ms keeps the lowest wall-clock; speedup keeps "
+                         "the highest compile ratio.")
     ap.add_argument("--category-quota", default=None,
                     help="Comma-separated cat=N caps, e.g. matmul=100,elementwise=60. "
                          "Use '*=N' for a default. Uncapped categories keep everything.")
@@ -145,7 +158,8 @@ def main() -> None:
             r = json.loads(line)
             if r.get("passed"):
                 pid, sid = r["key"].split(":")
-                passed.append((int(pid), int(sid), r.get("speedup")))
+                passed.append((int(pid), int(sid), r.get("speedup"),
+                               r.get("kernel_ms")))
         print("level %d: %d verified passing samples" % (level, len(passed)))
 
         n_slow = n_fast = n_untimed = 0
@@ -169,21 +183,38 @@ def main() -> None:
             print("  dropped %d at or above %.2fx" % (n_fast, args.max_speedup))
 
         by_problem = collections.defaultdict(list)
-        for pid, sid, sp in passed:
-            by_problem[pid].append((sid, sp))
+        for pid, sid, sp, kms in passed:
+            by_problem[pid].append((sid, sp, kms))
         # Fastest first, so the per-problem cap keeps the best solutions rather
         # than whichever the sampler happened to emit first. Among several
         # correct kernels for one task, the difference between them is the most
         # direct signal about speed the dataset can carry.
-        n_few = n_flat = 0
+        n_few = n_flat = n_win = n_spread = 0
         for pid in list(by_problem):
             recs = by_problem[pid]
-            recs.sort(key=lambda t: (-(t[1] or 0.0), t[0]))
+            if args.rank_by == "kernel_ms":
+                recs.sort(key=lambda t: (
+                    t[2] is None, t[2] if t[2] is not None else 0.0, t[0]))
+            else:
+                recs.sort(key=lambda t: (-(t[1] or 0.0), t[0]))
+            by_problem[pid] = recs
             timed = [t[1] for t in recs if t[1] is not None]
+            kms = [t[2] for t in recs if t[2] is not None]
             if args.min_timed_passes is not None and len(timed) < args.min_timed_passes:
                 n_few += 1
                 del by_problem[pid]
                 continue
+            if args.max_best_speedup is not None:
+                if not timed or max(timed) >= args.max_best_speedup:
+                    n_win += 1
+                    del by_problem[pid]
+                    continue
+            if args.min_kernel_ms_spread is not None:
+                if (len(kms) < 2 or min(kms) <= 0
+                        or (max(kms) / min(kms)) < args.min_kernel_ms_spread):
+                    n_spread += 1
+                    del by_problem[pid]
+                    continue
             if args.min_best_over_median is not None:
                 if len(timed) < 2:
                     n_flat += 1
@@ -197,6 +228,12 @@ def main() -> None:
         if args.min_timed_passes is not None:
             print("  dropped %d problems with fewer than %d timed passes"
                   % (n_few, args.min_timed_passes))
+        if args.max_best_speedup is not None:
+            print("  dropped %d problems whose best speedup is >= %.2fx"
+                  % (n_win, args.max_best_speedup))
+        if args.min_kernel_ms_spread is not None:
+            print("  dropped %d problems with kernel_ms spread < %.2fx"
+                  % (n_spread, args.min_kernel_ms_spread))
         if args.min_best_over_median is not None:
             print("  dropped %d problems with best/median < %.2fx"
                   % (n_flat, args.min_best_over_median))
@@ -219,7 +256,7 @@ def main() -> None:
                 precision="fp32",
             )
             n_for_problem = 0
-            for sid, speedup in sids:
+            for sid, speedup, _kms in sids:
                 if n_for_problem >= args.max_per_problem:
                     dropped_cap += 1
                     continue
@@ -263,6 +300,7 @@ def main() -> None:
                     "problem": problem.name,
                     "category": category_of(problem.code),
                     "speedup": speedup,
+                    "kernel_ms": _kms,
                     "prompt_tier": tier,
                     "prompt": prompt,
                     "completion": completion,

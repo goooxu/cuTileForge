@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Best-of-N speed SFT jsonl from the GL-E timed harvests.
-# One fastest correct timed trace per problem; drop tasks with no speed choice.
+# Keep only tasks that still lose to compile and already showed a wall-clock
+# choice; one lowest-kernel_ms trace per problem. Do not mix distill.
 set -euo pipefail
 
 WS="${CUTILE_WS:?CUTILE_WS must point at the workspace root}"
@@ -15,6 +16,7 @@ python3 train/build_sft_dataset.py \
     --run 92:$WS/runs/harvest_gle92:$WS/runs/harvest_gle92_verified.jsonl \
     --run 93:$WS/runs/harvest_gle93:$WS/runs/harvest_gle93_verified.jsonl \
     --completion-from response --prompt-tier cutile_concepts \
-    --require-timing --max-per-problem 1 \
-    --min-timed-passes 2 --min-best-over-median 1.2 \
+    --require-timing --max-per-problem 1 --rank-by kernel_ms \
+    --min-timed-passes 2 --max-best-speedup 1.0 \
+    --min-kernel-ms-spread 1.2 \
     --out "$OUT"

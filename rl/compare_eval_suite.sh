@@ -32,8 +32,9 @@
 # GLD0 was the seed=0 replica; abandoned after table A. Do not sample it.
 # GLE = SFT on GLC mixing a second distill of GL-C's own passes with a
 # catchable-speed slice from level 80.
-# GLF = SFT on GLE from the fastest timed traces of GL-E's own harvest
-# on train levels 86/87/92/93. Speed-only, no distill mix.
+# GLF = SFT on GLE from the leftover timed traces of GL-E's own harvest
+# on train levels 86/87/92/93: still lose to compile, kernel_ms spread
+# >= 1.2x, one lowest-kernel_ms trace per problem. Speed-only, no distill.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

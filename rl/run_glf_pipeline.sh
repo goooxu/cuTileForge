@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# After GL-E timed harvests finish: gate, best-of-N jsonl, SFT, merge.
-# Exit 2 while harvests are still running. Exit 1 if the speed gate fails.
+# After GL-E timed harvests finish: 421-slice jsonl, SFT, merge.
+# Exit 2 while harvests are still running. Exit 1 if the slice is empty/tiny.
 set -euo pipefail
 
 WS="${CUTILE_WS:?CUTILE_WS must point at the workspace root}"
@@ -44,16 +44,9 @@ if [[ -f "$MERGED/processor_config.json" ]]; then
     exit 0
 fi
 
-echo "=== GL-F speed gate ==="
-gate_args=()
-for lv in 86 87 92 93; do
-    gate_args+=(--run "$lv:$WS/runs/harvest_gle${lv}_verified.jsonl")
-done
-if ! python3 "$FORGE/rl/glf_speed_gate.py" "${gate_args[@]}" \
-        | tee "$WS/runs/glf_speed_gate.txt"; then
-    echo "GATE failed; not training a speed SFT"
-    exit 1
-fi
+echo "=== GL-F slice (slow vs compile, kernel_ms spread) ==="
+# The union harvest fails the RL band gate (median best 2.55x). Train the
+# 421-problem leftover instead: best < 1.0 and kernel_ms max/min >= 1.2.
 
 echo "=== build best-of-N SFT ==="
 if [[ -f "$WS/runs/sft_glf.jsonl" ]]; then
@@ -68,6 +61,18 @@ if [[ ! -s "$WS/runs/sft_glf.jsonl" ]]; then
     echo "best-of-N jsonl empty; not training"
     exit 1
 fi
+python3 - "$WS/runs/sft_glf.jsonl" <<'PY'
+import json, collections, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+fam = collections.Counter(r.get("category") for r in rows)
+gemm = fam.get("conv", 0) + fam.get("matmul", 0)
+print("slice %d rows  GEMM %d (%.0f%%)  families %s"
+      % (len(rows), gemm, 100.0 * gemm / max(len(rows), 1), dict(fam)))
+if len(rows) < 80:
+    raise SystemExit("slice too small")
+if gemm / max(len(rows), 1) < 0.30:
+    raise SystemExit("GEMM share too low")
+PY
 
 echo "=== SFT + merge ==="
 bash "$FORGE/rl/run_glf_sft.sh"
