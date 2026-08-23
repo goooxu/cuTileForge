@@ -57,6 +57,11 @@ while true; do
         sleep "$POLL_SEC"
         continue
     fi
+    if [[ -f "$WS/runs/eval_lent" ]]; then
+        echo "[keep-glg] eval box lent out; not starting table A"
+        sleep "$POLL_SEC"
+        continue
+    fi
     if [[ ! -f "$WS/runs/.keep_eval_GLG.pid" ]] || ! kill -0 "$(cat "$WS/runs/.keep_eval_GLG.pid")" 2>/dev/null; then
         echo "[keep-glg] starting table A"
         setsid env -u MERGE_ADAPTER -u MERGE_BASE \
