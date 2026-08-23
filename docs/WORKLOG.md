@@ -2736,3 +2736,8 @@ vLLM 刚停就开 verifier 会 `No CUDA GPUs are available`，写出全是
 `kernel_ms` 和 p@1 / p@4。赢的门槛是共同题中位 `kernel_ms` ≥ 1.05x；
 < 1.02x 或 p@1 掉下 69.8% 就算失败。不引用 compile `su`。
 
+表 A 齐了。延迟 **704/770**，p@1 **72.4%**，p@4 **91.4%**（GL-E 695 / 69.8% /
+90.3%）。吞吐仍 132/139，p@1 84.7%→80.8%。共同 680 道 `kernel_ms` 中位
+**1.001x**，没过 1.02x。速度实验失败。正确性涨了，发表线仍是 GL-E。不重采
+GLE。读数在 `results/REPORT_EVAL_SUITE.md`。
+
