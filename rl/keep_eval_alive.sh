@@ -39,6 +39,10 @@ MERGE_ADAPTER="${MERGE_ADAPTER:-}"
 if [[ -z "${EVAL_HOST:-}" && -f "$WS/runs/eval_host" ]]; then
     EVAL_HOST="$(sed -n '/[^[:space:]]/ {s/[[:space:]]*$//; p; q;}' "$WS/runs/eval_host")"
 fi
+# One GPU box: fall back to the train host so table A still runs.
+if [[ -z "${EVAL_HOST:-}" && -f "$WS/runs/train_host" ]]; then
+    EVAL_HOST="$(sed -n '/[^[:space:]]/ {s/[[:space:]]*$//; p; q;}' "$WS/runs/train_host")"
+fi
 if [[ -z "${EVAL_HOST:-}" ]]; then
     echo "error: set EVAL_HOST or write the ssh target to $WS/runs/eval_host" >&2
     exit 1

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Workspace-host supervisor for GL-G ORPO then table A.
-# Starts SFT/ORPO on the train box if model-GLG is missing, then table A
-# on the eval box. Compare against GL-F (and GL-E). Do not pkill -f.
+# Starts SFT/ORPO if model-GLG is missing, then table A on the same GPU
+# box. Compare against GL-F (and GL-E). Do not pkill -f.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,11 +54,6 @@ while true; do
             MODEL=$(printf %q "$BASE") \
             bash $(printf %q "$FORGE/rl/run_glg_pipeline.sh") \
             >> $(printf %q "$WS/runs/glg_pipeline.log") 2>&1 < /dev/null & echo \$!"
-        sleep "$POLL_SEC"
-        continue
-    fi
-    if [[ -f "$WS/runs/eval_lent" ]]; then
-        echo "[keep-glg] eval box lent out; not starting table A"
         sleep "$POLL_SEC"
         continue
     fi

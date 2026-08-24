@@ -2759,3 +2759,6 @@ r=128，2 epoch，lr 5e-5，`orpo-lambda` 0.5。合成 `model-GLG`。表 A 对 G
 （也看 GL-E）。赢的门槛是共同题中位 `kernel_ms` ≥ 1.05x；p@1 不能掉下
 GL-F 的 72.4%。不引用 compile `su`。不重采。
 
+评测盒没有了。训练和表 A 都在唯一一台开发机上，`runs/eval_host` 与
+`runs/train_host` 同一台。不要再往已收回的那台拉作业。
+
