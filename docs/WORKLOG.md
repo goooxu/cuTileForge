@@ -2768,3 +2768,36 @@ GL-F 的 72.4%。不引用 compile `su`。不重采。
 （668 道）。没过 1.05x，p@1 还掉了。速度实验失败。发表线仍是 GL-E。
 不重采 GLE / GLF。读数在 `results/REPORT_EVAL_SUITE.md`。
 
+表 A 总中位把真正动了的族洗掉了。共同题 `kernel_ms`（>1 后一个更快）：
+
+| | 全部中位 | matmul 中位 | matmul ≥1.05 / ≤0.95 | conv 中位 |
+| --- | ---: | ---: | ---: | ---: |
+| GL-G vs GL-E | 1.005x（668） | **1.566x**（79） | 54 / 12 | 1.006x（174） |
+| GL-G vs GL-F | 1.004x（673） | **1.267x**（81） | 51 / 18 | 1.007x（177） |
+
+matmul p@1：GLE 59.1% → GLG 60.3%。覆盖 85→84。conv 才是伤：188→180，
+p@1 62.4%→59.0%。GL-G 的 143 道 conv 对照对评测 conv 没迁速度，只把能写对
+的 conv 风格打掉了。harvest 的 `(32,64)` vs `(64,128)` 在评测 best kernel
+上一次都没对上；评测 matmul 实际是 `(64,64,32)` 往 `(32,32,32)` 挪。
+
+770 道的中位不可能被 102 道 matmul 搬过 1.05x。再拿「全部中位 ≥1.05x」当
+速度门槛，tile 实验会结构性失败。GLE 自己 k=4 里 conv 组内中位已经 1.52x，
+best-of-4 接近饱和，再 ORPO conv 也推不动 pairwise。
+
+# GL-H：只对 matmul 做 ORPO
+
+不再做第三轮一条最快轨迹 SFT，不再 GRPO，不再把 conv/norm/pool 对塞进
+ORPO。从 **GL-F** 出发，只用 harvest 里 105 道 matmul 对（96 道 tile 不同）。
+配方与 GL-G 相同：attention-only r=128，2 epoch，lr 5e-5，`orpo-lambda`
+0.5。合成 `model-GLH`。不混蒸馏。不重采 GLE / GLF / GLG。
+
+表 A 对 GL-F 和 GL-E。赢的门槛改成族：
+
+- matmul 共同题中位 `kernel_ms` ≥ 1.20x（对 GL-E），且 ≥ 1.10x（对 GL-F）
+- 总解出 ≥ 698，p@1 ≥ 71%
+- conv 解出 ≥ 188（不低于 GL-E）
+
+全部中位会停在 ~1.0x，不当失败条件。p@1 掉下 GL-F 的 72.4% 但还在 71%
+以上算噪声；掉下 69.8% 或 conv 掉下 188 算失败。发表线仍是 GL-E，除非
+matmul 过线且覆盖守住。
+

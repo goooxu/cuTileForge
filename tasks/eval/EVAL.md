@@ -96,6 +96,7 @@ python3 taskgen/test_eval_suite.py
 | GL-E | `GLE` | 在 GL-C 上混训：第二次自蒸馏 + level 80 速度切片 |
 | GL-F | `GLF` | 在 GL-E 上训 421 道 leftover：对 compile 仍输、`kernel_ms` 有差、每题留最慢墙钟里最快的一条 |
 | GL-G | `GLG` | 在 GL-F 上对同一题的快/慢轨迹做 ORPO（tile 对照） |
+| GL-H | `GLH` | 在 GL-F 上只对 harvest 的 matmul 快/慢对做 ORPO，不含 conv |
 
 seed=0 那条合过一次、tag 是 `GLD0`，表 A 之后放弃，不作发表线。已有
 `runs/GLD0_l60_verified.jsonl` 只作失败记录，不要再采、不要再合权重。
@@ -128,7 +129,7 @@ CUTILE_WS=... rl/compare_eval_suite.sh \
 
 `Q38` 会开 thinking 并设 `max_tokens=32768`。`Q38nt` 会关 thinking 并设
 `max_tokens=8192`。`G4` 关 thinking、8192、`nightly-aarch64`（v0.27.1 起不来）。
-`G4t` 开 thinking、32768、同一镜像。`GL`、`GLA`、`GLB`、`GLC`、`GLD`、`GLE`、`GLF`、`GLG` 用 `muse-glimmer` 镜像、
+`G4t` 开 thinking、32768、同一镜像。`GL`、`GLA`、`GLB`、`GLC`、`GLD`、`GLE`、`GLF`、`GLG`、`GLH` 用 `muse-glimmer` 镜像、
 `reasoning_strength=xhigh`、32768。其它 tag 默认 32768、不传 thinking 开关。
 `GLD0` 已放弃，不要再进 compare。
 

@@ -36,6 +36,7 @@
 # on train levels 86/87/92/93: still lose to compile, kernel_ms spread
 # >= 1.2x, one lowest-kernel_ms trace per problem. Speed-only, no distill.
 # GLG = ORPO on GLF from within-problem kernel_ms pairs (tile contrast).
+# GLH = ORPO on GLF from matmul-only harvest pairs. Do not include conv.
 set -uo pipefail
 
 FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -111,9 +112,9 @@ for spec in "$@"; do
         export MAX_TOKENS=32768
         export EXTRA_ARGS="--reasoning-parser gemma4"
         export VLLM_IMAGE=vllm/vllm-openai:nightly-aarch64
-    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" || "$tag" == "GLC" || "$tag" == "GLD" || "$tag" == "GLD0" || "$tag" == "GLE" || "$tag" == "GLF" || "$tag" == "GLG" ]]; then
+    elif [[ "$tag" == "GL" || "$tag" == "GLA" || "$tag" == "GLB" || "$tag" == "GLC" || "$tag" == "GLD" || "$tag" == "GLD0" || "$tag" == "GLE" || "$tag" == "GLF" || "$tag" == "GLG" || "$tag" == "GLH" ]]; then
         # Muse Glimmer: thinking cannot be turned off. Table A, xhigh.
-        # GLA / GLB / GLC / GLD / GLE / GLF / GLG must be sampled identically to GL so the comparison holds.
+        # GLA / GLB / GLC / GLD / GLE / GLF / GLG / GLH must be sampled identically to GL so the comparison holds.
         # GLD0 stays on this path only so a leftover score of existing jsonl stays comparable.
         export REASONING_STRENGTH=xhigh
         export MAX_TOKENS=32768
