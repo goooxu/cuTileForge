@@ -24,6 +24,7 @@ thinking、`max_tokens=8192`。旧两轨和 KernelBench 200 题头条也不要�
 | GL-F | `GLF` | 在 GL-E 上训 421 道 leftover（对 compile 仍输、`kernel_ms` 有差） |
 | GL-G | `GLG` | 在 GL-F 上对同一题快/慢轨迹做 ORPO（tile 对照） |
 | GL-H | `GLH` | 在 GL-F 上只对 harvest 的 matmul 快/慢对做 ORPO |
+| GL-I | `GLI` | 在 GL-E 上对 matmul 对做 ORPO，混入无 MMA 的 conv 保持集 |
 
 Glimmer 线的 checkpoint 从字母 A 开始排，和 Next 线当年一样。别把 GL-A 读成
 Next-M 的对应物：Next-M 是第 9 次改权重之后的那个 checkpoint，GL-A 只训了一轮。
@@ -33,7 +34,8 @@ GL-B 掉下去的那 139 道 twin 做的恢复，不是盲目再蒸馏一轮。G
 GL-E 做的速度 leftover SFT；`kernel_ms` 没过线，不作发表线。GL-G 是对着 GL-F
 做的 tile ORPO；全部中位没过线，覆盖还掉了，也不作发表线。GL-H 只对 matmul
 做 ORPO，matmul `kernel_ms` 对 GL-E 中位 2.300x，但总覆盖和 conv 没守住，
-也不作发表线。GL-D 的 GRPO 低于 GL-C，也不作发表线。
+也不作发表线。GL-I 从 GL-E 混 conv 保持集，matmul 1.759x，覆盖更差，也不作
+发表线。GL-D 的 GRPO 低于 GL-C，也不作发表线。
 
 **结论先说**
 
@@ -42,6 +44,7 @@ GL-E 做的速度 leftover SFT；`kernel_ms` 没过线，不作发表线。GL-G 
    91.4%），但共同 680 道 `kernel_ms` 中位 1.001x，速度实验失败，不作发表线。
    GL-G 更差：686 / 69.2% / 89.1%，对 GL-F 中位 `kernel_ms` 1.002x。
    GL-H 691 / 70.8% / 89.7%，matmul 对 GL-E 中位 **2.300x**，总覆盖没守住。
+   GL-I 682 / 70.2% / 88.6%，matmul 1.759x，conv 182。
    GL-C 680 / 66.8% / 88.3%。GL-B 668，Next-Q 634，GL-A 619，GL 580，G4t 569，
    Q38 366。
 2. **配方继续走得通**：GL → 580 → GL-A 619 → GL-B 668 → GL-C 680 → GL-E **695**。
@@ -92,6 +95,7 @@ GL-A / GL-B / GL-C / GL-E / GL-F thinking 都关不掉，`reasoning_strength=xhi
 | GL-F | 704/770 | 72.4% | 91.4% | 132/139 |
 | GL-G | 686/770 | 69.2% | 89.1% | 132/139 |
 | GL-H | 691/770 | 70.8% | 89.7% | 132/139 |
+| GL-I | 682/770 | 70.2% | 88.6% | 132/139 |
 | GL-B | 668/770 | 63.1% | 86.8% | 127/139 |
 | GL-A | 619/770 | 57.5% | 80.4% | 126/139 |
 | GL | 580/770 | 51.5% | 75.3% | 123/139 |
@@ -151,6 +155,8 @@ norm 92→93。pool 65→63。四发全对 331→366。0/4 从 75 降到 66。�
 不是速度。
 GL-G 相对 GL-F：conv 193→180，matmul 88→84。GL-H 只训 matmul 对：matmul
 88→**89**，conv 193→184（仍低于 GL-E 的 188）。四发全对 366→338。
+GL-I 相对 GL-E：conv 188→182，matmul 85→**77**。保持集没把 conv 拉回来，
+还把 matmul 覆盖打掉了。
 
 按形状：
 
@@ -199,6 +205,9 @@ GL-G 相对 GL-F：conv 193→180，matmul 88→84。GL-H 只训 matmul 对：ma
 | **GL-H vs GL-E 全部** | 669 | 1.032x | 1.023x | 310 | 202 |
 | **GL-H vs GL-F 全部** | 679 | 1.016x | 1.011x | 292 | 192 |
 | **GL-H vs GL-G 全部** | 660 | 1.017x | 1.000x | 283 | 210 |
+| **GL-I vs GL-E 全部** | 659 | 1.010x | 1.016x | 274 | 207 |
+| **GL-I vs GL-F 全部** | 665 | 1.001x | 1.002x | 245 | 219 |
+| **GL-I vs GL-H 全部** | 656 | 0.983x | 1.000x | 185 | 277 |
 | **GL-F vs GL-E 常见** | 520 | 1.004x | 1.001x | 197 | 162 |
 | **GL-F vs GL-E 不规则** | 160 | 1.000x | 1.001x | 63 | 57 |
 | Next-Q vs GL-C | 602 | 2.037x | 1.020x | 467 | 105 |
@@ -223,8 +232,10 @@ Next 那条线的结论一致：正确性训练不搬动速度。GL-F 专门训�
 **1.002x**，对 GL-E **1.006x**；延迟覆盖反而掉到 686，conv 193→180。全部中位
 把 matmul 洗掉了：GL-G vs GL-E 在 79 道 matmul 上中位 **1.542x**。GL-H 只训
 matmul 对，对 GL-E 全部中位 1.023x，matmul 80 道上 **2.300x**（63 / 10），
-对 GL-F 1.891x。覆盖没守住（691、conv 184），不作发表线。对照信号能迁到评测
-matmul，迁不到 770 道的中位。
+对 GL-F 1.891x。覆盖没守住（691、conv 184），不作发表线。GL-I 从 GL-E 混无
+MMA 的 conv 保持集：matmul 对 GL-E **1.759x**（弱于 GL-H），对 GL-H
+**0.804x**；conv 182，matmul 覆盖 77。保持集冲淡了 tile 信号，也没把 conv
+拉回 188。对照信号能迁到评测 matmul，迁不到 770 道的中位。
 
 ## A.3 吞吐：做成对，Next-Q 与 Next-M 打平
 
@@ -240,6 +251,7 @@ matmul，迁不到 770 道的中位。
 | GL-F | 132/139 | 80.8% | 95.0% |
 | GL-G | 132/139 | 86.5% | 95.0% |
 | GL-H | 132/139 | 87.9% | 95.0% |
+| GL-I | 132/139 | 83.8% | 95.0% |
 | GL-B | 127/139 | 55.4% | 91.4% |
 | GL-A | 126/139 | 72.5% | 90.6% |
 | G4t | 124/139 | 71.0% | 89.2% |
@@ -463,9 +475,11 @@ G4 与 Q38nt 共享 243，G4 独有 111，Q38nt 独有 155。
   表 A 不能拆开是蒸馏还是速度池。GL-F 覆盖再到 704/770（p@1 72.4%），但速度
   实验失败，不作发表线。GL-G 的 tile ORPO 覆盖掉到 686、p@1 69.2%，也不作
   发表线。GL-H 只对 matmul 做 ORPO：matmul 对 GL-E 中位 **2.300x**，总覆盖
-  691、conv 184，门槛没过，也不作发表线。GL-D 的 GRPO 低于 GL-C，也不作发表线。
+  691、conv 184，门槛没过，也不作发表线。GL-I 混 conv 保持集：matmul 1.759x，
+  覆盖 682、conv 182、matmul 77，也不作发表线。GL-D 的 GRPO 低于 GL-C，也不作
+  发表线。
 - **全部中位几乎不动，matmul 动了。** 诚实口径是 `kernel_ms`：GL-H vs GL-E
-  全部 1.023x，matmul **2.300x**；GL-G vs GL-E 全部 1.006x，matmul 1.542x。
+  全部 1.023x，matmul **2.300x**；GL-I vs GL-E 全部 1.016x，matmul **1.759x**。
   102 道 matmul 搬不动 770 道的中位。compile 加速比被参考解墙钟污染，不引用。
 - Q38 开 thinking 停在 366/770，洞在 conv。关 thinking 抬到 398，仍不是 Next-M / Next-Q。
 - G4t 进表 A：569/770，紧挨 GL（580）。conv 119，matmul **73**，norm **85**。
