@@ -2857,3 +2857,12 @@ matmul 速度对 GL-E 过 1.20x，但弱于 GL-H 的 2.300x。conv 和总解出�
 发表线仍是 GL-E。不重采 GLE / GLF / GLG / GLH。读数在
 `results/REPORT_EVAL_SUITE.md`。
 
+# 清掉评测留下的垃圾
+
+表 A 齐了之后：评测容器 `fv_GLI_l60`（已退出）和悬空的 ubuntu 镜像删掉；已结束
+作业的 lock / pid 清掉（`train_host` / `eval_host` 留下）；工作目录根上那份旧的
+`cutile-eval/` clone 删掉（真正用的是 `cuTileForge/kernelbench/`）；`__pycache__`
+清掉。Hugging Face 缓存里 gpt-neo / gpt2 / bart / opt / bigbird / electra /
+reformer 那些权重（约 21G）不是本项目的，删掉，只留 Qwen 的空 stub。合并权重、
+表 A 的 jsonl / kernel、LoRA 都不动。
+
