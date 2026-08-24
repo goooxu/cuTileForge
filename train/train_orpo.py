@@ -3,10 +3,12 @@
 Chosen is the lowest-latency correct harvest trace, rejected the highest.
 The SFT term is only on chosen (same completion-only loss as train_lora.py).
 The odds-ratio term is applied in a second backward so peak memory stays
-one sequence, not a 2x graph.
+one sequence, not a 2x graph. Optional --retain adds a third backward of
+completion-only SFT (conv without a GEMM tile) so matmul tiles do not leak.
 
-  python3 train/train_orpo.py --model /raid/tmp/gemsg-cutile/model-GLF \
-      --data /ws/runs/orpo_glg.jsonl --out /ws/models/lora-GLG
+  python3 train/train_orpo.py --model /raid/tmp/gemsg-cutile/model-GLE \
+      --data /ws/runs/orpo_glh.jsonl --retain /ws/runs/sft_gli_retain.jsonl \
+      --out /ws/models/lora-GLI
 """
 from __future__ import print_function
 
@@ -27,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lora_config import (family_of, load_base_model,  # noqa: E402
                          targets_for, validate_targets)
 from train_lora import (  # noqa: E402
-    TURN_END, CompletionOnlyDataset, sparse_lm_loss,
+    TURN_END, CompletionOnlyDataset, collate as collate_sft, sparse_lm_loss,
 )
 
 
@@ -108,6 +110,10 @@ def main():
     ap.add_argument("--log-every", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--orpo-lambda", type=float, default=0.5)
+    ap.add_argument("--retain", default=None,
+                    help="Optional SFT jsonl mixed 1:1 with each ORPO pair. "
+                         "Use a no-MMA conv retain set so matmul tiles do not "
+                         "leak into conv.")
     ap.add_argument("--gradient-checkpointing", action="store_true")
     ap.add_argument("--max-skip-frac", type=float, default=0.05)
     ap.add_argument("--targets", default="attention_only",
@@ -134,6 +140,28 @@ def main():
           % (len(ds), ds.n_dropped, args.max_len, ds.turn_end))
     if not len(ds):
         raise SystemExit("no pairs fit in max_len=%d" % args.max_len)
+
+    retain_iter = None
+    n_retain = 0
+    if args.retain:
+        retain_ds = CompletionOnlyDataset(
+            args.retain, tok, args.max_len,
+            chat_kwargs=chat_kwargs, turn_end=ds.turn_end)
+        n_retain = len(retain_ds)
+        print("retain: %d rows (dropped %d over max_len=%d) from %s"
+              % (n_retain, retain_ds.n_dropped, args.max_len, args.retain))
+        if not n_retain:
+            raise SystemExit("retain set empty after max_len filter")
+        retain_loader = DataLoader(
+            retain_ds, batch_size=1, shuffle=True,
+            collate_fn=lambda b: collate_sft(b, pad_id))
+
+        def _cycle(loader):
+            while True:
+                for batch in loader:
+                    yield batch
+
+        retain_iter = _cycle(retain_loader)
 
     print("loading model ...")
     t0 = time.time()
@@ -167,8 +195,9 @@ def main():
     sched = torch.optim.lr_scheduler.OneCycleLR(
         opt, max_lr=args.lr, total_steps=total_steps,
         pct_start=args.warmup_frac, anneal_strategy="cos")
-    print("optimiser steps: %d (%d pairs/epoch, accum %d, lambda %.2f)"
-          % (total_steps, len(loader), args.grad_accum, args.orpo_lambda))
+    print("optimiser steps: %d (%d pairs/epoch, accum %d, lambda %.2f%s)"
+          % (total_steps, len(loader), args.grad_accum, args.orpo_lambda,
+             (", retain %d 1:1" % n_retain) if n_retain else ""))
 
     dev = next(model.parameters()).device
     step = micro = n_skipped = 0
@@ -219,11 +248,22 @@ def main():
             # Chosen still received the SFT gradient above.
             or_loss = -F.logsigmoid(nll_r - nll_c_val)
             ((args.orpo_lambda * or_loss) / args.grad_accum).backward()
+            nll_retain = None
+            if retain_iter is not None:
+                s_ids, s_lab, s_attn, _scats = next(retain_iter)
+                s_ids, s_lab, s_attn = s_ids.to(dev), s_lab.to(dev), s_attn.to(dev)
+                nll_s = sparse_lm_loss(model, s_ids, s_attn, s_lab)
+                if torch.isfinite(nll_s):
+                    (nll_s / args.grad_accum).backward()
+                    nll_retain = float(nll_s.detach())
             loss = nll_c_val + args.orpo_lambda * or_loss.detach()
-            running.append({
+            rec = {
                 "loss": float(loss.detach()), "nll_c": float(nll_c_val),
                 "nll_r": float(nll_r.detach()), "or": float(or_loss.detach()),
-            })
+            }
+            if nll_retain is not None:
+                rec["nll_retain"] = nll_retain
+            running.append(rec)
             micro += 1
             if micro <= 4:
                 print("  micro %d: loss %.4f  nll_c %.4f  nll_r %.4f  or %.4f"
@@ -243,12 +283,18 @@ def main():
                     mean = sum(x["loss"] for x in running) / len(running)
                     mean_c = sum(x["nll_c"] for x in running) / len(running)
                     mean_r = sum(x["nll_r"] for x in running) / len(running)
+                    extra = ""
+                    retain_vals = [x["nll_retain"] for x in running
+                                   if "nll_retain" in x]
+                    if retain_vals:
+                        extra = "  nll_ret %.4f" % (
+                            sum(retain_vals) / len(retain_vals))
                     history.append({"step": step, "loss": mean,
                                     "nll_chosen": mean_c, "nll_rejected": mean_r})
-                    print("step %4d/%d  loss %.4f  nll_c %.4f  nll_r %.4f  "
+                    print("step %4d/%d  loss %.4f  nll_c %.4f  nll_r %.4f%s  "
                           "gnorm %.3f  lr %.2e  %.1f min"
-                          % (step, total_steps, mean, mean_c, mean_r, gnorm,
-                             sched.get_last_lr()[0],
+                          % (step, total_steps, mean, mean_c, mean_r, extra,
+                             gnorm, sched.get_last_lr()[0],
                              (time.time() - t_start) / 60))
                     running = []
                 if step >= total_steps:

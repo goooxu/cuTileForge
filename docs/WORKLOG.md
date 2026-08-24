@@ -2817,3 +2817,27 @@ matmul 速度过线，而且比 GL-G 更强。总解出 691、p@1 70.8%、conv 1
 门槛没过。发表线仍是 GL-E。不重采 GLE / GLF / GLG。读数在
 `results/REPORT_EVAL_SUITE.md`。
 
+相对 GL-E 丢掉的 12 道 conv 里，9 道的 GL-H 样本写了 TM/TN，6 道写了
+`ct.mma`。GL-E 的通过 conv 里 153/188 没有 MMA tile；GL-H 的 best conv
+开始出现 `(32,32,32)`。matmul best 从 GL-E 的 `(64,64,*)` 变成 GL-H 的
+`(32,32,32)` ×42，这就是 2.3x。attention LoRA 是全局的，105 道 matmul 对
+把同一套小 tile 漏进 conv，纯度/执行失败。不是覆盖随机抖。GL-F leftover
+里 224/421 已经是 matmul，从 GL-F 再 ORPO 等于在已经偏 GEMM 的权重上继续
+推。不要再从 GL-F 叠一轮，不要再 ORPO conv，不要 GRPO。
+
+# GL-I：从 GL-E 做 matmul ORPO，同时用无 MMA 的 conv 拉住风格
+
+起点改回 **GL-E**。还是那 105 道 matmul 对。每个 ORPO pair 再混一条 harvest
+conv 通过解：没有 `ct.mma`、没有 TM/TN/TK，每题一条（约 256 道）。不混
+leftover，不混蒸馏。配方其余不动。合成 `model-GLI`。不重采 GLE / GLF /
+GLG / GLH。
+
+表 A 对 GL-E。赢的门槛：
+
+- matmul 共同题中位 `kernel_ms` ≥ 1.20x（对 GL-E）
+- conv 解出 ≥ 188
+- 总解出 ≥ 695，p@1 ≥ 69.8%
+
+三项都过才改发表线。全部中位不当门槛。matmul 过了但 conv 再掉，就算失败，
+不要再拿 leftover 顶。
+

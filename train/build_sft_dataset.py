@@ -40,6 +40,20 @@ def category_of(ref_src: str) -> str:
     return m.group(3) if m else "?"
 
 
+TILE_ASSIGN = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=\s*(\d+)\s*$", re.M)
+MMA_TILE_NAME = re.compile(r"^(TM|TN|TK|BM|BN|BK)$")
+
+
+def has_mma_tile(src):
+    """True when the kernel writes a GEMM tile or calls ct.mma."""
+    if "ct.mma" in src:
+        return True
+    for m in TILE_ASSIGN.finditer(src):
+        if MMA_TILE_NAME.match(m.group(1)):
+            return True
+    return False
+
+
 def apply_quota(records, quota: dict):
     """Cap each category, spending the budget on breadth of tasks first.
 
@@ -133,6 +147,11 @@ def main() -> None:
     ap.add_argument("--category-quota", default=None,
                     help="Comma-separated cat=N caps, e.g. matmul=100,elementwise=60. "
                          "Use '*=N' for a default. Uncapped categories keep everything.")
+    ap.add_argument("--categories", default=None,
+                    help="Comma-separated families to keep, e.g. conv. "
+                         "Unset keeps every family.")
+    ap.add_argument("--no-mma-tile", action="store_true",
+                    help="Drop kernels that use ct.mma or TM/TN/TK/BM/BN/BK.")
     args = ap.parse_args()
 
     quota = {}
@@ -140,12 +159,16 @@ def main() -> None:
         for pair in args.category_quota.split(","):
             cat, _, n = pair.partition("=")
             quota[cat.strip()] = int(n)
+    only_cats = None
+    if args.categories:
+        only_cats = set(c.strip() for c in args.categories.split(",") if c.strip())
 
     from kernelbench.dataset import construct_kernelbench_dataset
     from kernelbench.prompt_constructor_toml import get_custom_prompt
 
     kept, seen_hashes = [], set()
     dropped_dup = dropped_cap = dropped_no_response = 0
+    dropped_cat = dropped_mma = 0
     n_tasks = 0
 
     for spec in args.run:
@@ -241,6 +264,10 @@ def main() -> None:
 
         for pid, sids in sorted(by_problem.items()):
             problem = dataset.get_problem_by_id(pid)
+            cat = category_of(problem.code)
+            if only_cats is not None and cat not in only_cats:
+                dropped_cat += len(sids)
+                continue
             # Deterministic per task, so the same task always lands in the same
             # tier and the two do not disagree about what it looks like.
             tier = args.prompt_tier
@@ -267,6 +294,10 @@ def main() -> None:
                     continue
                 with open(path) as f:
                     code = f.read()
+
+                if args.no_mma_tile and has_mma_tile(code):
+                    dropped_mma += 1
+                    continue
 
                 # Dedup on the code even when the target is the whole turn, so
                 # the meaning of the per-task cap does not change with the target:
@@ -318,6 +349,10 @@ def main() -> None:
 
     print("kept %d examples from %d distinct tasks" % (len(kept), n_tasks))
     print("  dropped %d duplicates, %d over per-task cap" % (dropped_dup, dropped_cap))
+    if dropped_cat:
+        print("  dropped %d outside --categories" % dropped_cat)
+    if dropped_mma:
+        print("  dropped %d with a GEMM tile (--no-mma-tile)" % dropped_mma)
     if dropped_no_response:
         print("  dropped %d with no logged response (needs log_raw_response=True)"
               % dropped_no_response)
