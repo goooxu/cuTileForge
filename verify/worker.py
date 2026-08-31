@@ -368,6 +368,15 @@ def _worker(task_q, result_q, device_id: int, num_correct_trials: int,
             os.unlink(path)
             raise
 
+    # Let online schedulers exclude persistent-worker CUDA/import cold start
+    # from a problem's search deadline. Batch callers need not consume this
+    # marker; VerifierPool filters control records in every receive path.
+    result_q.put({
+        "_control": "ready",
+        "pid": os.getpid(),
+        "device_id": device_id,
+    })
+
     while True:
         item = task_q.get()
         if item is STOP:
@@ -563,6 +572,7 @@ class VerifierPool:
         self.task_q = self.ctx.Queue()
         self.result_q = self.ctx.Queue()
         self.procs = [None] * workers
+        self._ready_pids = set()
         # New CUDA contexts in this container can fail after the first pool
         # (G4t, GL-C GRPO). Stop respawning rather than storming the driver.
         self._can_spawn = True
@@ -587,6 +597,32 @@ class VerifierPool:
         self.procs[i] = p
         return True
 
+    def _record_control(self, rec) -> bool:
+        if not isinstance(rec, dict) or rec.get("_control") != "ready":
+            return False
+        self._ready_pids.add(int(rec["pid"]))
+        return True
+
+    def wait_ready(self, min_ready=None, timeout=120.0) -> bool:
+        """Wait until persistent workers have imported CUDA and can take work."""
+        min_ready = self.workers if min_ready is None else int(min_ready)
+        deadline = time.time() + float(timeout)
+        deferred = []
+        while len(self._ready_pids) < min_ready and time.time() < deadline:
+            self._respawn_dead()
+            if not self._live() and not self._can_spawn:
+                break
+            try:
+                rec = self.result_q.get(
+                    timeout=max(0.05, min(1.0, deadline - time.time())))
+            except queue.Empty:
+                continue
+            if not self._record_control(rec):
+                deferred.append(rec)
+        for rec in deferred:
+            self.result_q.put(rec)
+        return len(self._ready_pids) >= min_ready
+
     def _give_up_spawning(self, why: str) -> None:
         if not self._can_spawn:
             return
@@ -598,6 +634,7 @@ class VerifierPool:
         for i, p in enumerate(self.procs):
             if p is None or p.is_alive():
                 continue
+            self._ready_pids.discard(p.pid)
             p.join(timeout=1)
             self._spawn_failures += 1
             # A healthy pool replaces the odd poisoned worker. A CUDA-init
@@ -623,6 +660,7 @@ class VerifierPool:
         """
         for p in self.procs:
             _stop_proc(p)
+        self._ready_pids.clear()
         _drain(self.task_q)
         _drain(self.result_q)
         if not self._can_spawn:
@@ -662,6 +700,8 @@ class VerifierPool:
                     break
                 if time.time() - last > stall_s:
                     break
+                continue
+            if self._record_control(rec):
                 continue
             if rec.get("key") not in pending:
                 continue

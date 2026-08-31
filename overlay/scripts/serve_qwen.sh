@@ -67,6 +67,7 @@ common_args=(
     -e HOME=/tmp
     -e HF_HOME=/tmp/hf
     -e VLLM_CACHE_ROOT=/tmp/vllm-cache
+    -e VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS="${VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS:-}"
     -v "$WS":"$WS":ro
 )
 [[ ${#extra_mounts[@]} -gt 0 ]] && common_args+=("${extra_mounts[@]}")
